@@ -1,180 +1,369 @@
-# CLAUDE.md - Jarvis 2.0 (Stream Lab)
+# CLAUDE.md — Jarvis 2.0 (Stream Lab)
 
-## Visao Geral
+> Documento de referência técnica para desenvolvimento assistido por IA.
+> Última atualização: 2026-03-12
 
-Jarvis 2.0 e o assistente de IA da Stream Lab no WhatsApp, construido com arquitetura modular inspirada nos melhores frameworks de agentes (Mem0, CrewAI, NanoClaw, MCP).
+---
 
-**Stack:** Node.js + Baileys (WhatsApp) + Claude API (Anthropic) + PostgreSQL + Redis + ElevenLabs TTS + Google Calendar
+## Visão Geral
+
+Jarvis 2.0 é um agente de IA autônomo no WhatsApp para a **Stream Lab** (agência de marketing digital). Arquitetura modular inspirada em Mem0 (memória), CrewAI (agentes) e NanoClaw (skills).
+
+**Stack principal:** Node.js (ESM) · Baileys v7 · Claude API (Anthropic) · PostgreSQL 16 · Redis 7 · ElevenLabs · Google Calendar
+
+---
 
 ## Estrutura do Projeto
 
 ```
-jarvis-v2.mjs               # Entry point principal (~700 linhas)
+jarvis-v2.mjs                  # Entry point (~1200 linhas) — WhatsApp + Express API + Cron
 src/
-├── config.mjs               # Configuracoes centrais (via .env)
-├── database.mjs             # PostgreSQL - CRUD
-├── memory.mjs               # Sistema de memoria Mem0-inspired
-├── brain.mjs                # Cerebro IA + roteamento de agentes
-├── audio.mjs                # TTS (ElevenLabs) + STT (Whisper)
+├── config.mjs                  # Configurações centrais (100% via process.env)
+├── database.mjs                # PostgreSQL — pool, initDB, CRUD de mensagens/contatos/grupos
+├── memory.mjs                  # Sistema de memória Mem0-inspired (3 escopos, 10 categorias)
+├── brain.mjs                   # Cérebro IA — roteamento de agentes, geração de respostas
+├── audio.mjs                   # TTS (ElevenLabs/OpenAI) + STT (Whisper)
+├── profiles.mjs                # Síntese de perfis (clientes, equipe, processos)
+├── batch-asana.mjs             # Estudo exaustivo do Asana (ingestão em 3 fases)
+├── helpers.mjs                 # Utilitários (getMediaType, extractSender)
 ├── agents/
-│   └── master.mjs           # Prompts dos agentes + classificador
+│   └── master.mjs              # Prompts dos 4 agentes + classificador de intenção
 └── skills/
-    └── loader.mjs           # Skills/Tools do Claude
-docker-compose.yml           # PostgreSQL + Redis (senhas via .env)
-.env                         # Credenciais (NAO versionado!)
-auth_session/                # Sessao WhatsApp (NAO versionado!)
+    └── loader.mjs              # Tools do Claude (Asana + Google Calendar)
+dashboard/
+└── index.html                  # SPA do dashboard (Tailwind, Chart.js, auto-refresh)
+tests/
+└── unit.test.mjs               # Suite de testes (25 casos + scan de credenciais)
+.github/workflows/
+├── ci.yml                      # CI — Node 20, npm ci, npm test
+└── deploy.yml                  # CD — rsync para VPS via SSH (auto após CI)
+docker-compose.yml              # PostgreSQL 16 + Redis 7 (credenciais via .env)
+.env                            # Credenciais (NÃO VERSIONADO)
+auth_session/                   # Sessão WhatsApp (NÃO VERSIONADO)
 ```
 
-## Regras Criticas (NUNCA VIOLAR)
+---
+
+## Regras Críticas (NUNCA VIOLAR)
 
 ### Asana
-- **NUNCA alterar descricoes de tasks** no Asana — usar SOMENTE comentarios
-- Projetos publicos: Cabine de Comando, Producao de Design, Producao de Audiovisual, Captacoes
-- Demais projetos sao CONFIDENCIAIS
+- **NUNCA alterar descrições de tasks** — usar SOMENTE comentários
+- Projetos públicos: Cabine de Comando, Produção de Design, Produção de Audiovisual, Captações
+- Demais projetos são CONFIDENCIAIS
 
-### Codigo
-- **Pool PostgreSQL:** usar a variavel global `pool` exportada de `database.mjs` (NUNCA `CONFIG.DATABASE_URL`)
-- **Auth da API interna (WhatsApp → API):** header `x-api-key` (chamadas internas do Jarvis)
-- **Auth do Dashboard:** JWT via header `Authorization: Bearer <token>` (login + 2FA obrigatorio)
-- **Google JWT:** usar sintaxe de objeto `new google.auth.JWT({ email, key, scopes })`
-- **Credenciais:** TODAS vem do `.env` — NUNCA hardcodar senhas, tokens, IPs, telefones ou GIDs no codigo
-- **Portugues SEMPRE com acentos** em todas as respostas e documentacao voltada ao usuario
+### Código
+- **Pool PostgreSQL:** usar `pool` exportado de `database.mjs` (NUNCA `CONFIG.DATABASE_URL`)
+- **Auth interna (WhatsApp → API):** header `x-api-key`
+- **Auth Dashboard:** JWT via `Authorization: Bearer <token>` (login + 2FA obrigatório)
+- **Google JWT:** sintaxe de objeto `new google.auth.JWT({ email, key, scopes })`
+- **Credenciais:** TODAS vêm do `.env` — NUNCA hardcodar senhas, tokens, IPs, telefones ou GIDs
+- **Português SEMPRE com acentos** em respostas e documentação voltada ao usuário
 
-### Arquivos que NAO devem ser versionados
-- `.env` (chaves de API, senhas, IDs sensiveis)
-- `auth_session/` (sessao do WhatsApp)
+### Deploy
+- **NUNCA fazer deploy manual direto no servidor** — deploy SOMENTE via GitHub CI/CD (`git push`)
+- O pipeline é: `git push` → CI (testes) → Deploy automático (rsync + PM2 restart)
+
+### Arquivos NÃO versionados
+- `.env` — chaves de API, senhas, IDs sensíveis
+- `auth_session/` — sessão do WhatsApp
 - `node_modules/`
 - `google-calendar-key.json`
-- Qualquer arquivo com credenciais
+- `audio_files/` — arquivos de áudio temporários
 
-## Modulos
+---
+
+## Módulos
 
 ### jarvis-v2.mjs (Entry Point)
-- Conexao WhatsApp via Baileys (multi-device)
-- Handler de mensagens (texto + audio)
-- Express API (porta configuravel via .env)
-- Cron jobs (relatorio diario)
-- Sistema sentByBot para nao responder a si mesmo
+**Exporta:** nada (entry point)
+
+- Conexão WhatsApp via Baileys (multi-device, auto-reconnect)
+- Handler de mensagens (texto, áudio, captions de imagem/vídeo)
+- Aprendizado passivo em tempo real (processMemory em TODAS as mensagens ≥20 chars)
+- Express API com autenticação dupla (x-api-key + JWT)
+- Cron jobs: syncProfiles a cada 6h
+- Sistema sentByBot para evitar auto-resposta
+- Sistema de patentes (10 níveis: Recruta → Diretor da S.H.I.E.L.D.)
+- Score de inteligência (6 eixos: empresa, equipe, clientes, projetos, comunicação, processos)
 
 ### src/config.mjs
-Exporta: `CONFIG`, `TEAM_ASANA`, `ASANA_PROJECTS`, `ASANA_SECTIONS`, `PUBLIC_ASANA_PROJECTS`, `JARVIS_ALLOWED_GROUPS`, `AUDIO_ALLOWED`, `teamPhones`, `teamWhatsApp`
-- **Tudo via `process.env`** — nenhum valor sensivel hardcoded
+**Exporta:** `CONFIG`, `TEAM_ASANA`, `ASANA_PROJECTS`, `ASANA_SECTIONS`, `PUBLIC_ASANA_PROJECTS`, `JARVIS_ALLOWED_GROUPS`, `AUDIO_ALLOWED`, `teamPhones`, `teamWhatsApp`
+
+- Todas as configurações centralizadas via `process.env`
+- Parsing de JSON para maps de equipe/projetos/seções do Asana
 
 ### src/database.mjs
-Exporta: `pool`, `initDB`, `storeMessage`, `getRecentMessages`, `getContactInfo`, `getGroupInfo`, `upsertContact`, `upsertGroup`, `getMessageCount`
-- Credenciais PostgreSQL via .env (DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD)
+**Exporta:** `pool`, `initDB`, `storeMessage`, `getRecentMessages`, `getContactInfo`, `getGroupInfo`, `upsertContact`, `upsertGroup`, `getMessageCount`
+
+- Pool PostgreSQL com credenciais via .env
+- `initDB()` cria todas as tabelas automaticamente (idempotente)
+
+**Tabelas:**
+| Tabela | Função |
+|--------|--------|
+| `jarvis_messages` | Histórico de mensagens (text, audio, transcription) |
+| `jarvis_contacts` | Contatos do WhatsApp (jid, push_name, role) |
+| `jarvis_groups` | Grupos do WhatsApp (jid, name) |
+| `jarvis_config` | Configurações key-value (JSONB) |
+| `jarvis_memories` | Memórias extraídas (content, category, importance, scope) |
+| `jarvis_profiles` | Perfis sintetizados (entity_type, entity_id, profile JSONB) |
+| `homework` | Instruções de treinamento manual |
+| `gcal_sync` | Sincronização Asana ↔ Google Calendar |
+| `group_events` | Eventos de grupo (entrada/saída de participantes) |
+| `asana_study_log` | Controle do estudo exaustivo do Asana (resumível) |
+| `dashboard_users` | Usuários do dashboard (email, bcrypt hash, 2FA) |
+| `dashboard_access_log` | Log de acessos (IP, user-agent, geolocalização) |
+| `dashboard_2fa_codes` | Códigos 2FA temporários (6 dígitos, 5min TTL) |
 
 ### src/memory.mjs (Mem0-inspired)
-Exporta: `initMemory`, `extractFacts`, `storeFacts`, `searchMemories`, `getMemoryContext`, `processMemory`, `getMemoryStats`
-- 3 escopos de memoria: user, chat, agent
-- Extrai fatos via Claude (JSON com content/category/importance)
-- Pipeline ADD/UPDATE similar ao Mem0
-- Busca por ILIKE (sem pgvector no momento)
+**Exporta:** `initMemory`, `extractFacts`, `storeFacts`, `searchMemories`, `getMemoryContext`, `processMemory`, `getMemoryStats`
 
-### src/brain.mjs (Cerebro + Agent Teams)
-Exporta: `shouldJarvisRespond`, `isValidResponse`, `generateResponse`, `markConversationActive`, `isConversationActive`, `findTeamJid`, `extractMentionsFromText`, `generateDailyReport`
-- Classifica intencao e roteia para agente especializado
-- Modo conversa: 3 minutos de janela ativa apos resposta
+- **3 escopos de memória:** user (pessoas), chat (conversas), agent (operacional)
+- **10 categorias:** preference, client, client_profile, decision, deadline, rule, style, team_member, process, pattern
+- Extração de fatos via Claude Haiku (model configurável via `MEMORY_MODEL` no .env)
+- Pipeline ADD/UPDATE similar ao Mem0 (deduplica fatos existentes)
+- Busca por ILIKE (sem pgvector no momento)
+- `processMemory()` — roda em background em TODA mensagem recebida (aprendizado passivo)
+- `getMemoryContext()` — 6 camadas (user, chat, agent, client profile, sender profile, homework)
+
+### src/brain.mjs (Cérebro + Agent Teams)
+**Exporta:** `shouldJarvisRespond`, `isValidResponse`, `generateResponse`, `markConversationActive`, `isConversationActive`, `findTeamJid`, `extractMentionsFromText`, `generateDailyReport`
+
+- Classifica intenção e roteia para agente especializado (master/creative/manager/researcher)
+- Modo conversa: janela de 3 minutos ativa após resposta
+- Consolidação de mensagens consecutivas do mesmo remetente
+- Detecção de @mentions no texto da resposta
 
 ### src/agents/master.mjs
-Exporta: `classifyIntent`, `MASTER_SYSTEM_PROMPT`, `AGENT_PROMPTS`
-- **Master:** Personalidade Jarvis (Tony Stark style)
-- **Creative:** Copy, legendas, roteiros, CTAs
-- **Manager:** Gestao de projetos, Asana, prazos
-- **Researcher:** Pesquisa, dados, tendencias
+**Exporta:** `classifyIntent`, `MASTER_SYSTEM_PROMPT`, `AGENT_PROMPTS`
+
+| Agente | Especialidade | Triggers |
+|--------|--------------|----------|
+| Master | Conversação geral, personalidade Jarvis (Tony Stark) | Default |
+| Creative | Copy, legendas, roteiros, CTAs | copy, arte, conteúdo, post... |
+| Manager | Gestão de projetos, prazos, Asana | tarefa, prazo, status, cobrança... |
+| Researcher | Pesquisa, dados, tendências | pesquisar, dados, benchmark... |
 
 ### src/audio.mjs
-Exporta: `voiceConfig`, `loadVoiceConfig`, `saveVoiceConfig`, `transcribeAudio`, `generateAudio`
-- TTS: ElevenLabs (primario) ou OpenAI (fallback)
-- STT: Whisper (OpenAI)
-- Voice settings com sliders: stability, similarity_boost, style, use_speaker_boost
+**Exporta:** `voiceConfig`, `loadVoiceConfig`, `saveVoiceConfig`, `transcribeAudio`, `generateAudio`
+
+- TTS primário: ElevenLabs v3 (stability, similarity_boost, style, speaker_boost configuráveis)
+- TTS fallback: OpenAI TTS
+- STT: Whisper (OpenAI) para transcrição de áudios recebidos
+- Configurações de voz persistidas e editáveis via dashboard
+
+### src/profiles.mjs
+**Exporta:** `synthesizeProfile`, `getProfile`, `listProfiles`, `syncProfiles`
+
+- Sintetiza perfis estruturados a partir de memórias acumuladas (via Claude Haiku)
+- 4 tipos de entidade: client, group, team_member, process
+- `syncProfiles()` — identifica entidades com ≥3 memórias e gera perfis automaticamente
+- Roda via cron (a cada 6h) e após conclusão de batch/estudo
+
+### src/batch-asana.mjs (Estudo Exaustivo do Asana)
+**Exporta:** `startAsanaStudy`, `stopAsanaStudy`, `asanaBatchState`
+
+- Ingestão em 3 fases: Projetos → Tarefas → Comentários
+- Extrai fatos via Claude Haiku e salva na memória (escopos agent + user)
+- Rate limiting: 1 req/s para Asana API (60/min), 2 extrações/s para Haiku
+- Retry automático em 429 (Retry-After)
+- Paginação completa via `asanaGetAll()`
+- Resumível: controle de progresso via tabela `asana_study_log`
+- Auto `syncProfiles()` após conclusão
+- Somente leitura (GET) — ZERO escrita no Asana
 
 ### src/skills/loader.mjs
-Exporta: `asanaRequest`, `asanaCreateTask`, `asanaAddToProject`, `asanaAddComment`, `getOverdueTasks`, `getGCalClient`, `createGoogleCalendarEvent`, `JARVIS_TOOLS`, `executeJarvisTool`
-- Tools disponiveis: `agendar_captacao`, `consultar_tarefas`, `lembrar`
+**Exporta:** `asanaRequest`, `asanaCreateTask`, `asanaAddToProject`, `asanaAddComment`, `getOverdueTasks`, `getGCalClient`, `createGoogleCalendarEvent`, `JARVIS_TOOLS`, `executeJarvisTool`
+
+- Tools disponíveis para o Claude: `agendar_captacao`, `consultar_tarefas`, `lembrar`
+- Integração Asana: GET/POST com Bearer token do .env
+- Integração Google Calendar: JWT auth com service account
+
+### src/helpers.mjs
+**Exporta:** `getMediaType`, `extractSender`
+
+- `getMediaType()` — detecta tipo de mídia (audio, image, video, document, sticker, contact, location)
+- `extractSender()` — extrai JID do remetente (trata DMs vs. grupos, participant/participantAlt)
+
+---
 
 ## API Endpoints
 
-Base: porta configurada em `API_PORT` (.env)
-Auth interna: header `x-api-key` | Auth dashboard: `Authorization: Bearer <JWT>`
+**Base:** porta configurada em `API_PORT` (.env)
+**Auth interna:** header `x-api-key` | **Auth dashboard:** `Authorization: Bearer <JWT>`
 
-### Endpoints de Autenticacao (publicos — sem auth)
-| Metodo | Rota | Descricao |
+### Autenticação (públicos)
+| Método | Rota | Descrição |
 |--------|------|-----------|
-| GET | /dashboard/auth/status | Verifica se ja existe conta cadastrada |
-| POST | /dashboard/auth/setup | Cadastro inicial (so funciona 1x) |
-| POST | /dashboard/auth/login | Login email+senha → envia codigo 2FA via WhatsApp |
-| POST | /dashboard/auth/verify | Valida codigo 2FA → retorna JWT (8h) |
-| POST | /dashboard/auth/resend | Reenvia codigo 2FA |
+| GET | /dashboard/auth/status | Verifica se existe conta cadastrada |
+| POST | /dashboard/auth/setup | Cadastro inicial (funciona apenas 1x) |
+| POST | /dashboard/auth/login | Login email+senha → envia 2FA via WhatsApp |
+| POST | /dashboard/auth/verify | Valida 2FA → retorna JWT (8h) |
+| POST | /dashboard/auth/resend | Reenvia código 2FA |
 
-### Endpoints protegidos (requer JWT ou x-api-key)
-| Metodo | Rota | Descricao |
+### Protegidos (JWT ou x-api-key)
+| Método | Rota | Descrição |
 |--------|------|-----------|
-| GET | /status | Status do bot (versao, mensagens, memorias) |
+| GET | /status | Status do bot (versão, contadores) |
 | POST | /send/text | Enviar mensagem de texto |
-| POST | /send/audio | Enviar mensagem de audio (TTS) |
-| GET | /dashboard/health | Health check do dashboard |
-| GET | /dashboard/intelligence | Score de inteligencia (7 eixos + geral) |
-| GET | /dashboard/voice | Configuracoes de voz atuais |
-| POST | /dashboard/voice | Atualizar configuracoes de voz (sliders) |
-| GET | /dashboard/memory | Estatisticas de memoria |
-| GET | /dashboard/memory/search | Buscar memorias |
-| POST | /dashboard/memory/add | Adicionar memoria manualmente |
-| POST | /dashboard/chat | Chat com Jarvis (via dashboard) |
-| GET | /dashboard/qr | QR code para reconexao |
-| POST | /dashboard/auth/change-password | Alterar senha (requer JWT) |
-| GET | /dashboard/auth/access-log | Historico de acessos (requer JWT) |
+| POST | /send/audio | Enviar mensagem de áudio (TTS) |
+| GET | /dashboard/health | Health check |
+| GET | /dashboard/intelligence | Score de inteligência (6 eixos + patente) |
+| GET/POST | /dashboard/voice | Configurações de voz |
+| GET | /dashboard/memory | Estatísticas de memória |
+| GET | /dashboard/memory/search | Buscar memórias |
+| GET | /dashboard/memory/recent | Memórias recentes (limit) |
+| GET | /dashboard/memory/today | Estatísticas do dia |
+| POST | /dashboard/memory/add | Adicionar memória manualmente |
+| POST | /dashboard/chat | Chat com Jarvis via dashboard |
+| GET | /dashboard/qr | QR code para reconexão WhatsApp |
+| GET | /dashboard/profiles | Listar perfis sintetizados |
+| GET | /dashboard/profiles/:type/:id | Perfil específico |
+| POST | /dashboard/profiles/sync | Forçar sincronização de perfis |
+| POST | /dashboard/profiles/synthesize | Sintetizar perfil específico |
+| POST | /dashboard/asana/study/start | Iniciar estudo exaustivo do Asana |
+| GET | /dashboard/asana/study/status | Status do estudo (progresso em tempo real) |
+| POST | /dashboard/asana/study/stop | Parar estudo |
+| POST | /dashboard/auth/change-password | Alterar senha |
+| GET | /dashboard/auth/access-log | Histórico de acessos |
+
+---
 
 ## Fluxo de Mensagem
 
 ```
 Mensagem recebida (WhatsApp)
-  -> Filtros (grupo permitido? mencionou Jarvis? reply? modo conversa?)
-  -> storeMessage() no PostgreSQL
-  -> shouldJarvisRespond() — decide se responde
-  -> generateResponse():
-      1. Busca historico (20 ultimas mensagens)
+  │
+  ├─ Filtros: sentByBot? grupo permitido? tamanho mínimo?
+  ├─ storeMessage() → PostgreSQL
+  ├─ upsertContact() / upsertGroup()
+  │
+  ├─ Aprendizado Passivo (SEMPRE, antes de decidir se responde):
+  │   └─ processMemory() → extractFacts (Haiku) → storeFacts (user + chat)
+  │
+  ├─ shouldJarvisRespond() — mencionou? reply? modo conversa? grupo permitido?
+  │   └─ Se NÃO → para aqui (mas já aprendeu)
+  │
+  └─ generateResponse():
+      1. getRecentMessages() — 20 últimas do chat
       2. Consolida mensagens consecutivas do mesmo role
-      3. Busca memorias relevantes (3 escopos)
-      4. Classifica intencao (master/creative/manager/researcher)
-      5. Monta system prompt + contexto + agente
+      3. getMemoryContext() — 6 camadas de contexto
+      4. classifyIntent() → master/creative/manager/researcher
+      5. System prompt + contexto + agente especializado
       6. Claude API com tools (agendar_captacao, consultar_tarefas, lembrar)
-      7. Se tool_use -> executa tool -> follow-up com resultado
-      8. Extrai @mentions do texto
-      9. processMemory() em background
-  -> Envia resposta no WhatsApp
-  -> markConversationActive() (janela de 3 min)
+      7. Se tool_use → executa → follow-up com resultado
+      8. extractMentionsFromText()
+      → Envia resposta no WhatsApp
+      → markConversationActive() (janela de 3 min)
 ```
 
-## Configuracao (.env)
+---
 
-Todas as credenciais, IDs e dados sensiveis ficam EXCLUSIVAMENTE no `.env`.
-Consulte `.env.example` para a lista completa de variaveis necessarias.
+## CI/CD Pipeline
 
-## Seguranca do Dashboard
+```
+git push origin master
+  │
+  ├─ GitHub Actions: CI - Testes (ci.yml)
+  │   ├─ Node 20 + npm ci
+  │   └─ npm test (25 testes + scan de credenciais)
+  │
+  └─ Se CI passou → Deploy para VPS (deploy.yml)
+      ├─ SSH via chave Ed25519 (GitHub Secrets)
+      ├─ rsync (exclui .env, auth_session, node_modules, *.bak)
+      ├─ npm ci --production
+      └─ PM2 restart jarvis
+```
 
-O dashboard usa autenticacao em 2 fatores:
-1. **Email + Senha** (bcrypt hash, custo 12)
-2. **Codigo 2FA via WhatsApp** (6 digitos, expira 5min, single-use)
-3. **Token JWT** (expira 8h, secret no .env)
+**GitHub Secrets necessários:**
+- `VPS_SSH_KEY` — chave privada Ed25519
+- `VPS_HOST` — IP do servidor
+- `VPS_USER` — usuário SSH (root)
 
-Tabelas de seguranca:
-- `dashboard_users` — email, password_hash, phone_2fa, failed_attempts, locked_until
-- `dashboard_access_log` — ip, user_agent, action, success, geolocalizacao
-- `dashboard_2fa_codes` — code, expires_at, used
+---
 
-Protecoes:
-- Bloqueio apos 5 tentativas erradas (15min)
+## Segurança
+
+### Dashboard (2FA obrigatório)
+1. **Email + Senha** — bcrypt hash, custo 12
+2. **Código 2FA via WhatsApp** — 6 dígitos, expira 5min, single-use
+3. **Token JWT** — expira 8h, secret no .env
+
+### Proteções
+- Bloqueio após 5 tentativas erradas (15min lockout)
 - Rate limiting: 10 tentativas/min por IP
-- Alerta WhatsApp para IP desconhecido
-- Geolocalizacao via ip-api.com (cache 1h)
-- API key interna (`x-api-key`) continua funcionando para chamadas do Jarvis (backward compat)
+- Alerta via WhatsApp para IP desconhecido
+- Geolocalização via ip-api.com (cache 1h)
+- API key interna (`x-api-key`) para chamadas do bot (backward compat)
 
-## Evolucao Futura
+### Credenciais
+- **Zero segredos no código** — auditoria automática via `unit.test.mjs`
+- Todas as credenciais em `.env` (não versionado)
+- Docker Compose usa variáveis de ambiente (sem senhas hardcoded)
+- Deploy exclui `.env` e `google-calendar-key.json` via rsync
 
-- [ ] Upgrade PostgreSQL para imagem com pgvector (busca semantica de memorias)
-- [ ] Mais skills/tools (web search, enviar email, gerar imagem)
-- [ ] Dashboard frontend completo
-- [ ] MCP server proprio para integracao com ferramentas externas
-- [ ] Agente de vendas para atendimento automatico a clientes
-- [ ] Webhooks Asana para reagir a mudancas em tempo real
+---
+
+## Infraestrutura
+
+### Docker Compose
+| Serviço | Imagem | Porta | Persistência |
+|---------|--------|-------|-------------|
+| PostgreSQL | postgres:16-alpine | 127.0.0.1:5432 | Volume `postgres_data` |
+| Redis | redis:7-alpine | 127.0.0.1:6379 | AOF habilitado |
+
+Ambos com health check habilitado e bind apenas em localhost.
+
+### PM2
+- Processo: `jarvis` (fork mode)
+- Restart automático em crash
+- Logs: `/root/.pm2/logs/jarvis-out.log` e `jarvis-error.log`
+
+---
+
+## Testes
+
+```bash
+npm test   # Roda suite completa
+```
+
+**25 casos de teste:**
+- `getMediaType()` — detecção de tipos de mídia (audio, image, video, etc.)
+- `extractSender()` — extração de JID em DMs e grupos
+- `isValidResponse()` — validação de respostas (rejeita vazias, só pontuação, <3 letras)
+- `classifyIntent()` — roteamento para agente correto por keywords
+- `.env.example` — valida que todas as variáveis obrigatórias estão documentadas
+- **Scan de credenciais** — varre todos os `.mjs` por padrões de chaves/tokens hardcoded
+
+---
+
+## Variáveis de Ambiente
+
+Consulte `.env.example` para a lista completa. Variáveis críticas:
+
+| Variável | Descrição |
+|----------|-----------|
+| `ANTHROPIC_API_KEY` | Chave da API Claude |
+| `OPENAI_API_KEY` | Chave OpenAI (Whisper + TTS fallback) |
+| `ELEVENLABS_API_KEY` | Chave ElevenLabs (TTS primário) |
+| `ASANA_PAT` | Personal Access Token do Asana |
+| `ASANA_WORKSPACE` | GID do workspace Asana |
+| `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | PostgreSQL |
+| `REDIS_PASSWORD` | Senha do Redis |
+| `JWT_SECRET` | Secret para tokens JWT do dashboard |
+| `API_KEY` | Chave interna da API (header x-api-key) |
+| `API_PORT` | Porta do Express (default: 3100) |
+| `MEMORY_MODEL` | Modelo para extração de fatos (ex: claude-3-haiku-20240307) |
+| `AI_MODEL` | Modelo principal para respostas (ex: claude-sonnet-4-20250514) |
+
+---
+
+## Evolução Futura
+
+- [ ] pgvector para busca semântica de memórias
+- [ ] Webhooks Asana para acompanhamento em tempo real
+- [ ] Rotinas proativas (verificar tarefas atrasadas, avisar no WhatsApp)
+- [ ] Novos tools: criar comentários, mover tarefas no Asana
+- [ ] Ingestão de conteúdo do Google Drive (planners antigos)
+- [ ] MCP server para integração com ferramentas externas
+- [ ] Agente de vendas para atendimento automático

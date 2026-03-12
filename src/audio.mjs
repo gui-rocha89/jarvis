@@ -17,7 +17,7 @@ export let voiceConfig = {
   provider: 'elevenlabs',
   openai: { voice: 'onyx', model: 'tts-1' },
   elevenlabs: {
-    voiceId: 'CstacWqMhJQlnfLPxRG4',
+    voiceId: process.env.ELEVENLABS_VOICE_ID || 'CstacWqMhJQlnfLPxRG4',
     model: 'eleven_v3',
     stability: 0.5,
     similarity_boost: 0.75,
@@ -74,7 +74,7 @@ export async function generateAudio(text) {
 
   if (provider === 'elevenlabs' && process.env.ELEVENLABS_API_KEY) {
     const vc = voiceConfig.elevenlabs;
-    const vId = vc.voiceId || 'CstacWqMhJQlnfLPxRG4';
+    const vId = vc.voiceId || process.env.ELEVENLABS_VOICE_ID || 'CstacWqMhJQlnfLPxRG4';
     const mId = vc.model || 'eleven_v3';
 
     const voiceSettings = {
