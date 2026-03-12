@@ -6,3 +6,4 @@ auth_info/
 .pm2/
 *.log
 google-calendar-key.json
+audio_files/

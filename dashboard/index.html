@@ -388,7 +388,7 @@
         </div>
       </div>
 
-      <!-- Intelligence Score -->
+      <!-- Patente + Intelligence -->
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <!-- Radar Chart -->
         <div class="panel p-5 lg:col-span-2 relative overflow-hidden">
@@ -397,25 +397,65 @@
             <canvas id="intelligence-radar"></canvas>
           </div>
         </div>
-        <!-- Score Arc -->
+        <!-- Patente Card -->
         <div class="panel p-5 flex flex-col items-center justify-center relative overflow-hidden">
-          <h3 class="font-orbitron text-xs text-stark-dim mb-4 tracking-wider text-center">NÍVEL DE CONHECIMENTO</h3>
-          <div class="relative w-48 h-48">
-            <svg viewBox="0 0 200 200" class="w-full h-full">
-              <circle cx="100" cy="100" r="85" fill="none" stroke="#1a2744" stroke-width="8" stroke-dasharray="400 534" stroke-dashoffset="-67" stroke-linecap="round"/>
-              <circle id="score-arc" cx="100" cy="100" r="85" fill="none" stroke="#00d4ff" stroke-width="8" stroke-dasharray="0 534" stroke-dashoffset="-67" stroke-linecap="round" class="transition-all duration-1000"/>
-            </svg>
-            <div class="absolute inset-0 flex flex-col items-center justify-center">
-              <span id="score-value" class="font-orbitron text-4xl text-stark-cyan glow-blue" style="color:#00f0ff">0%</span>
-              <span class="text-[10px] text-stark-dim mt-1 font-mono">SCORE GERAL</span>
+          <h3 class="font-orbitron text-xs text-stark-dim mb-3 tracking-wider text-center">PATENTE ATUAL</h3>
+          <!-- Patente Icon + Name -->
+          <div id="patente-icon" class="text-5xl mb-1">🟤</div>
+          <div id="patente-nome" class="font-orbitron text-xl glow-blue text-center" style="color:#00d4ff">Recruta</div>
+          <div id="patente-desc" class="text-[10px] text-stark-dim text-center mt-1 font-rajdhani">Acabou de chegar</div>
+
+          <!-- Progress to next -->
+          <div class="w-full mt-4 px-2">
+            <div class="flex justify-between text-[9px] font-mono text-stark-dim mb-1">
+              <span id="patente-current-label">Recruta</span>
+              <span id="patente-next-label">Agente</span>
+            </div>
+            <div class="w-full h-2 bg-stark-border rounded-full overflow-hidden">
+              <div id="patente-progress" class="h-full rounded-full transition-all duration-1000" style="width:0%; background:#00d4ff"></div>
+            </div>
+            <div class="text-center mt-1">
+              <span id="patente-progress-text" class="text-[9px] font-mono text-stark-dim">0 / 50 memórias</span>
             </div>
           </div>
-          <div class="mt-4 grid grid-cols-2 gap-x-6 gap-y-1 text-[10px] font-mono">
+
+          <!-- Stats compactos -->
+          <div class="mt-3 grid grid-cols-2 gap-x-5 gap-y-1 text-[10px] font-mono w-full">
             <div class="text-stark-dim">Memórias: <span id="intel-memories" class="text-white">0</span></div>
             <div class="text-stark-dim">Mensagens: <span id="intel-messages" class="text-white">0</span></div>
             <div class="text-stark-dim">Contatos: <span id="intel-contacts" class="text-white">0</span></div>
+            <div class="text-stark-dim">Grupos: <span id="intel-groups" class="text-white">0</span></div>
             <div class="text-stark-dim">Dias ativo: <span id="intel-days" class="text-white">0</span></div>
+            <div class="text-stark-dim">Perfis: <span id="intel-profiles" class="text-white">0</span></div>
           </div>
+        </div>
+      </div>
+
+      <!-- Patente Progression Bar -->
+      <div class="panel p-4 relative overflow-hidden">
+        <h3 class="font-orbitron text-xs text-stark-dim mb-3 tracking-wider">PROGRESSÃO DE PATENTES</h3>
+        <div id="patentes-progression" class="flex items-center gap-1 overflow-x-auto pb-2">
+          <!-- Preenchido via JS -->
+        </div>
+      </div>
+
+      <!-- Batch Processing Status (visível se rodando) -->
+      <div id="batch-panel" class="panel p-4 relative overflow-hidden hidden">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="font-orbitron text-xs text-stark-orange tracking-wider" style="color:#ff8a00">⚡ PROCESSAMENTO EM LOTE</h3>
+          <div class="flex gap-2">
+            <button onclick="startBatch()" id="batch-start-btn" class="text-[10px] bg-stark-green/20 border border-stark-green text-stark-green px-3 py-1 rounded hover:bg-stark-green/30 font-mono">INICIAR</button>
+            <button onclick="stopBatch()" id="batch-stop-btn" class="text-[10px] bg-stark-red/20 border border-stark-red text-stark-red px-3 py-1 rounded hover:bg-stark-red/30 font-mono hidden">PARAR</button>
+          </div>
+        </div>
+        <div class="w-full h-3 bg-stark-border rounded-full overflow-hidden mb-2">
+          <div id="batch-progress-bar" class="h-full rounded-full transition-all duration-500" style="width:0%; background: linear-gradient(90deg, #ff8a00, #ffd700)"></div>
+        </div>
+        <div class="flex justify-between text-[10px] font-mono text-stark-dim">
+          <span id="batch-processed">0 processadas</span>
+          <span id="batch-speed">-- msg/h</span>
+          <span id="batch-eta">-- restante</span>
+          <span id="batch-errors" class="text-stark-red">0 erros</span>
         </div>
       </div>
 
@@ -1565,7 +1605,7 @@
     }
 
     // ============================================
-    // INTELLIGENCE CHART
+    // INTELLIGENCE + PATENTES
     // ============================================
     let radarChart = null;
     async function loadIntelligence() {
@@ -1573,27 +1613,53 @@
         const res = await api('/dashboard/intelligence');
         const data = await res.json();
 
-        // Update score arc
-        const score = data.overallScore || 0;
-        document.getElementById('score-value').textContent = score + '%';
-        const arcLength = (score / 100) * 400;
-        const arc = document.getElementById('score-arc');
-        arc.setAttribute('stroke-dasharray', `${arcLength} 534`);
-        // Color based on score
-        const color = score < 30 ? '#ff3b3b' : score < 70 ? '#ffd700' : '#00f0ff';
-        arc.setAttribute('stroke', color);
-        document.getElementById('score-value').style.color = color;
+        // === PATENTE ===
+        const pat = data.patente || {};
+        document.getElementById('patente-icon').textContent = pat.icon || '🟤';
+        document.getElementById('patente-nome').textContent = pat.nome || 'Recruta';
+        document.getElementById('patente-nome').style.color = pat.cor || '#8B6914';
+        document.getElementById('patente-nome').style.textShadow = `0 0 15px ${pat.cor || '#8B6914'}80, 0 0 40px ${pat.cor || '#8B6914'}30`;
+        document.getElementById('patente-desc').textContent = pat.desc || '';
+        document.getElementById('patente-current-label').textContent = pat.nome || 'Recruta';
+        document.getElementById('patente-progress').style.width = (pat.progressToNext || 0) + '%';
+        document.getElementById('patente-progress').style.background = `linear-gradient(90deg, ${pat.cor || '#8B6914'}, ${pat.nextPatente?.icon ? (data.allPatentes?.find(p => p.nome === pat.nextPatente.nome)?.cor || '#00d4ff') : pat.cor})`;
 
-        // Update stats
+        if (pat.nextPatente) {
+          document.getElementById('patente-next-label').textContent = pat.nextPatente.nome;
+          document.getElementById('patente-progress-text').textContent = `${(data.totalMemories || 0).toLocaleString()} / ${pat.nextPatente.min.toLocaleString()} memórias`;
+        } else {
+          document.getElementById('patente-next-label').textContent = 'MAX';
+          document.getElementById('patente-progress-text').textContent = `${(data.totalMemories || 0).toLocaleString()} memórias — NÍVEL MÁXIMO`;
+        }
+
+        // === Progressão de Patentes ===
+        const progContainer = document.getElementById('patentes-progression');
+        const allPat = data.allPatentes || [];
+        progContainer.innerHTML = allPat.map((p, i) => {
+          const isActive = p.id === pat.id;
+          const isPast = (data.totalMemories || 0) >= p.min;
+          const opacity = isPast ? 'opacity-100' : 'opacity-30';
+          const border = isActive ? `border: 2px solid ${p.cor}; box-shadow: 0 0 12px ${p.cor}60;` : isPast ? `border: 1px solid ${p.cor}50;` : 'border: 1px solid #1a2744;';
+          return `<div class="flex-shrink-0 flex flex-col items-center px-3 py-2 rounded-lg ${opacity}" style="${border} min-width: 90px;">
+            <span class="text-xl">${p.icon}</span>
+            <span class="text-[9px] font-orbitron mt-1" style="color:${p.cor}">${p.nome}</span>
+            <span class="text-[8px] text-stark-dim font-mono">${p.min.toLocaleString()}+</span>
+          </div>${i < allPat.length - 1 ? '<div class="flex-shrink-0 text-stark-dim text-xs">→</div>' : ''}`;
+        }).join('');
+
+        // === Stats ===
         document.getElementById('intel-memories').textContent = (data.totalMemories || 0).toLocaleString();
         document.getElementById('intel-messages').textContent = (data.totalMessages || 0).toLocaleString();
         document.getElementById('intel-contacts').textContent = data.uniqueContacts || 0;
+        document.getElementById('intel-groups').textContent = data.uniqueGroups || 0;
         document.getElementById('intel-days').textContent = data.daysActive || 0;
+        const totalProfiles = Object.values(data.profilesCount || {}).reduce((a, b) => a + b, 0);
+        document.getElementById('intel-profiles').textContent = totalProfiles;
 
-        // Radar chart
+        // === Radar chart ===
         const axes = data.axes || {};
-        const labels = ['Clientes', 'Tarefas', 'Calendário', 'Procedimentos', 'Conversação', 'Padrão Tasks', 'Stream Lab'];
-        const values = [axes.clientes || 0, axes.tarefas || 0, axes.calendario || 0, axes.procedimentos || 0, axes.conversacao || 0, axes.padraoTasks || 0, axes.streamLab || 0];
+        const labels = ['🏢 Empresa', '👥 Equipe', '🎯 Clientes', '📋 Projetos', '🗣️ Comunicação', '⚙️ Processos'];
+        const values = [axes.empresa || 0, axes.equipe || 0, axes.clientes || 0, axes.projetos || 0, axes.comunicacao || 0, axes.processos || 0];
 
         const ctx = document.getElementById('intelligence-radar');
         if (radarChart) radarChart.destroy();
@@ -1604,13 +1670,13 @@
             datasets: [{
               label: 'Conhecimento',
               data: values,
-              backgroundColor: 'rgba(0, 212, 255, 0.15)',
-              borderColor: '#00d4ff',
+              backgroundColor: `${pat.cor || '#00d4ff'}25`,
+              borderColor: pat.cor || '#00d4ff',
               borderWidth: 2,
-              pointBackgroundColor: '#00f0ff',
-              pointBorderColor: '#00f0ff',
-              pointRadius: 4,
-              pointHoverRadius: 6,
+              pointBackgroundColor: pat.cor || '#00f0ff',
+              pointBorderColor: pat.cor || '#00f0ff',
+              pointRadius: 5,
+              pointHoverRadius: 7,
             }]
           },
           options: {
@@ -1624,13 +1690,71 @@
                 grid: { color: 'rgba(26, 39, 68, 0.8)', lineWidth: 1 },
                 angleLines: { color: 'rgba(26, 39, 68, 0.6)' },
                 pointLabels: {
-                  color: '#3a4a6b', font: { family: 'JetBrains Mono', size: 10 },
+                  color: '#5a6a8b', font: { family: 'JetBrains Mono', size: 11 },
                 },
               }
             },
           },
         });
+
+        // === Batch Status ===
+        loadBatchStatus();
       } catch (e) { console.error('Intelligence error:', e); }
+    }
+
+    // ============================================
+    // BATCH PROCESSING
+    // ============================================
+    let batchInterval = null;
+    async function loadBatchStatus() {
+      try {
+        const res = await api('/dashboard/memory/batch/status');
+        const data = await res.json();
+        const panel = document.getElementById('batch-panel');
+        panel.classList.remove('hidden');
+
+        if (data.running) {
+          document.getElementById('batch-start-btn').classList.add('hidden');
+          document.getElementById('batch-stop-btn').classList.remove('hidden');
+          const pct = data.total > 0 ? Math.round((data.processed / data.total) * 100) : 0;
+          document.getElementById('batch-progress-bar').style.width = pct + '%';
+          document.getElementById('batch-processed').textContent = `${data.processed.toLocaleString()} / ${data.total.toLocaleString()}`;
+          document.getElementById('batch-speed').textContent = `${Math.round(data.speed || 0).toLocaleString()} msg/h`;
+          document.getElementById('batch-eta').textContent = data.remainingMinutes > 0 ? `~${Math.round(data.remainingMinutes)} min` : 'calculando...';
+          document.getElementById('batch-errors').textContent = `${data.errors} erros`;
+          // Auto-refresh enquanto rodando
+          if (!batchInterval) batchInterval = setInterval(loadBatchStatus, 10000);
+        } else {
+          document.getElementById('batch-start-btn').classList.remove('hidden');
+          document.getElementById('batch-stop-btn').classList.add('hidden');
+          if (data.processed > 0) {
+            document.getElementById('batch-processed').textContent = `${data.processed.toLocaleString()} concluídas`;
+            document.getElementById('batch-progress-bar').style.width = '100%';
+            document.getElementById('batch-progress-bar').style.background = 'linear-gradient(90deg, #00ff88, #00d4ff)';
+          }
+          document.getElementById('batch-speed').textContent = data.stoppedAt ? 'finalizado' : '--';
+          document.getElementById('batch-eta').textContent = '';
+          document.getElementById('batch-errors').textContent = `${data.errors || 0} erros`;
+          if (batchInterval) { clearInterval(batchInterval); batchInterval = null; }
+        }
+      } catch (e) { console.error('Batch status error:', e); }
+    }
+
+    async function startBatch() {
+      try {
+        const res = await api('/dashboard/memory/batch/start', { method: 'POST' });
+        const data = await res.json();
+        notify(`Batch iniciado: ${(data.total || 0).toLocaleString()} mensagens`, 'success');
+        loadBatchStatus();
+      } catch (e) { notify('Erro ao iniciar batch', 'error'); }
+    }
+
+    async function stopBatch() {
+      try {
+        await api('/dashboard/memory/batch/stop', { method: 'POST' });
+        notify('Batch parado', 'success');
+        loadBatchStatus();
+      } catch (e) { notify('Erro ao parar batch', 'error'); }
     }
 
     // ============================================
@@ -1699,7 +1823,9 @@
       setInterval(() => {
         const activeTab = document.querySelector('.tab-btn.tab-active')?.dataset?.tab;
         loadHealth();
+        if (activeTab === 'overview') loadIntelligence();
         if (activeTab === 'logs') loadLogs();
+        if (activeTab === 'memory') loadMemoryStats();
       }, 30000);
     }
 

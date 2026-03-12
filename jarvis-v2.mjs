@@ -108,7 +108,7 @@ async function handleIncomingMessage(m) {
   let isAudio = false;
   const audioMsg = m.message?.audioMessage;
 
-  // Transcrever áudio
+  // Transcrever áudio + salvar arquivo
   if (audioMsg && process.env.OPENAI_API_KEY) {
     try {
       console.log('[AUDIO] Transcrevendo audio de', m.pushName || sender);
@@ -117,6 +117,18 @@ async function handleIncomingMessage(m) {
       text = transcription;
       isAudio = true;
       console.log('[AUDIO] Transcricao:', transcription.substring(0, 100));
+
+      // Salvar arquivo de áudio em disco para consulta futura
+      try {
+        const audioDir = path.join(__dirname, 'audio_files');
+        const { mkdir } = await import('fs/promises');
+        await mkdir(audioDir, { recursive: true });
+        const audioFile = path.join(audioDir, `${m.key.id}.ogg`);
+        await writeFile(audioFile, buffer);
+        console.log(`[AUDIO] Arquivo salvo: ${audioFile} (${Math.round(buffer.length / 1024)}KB)`);
+      } catch (saveErr) {
+        console.error('[AUDIO] Erro ao salvar arquivo:', saveErr.message);
+      }
     } catch (err) {
       console.error('[AUDIO] Erro:', err.message);
     }
@@ -494,36 +506,116 @@ app.get('/dashboard/auth/access-log', auth, async (req, res) => {
 app.get('/dashboard/intelligence', auth, async (req, res) => {
   try {
     const memByCategory = await pool.query('SELECT category, COUNT(*)::int as cnt, AVG(importance)::float as avg_imp FROM jarvis_memories GROUP BY category');
+    const memByScope = await pool.query('SELECT scope, COUNT(*)::int as cnt FROM jarvis_memories GROUP BY scope');
     const totalMemories = await pool.query('SELECT COUNT(*)::int as cnt FROM jarvis_memories');
     const totalMessages = await pool.query('SELECT COUNT(*)::int as cnt FROM jarvis_messages');
     const uniqueContacts = await pool.query('SELECT COUNT(DISTINCT sender)::int as cnt FROM jarvis_messages');
-    const gcalCount = await pool.query('SELECT COUNT(*)::int as cnt FROM gcal_sync');
+    const uniqueGroups = await pool.query('SELECT COUNT(DISTINCT chat_id)::int as cnt FROM jarvis_messages WHERE is_group = true');
+    const profileCount = await pool.query('SELECT entity_type, COUNT(*)::int as cnt FROM jarvis_profiles GROUP BY entity_type').catch(() => ({ rows: [] }));
+    const gcalCount = await pool.query('SELECT COUNT(*)::int as cnt FROM gcal_sync').catch(() => ({ rows: [{ cnt: 0 }] }));
     const daysActive = await pool.query("SELECT COALESCE(EXTRACT(DAY FROM NOW() - MIN(created_at)), 0)::int as days FROM jarvis_messages WHERE push_name = 'Jarvis' OR sender LIKE '%jarvis%'");
 
     const catMap = {};
     for (const row of memByCategory.rows) catMap[row.category] = { count: row.cnt, avgImp: row.avg_imp };
+    const scopeMap = {};
+    for (const row of memByScope.rows) scopeMap[row.scope] = row.cnt;
+    const profileMap = {};
+    for (const row of profileCount.rows) profileMap[row.entity_type] = row.cnt;
 
-    // Calcular scores (0-100) com thresholds realistas
-    const clamp = (v) => Math.min(Math.round(v), 100);
-    const axes = {
-      clientes: clamp(((catMap['client']?.count || 0) / 20) * 100),
-      tarefas: clamp((((catMap['deadline']?.count || 0) + (catMap['decision']?.count || 0)) / 30) * 100),
-      calendario: clamp(((gcalCount.rows[0].cnt || 0) / 50) * 100),
-      procedimentos: clamp((((catMap['rule']?.count || 0) + (catMap['instruction']?.count || 0)) / 25) * 100),
-      conversacao: clamp(((totalMessages.rows[0].cnt || 0) / 1000) * 100),
-      padraoTasks: clamp(((catMap['style']?.count || 0) / 15) * 100),
-      streamLab: clamp(((catMap['general']?.count || 0) / 30) * 100),
+    const totalMem = totalMemories.rows[0].cnt;
+
+    // ============================================
+    // SISTEMA DE PATENTES - Inspirado nos Vingadores
+    // ============================================
+    // 6 eixos de conhecimento com thresholds progressivos (escala logarítmica)
+    const logScore = (count, thresholds) => {
+      // thresholds: [t1, t2, t3, t4, t5] → 0-20, 20-40, 40-60, 60-80, 80-100
+      if (count <= 0) return 0;
+      for (let i = 0; i < thresholds.length; i++) {
+        if (count <= thresholds[i]) {
+          const prev = i === 0 ? 0 : thresholds[i - 1];
+          const range = thresholds[i] - prev;
+          const progress = (count - prev) / range;
+          return Math.round((i * 20) + (progress * 20));
+        }
+      }
+      return 100;
     };
 
-    const values = Object.values(axes);
-    const overallScore = Math.round(values.reduce((a, b) => a + b, 0) / values.length);
+    const axes = {
+      empresa: logScore(
+        (catMap['general']?.count || 0) + (catMap['rule']?.count || 0) + (catMap['process']?.count || 0),
+        [10, 50, 150, 400, 1000]
+      ),
+      equipe: logScore(
+        (catMap['team_member']?.count || 0) + (catMap['style']?.count || 0) + (catMap['pattern']?.count || 0),
+        [10, 40, 120, 300, 800]
+      ),
+      clientes: logScore(
+        (catMap['client']?.count || 0) + (catMap['client_profile']?.count || 0),
+        [10, 50, 150, 400, 1000]
+      ),
+      projetos: logScore(
+        (catMap['decision']?.count || 0) + (catMap['deadline']?.count || 0) + (gcalCount.rows[0].cnt || 0),
+        [10, 40, 120, 300, 800]
+      ),
+      comunicacao: logScore(
+        (catMap['preference']?.count || 0) + (catMap['style']?.count || 0),
+        [5, 25, 80, 200, 500]
+      ),
+      processos: logScore(
+        (catMap['process']?.count || 0) + (catMap['rule']?.count || 0),
+        [5, 20, 60, 150, 400]
+      ),
+    };
+
+    const axesValues = Object.values(axes);
+    const overallScore = Math.round(axesValues.reduce((a, b) => a + b, 0) / axesValues.length);
+
+    // Patente baseada no TOTAL de memórias (não no score %)
+    const patentes = [
+      { id: 'recruta', nome: 'Recruta', cor: '#8B6914', icon: '🟤', min: 0, max: 49, desc: 'Acabou de chegar, aprendendo o básico' },
+      { id: 'agente', nome: 'Agente', cor: '#00d4ff', icon: '🔵', min: 50, max: 199, desc: 'Conhece as pessoas e rotinas' },
+      { id: 'especialista', nome: 'Especialista', cor: '#00ff88', icon: '🟢', min: 200, max: 499, desc: 'Entende padrões, clientes e processos' },
+      { id: 'capitao', nome: 'Capitão', cor: '#ffd700', icon: '🟡', min: 500, max: 1499, desc: 'Domina a operação, antecipa necessidades' },
+      { id: 'comandante', nome: 'Comandante', cor: '#ff8a00', icon: '🟠', min: 1500, max: 4999, desc: 'Conhecimento profundo de tudo e todos' },
+      { id: 'diretor', nome: 'Diretor da S.H.I.E.L.D.', cor: '#ff3b3b', icon: '🔴', min: 5000, max: Infinity, desc: 'Sabe mais da empresa que qualquer humano' },
+    ];
+
+    const patente = patentes.find(p => totalMem >= p.min && totalMem <= p.max) || patentes[0];
+    const nextPatente = patentes.find(p => p.min > totalMem) || null;
+    const progressToNext = nextPatente
+      ? Math.round(((totalMem - patente.min) / (nextPatente.min - patente.min)) * 100)
+      : 100;
 
     res.json({
-      overallScore, axes,
-      totalMemories: totalMemories.rows[0].cnt,
+      // Patente
+      patente: {
+        id: patente.id,
+        nome: patente.nome,
+        cor: patente.cor,
+        icon: patente.icon,
+        desc: patente.desc,
+        progressToNext,
+        nextPatente: nextPatente ? { nome: nextPatente.nome, icon: nextPatente.icon, min: nextPatente.min } : null,
+      },
+      // Eixos de conhecimento (radar)
+      axes,
+      overallScore,
+      // Contadores
+      totalMemories: totalMem,
       totalMessages: totalMessages.rows[0].cnt,
       uniqueContacts: uniqueContacts.rows[0].cnt,
+      uniqueGroups: uniqueGroups.rows[0].cnt,
       daysActive: daysActive.rows[0].days,
+      // Breakdown
+      memoriesByScope: scopeMap,
+      memoriesByCategory: catMap,
+      profilesCount: profileMap,
+      // Todas as patentes para mostrar a progressão
+      allPatentes: patentes.filter(p => p.max !== Infinity).map(p => ({ ...p })).concat([
+        { id: 'diretor', nome: 'Diretor da S.H.I.E.L.D.', cor: '#ff3b3b', icon: '🔴', min: 5000, desc: 'Sabe mais da empresa que qualquer humano' },
+      ]),
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -680,7 +772,17 @@ app.get('/dashboard/logs', auth, async (req, res) => {
 app.get('/dashboard/memory', auth, async (req, res) => {
   try {
     const stats = await getMemoryStats();
-    res.json(stats);
+    // Mapear byScope para campos diretos que o frontend espera
+    const scopeMap = {};
+    for (const row of (stats.byScope || [])) scopeMap[row.scope] = parseInt(row.count);
+    res.json({
+      total: stats.total || 0,
+      user: scopeMap['user'] || 0,
+      chat: scopeMap['chat'] || 0,
+      agent: scopeMap['agent'] || 0,
+      byCategory: stats.byCategory || [],
+      topMemories: stats.topMemories || [],
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
