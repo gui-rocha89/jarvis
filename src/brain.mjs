@@ -211,10 +211,8 @@ export async function generateResponse(text, chatId, senderJid, pushName, isGrou
       if (!mentions.some(m => m.jid === tm.jid)) mentions.push(tm);
     }
 
-    // Processar memória em background (não bloqueia a resposta)
-    processMemory(text, pushName, senderJid, chatId, isGroup).catch(err => {
-      console.error('[MEMORY] Erro no processamento em background:', err.message);
-    });
+    // Nota: processMemory agora roda no handler principal (aprendizado passivo em tempo real)
+    // Não precisa rodar aqui de novo — evita duplicação
 
     return { text: finalText || null, mentions, agent: intent.agent };
   } catch (err) {

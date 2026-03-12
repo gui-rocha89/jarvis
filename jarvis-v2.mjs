@@ -104,7 +104,7 @@ async function handleIncomingMessage(m) {
   const isGroup = from.endsWith('@g.us');
   const sender = extractSender(m, from, isGroup);
 
-  let text = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
+  let text = m.message?.conversation || m.message?.extendedTextMessage?.text || m.message?.imageMessage?.caption || m.message?.videoMessage?.caption || '';
   let isAudio = false;
   const audioMsg = m.message?.audioMessage;
 
@@ -153,6 +153,13 @@ async function handleIncomingMessage(m) {
       teamWhatsApp.set(firstName, sender);
       console.log(`[TEAM] Novo membro mapeado: ${pushName} -> ${sender}`);
     }
+  }
+
+  // Aprendizado passivo em tempo real: aprende de TODAS as mensagens (grupos + privadas)
+  if (text.length >= 20 && !text.startsWith('[')) {
+    processMemory(text, pushName || 'Desconhecido', sender, from, isGroup).catch(err => {
+      console.error('[MEMORY] Erro aprendizado passivo:', err.message);
+    });
   }
 
   // Decidir se Jarvis deve responder
