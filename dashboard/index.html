@@ -330,9 +330,14 @@
             class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors mb-3">
           <input id="setup-password2" type="password" placeholder="Confirmar senha"
             class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors mb-3">
-          <input id="setup-phone" type="text" placeholder="WhatsApp para 2FA (ex: 5511999999999)"
-            class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors"
-            onkeydown="if(event.key==='Enter')authSetup()">
+          <div class="relative">
+            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-stark-blue font-mono text-sm">+55</span>
+            <input id="setup-phone" type="text" placeholder="55 999154868 (DDD + número)"
+              class="w-full bg-stark-bg border border-stark-border rounded pl-12 pr-4 py-3 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors"
+              maxlength="13" onkeydown="if(event.key==='Enter')authSetup()"
+              oninput="this.value=this.value.replace(/\D/g,'')">
+          </div>
+          <p class="text-gray-500 text-xs mt-1 ml-1">Formato: DDD + número (ex: 5599154868)</p>
           <button onclick="authSetup()" id="auth-setup-btn" class="w-full mt-4 bg-stark-gold/20 border border-stark-gold text-stark-gold font-orbitron text-sm py-3 rounded hover:bg-stark-gold/30 transition-colors tracking-wider">
             CRIAR CONTA
           </button>
@@ -842,13 +847,16 @@
       const email = document.getElementById('setup-email').value.trim();
       const pw = document.getElementById('setup-password').value;
       const pw2 = document.getElementById('setup-password2').value;
-      const phone = document.getElementById('setup-phone').value.trim();
+      let phone = document.getElementById('setup-phone').value.trim().replace(/\D/g, '');
       const errEl = document.getElementById('auth-setup-error');
       errEl.classList.add('hidden');
 
       if (!email || !pw || !phone) { errEl.textContent = 'Preencha todos os campos'; errEl.classList.remove('hidden'); return; }
       if (pw.length < 8) { errEl.textContent = 'Senha deve ter no mínimo 8 caracteres'; errEl.classList.remove('hidden'); return; }
       if (pw !== pw2) { errEl.textContent = 'As senhas não conferem'; errEl.classList.remove('hidden'); return; }
+      // Garantir formato brasileiro: 55 + DDD + número
+      if (!phone.startsWith('55')) phone = '55' + phone;
+      if (phone.length < 12 || phone.length > 13) { errEl.textContent = 'Telefone inválido. Use: DDD + número (ex: 5599154868)'; errEl.classList.remove('hidden'); return; }
 
       const btn = document.getElementById('auth-setup-btn');
       btn.textContent = 'CRIANDO...'; btn.disabled = true;
