@@ -30,7 +30,6 @@ jobs:
             --exclude='auth_session' \
             --exclude='.env' \
             --exclude='google-calendar-key.json' \
-            --exclude='dashboard' \
             --exclude='*.bak' \
             -e "ssh -i ~/.ssh/deploy_key" \
             ./ ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/jarvis/
