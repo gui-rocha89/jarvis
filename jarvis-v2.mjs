@@ -498,7 +498,7 @@ app.get('/dashboard/intelligence', auth, async (req, res) => {
     const totalMessages = await pool.query('SELECT COUNT(*)::int as cnt FROM jarvis_messages');
     const uniqueContacts = await pool.query('SELECT COUNT(DISTINCT sender)::int as cnt FROM jarvis_messages');
     const gcalCount = await pool.query('SELECT COUNT(*)::int as cnt FROM gcal_sync');
-    const daysActive = await pool.query("SELECT COALESCE(EXTRACT(DAY FROM NOW() - MIN(created_at)), 0)::int as days FROM jarvis_messages");
+    const daysActive = await pool.query("SELECT COALESCE(EXTRACT(DAY FROM NOW() - MIN(created_at)), 0)::int as days FROM jarvis_messages WHERE push_name = 'Jarvis' OR sender LIKE '%jarvis%'");
 
     const catMap = {};
     for (const row of memByCategory.rows) catMap[row.category] = { count: row.cnt, avgImp: row.avg_imp };
