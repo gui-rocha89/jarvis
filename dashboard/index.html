@@ -2027,10 +2027,19 @@
       try {
         const res = await api('/dashboard/asana/study/start', { method: 'POST' });
         const data = await res.json();
-        if (data.error) { notify(data.error, 'error'); return; }
+        if (!res.ok || data.error) {
+          notify(data.error || `Erro ${res.status}`, 'error');
+          return;
+        }
         notify('Estudo do Asana iniciado!', 'success');
         loadAsanaStudyStatus();
-      } catch (e) { notify('Erro ao iniciar estudo do Asana', 'error'); }
+      } catch (e) {
+        if (e.message === 'Sessão expirada') {
+          notify('Sessão expirada — faça login novamente', 'error');
+        } else {
+          notify('Erro ao iniciar estudo do Asana: ' + e.message, 'error');
+        }
+      }
     }
 
     async function stopAsanaStudy() {

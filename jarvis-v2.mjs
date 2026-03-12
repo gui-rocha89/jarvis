@@ -1011,10 +1011,14 @@ app.post('/dashboard/profiles/synthesize', auth, async (req, res) => {
 // --- Estudo Exaustivo do Asana ---
 app.post('/dashboard/asana/study/start', auth, async (req, res) => {
   try {
+    if (asanaBatchState.running) {
+      return res.json({ success: true, message: 'Estudo já em execução', alreadyRunning: true });
+    }
     await startAsanaStudy();
     res.json({ success: true, message: 'Estudo do Asana iniciado' });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    console.error('[ASANA-STUDY] Erro ao iniciar:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
