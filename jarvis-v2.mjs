@@ -431,6 +431,48 @@ app.get('/dashboard/homework', auth, async (req, res) => {
   } catch (err) { res.json({ homework: [] }); }
 });
 
+// --- System Prompt (leitura + edicao via dashboard) ---
+app.get('/dashboard/prompt', auth, async (req, res) => {
+  try {
+    const { MASTER_SYSTEM_PROMPT, AGENT_PROMPTS } = await import('./src/agents/master.mjs');
+    res.json({
+      master: MASTER_SYSTEM_PROMPT,
+      agents: {
+        creative: AGENT_PROMPTS.creative || '',
+        manager: AGENT_PROMPTS.manager || '',
+        researcher: AGENT_PROMPTS.researcher || '',
+      }
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/dashboard/prompt', auth, async (req, res) => {
+  try {
+    const { readFile, writeFile } = await import('fs/promises');
+    const { prompt, agent } = req.body;
+    if (!prompt || typeof prompt !== 'string') return res.status(400).json({ error: 'Prompt obrigatorio' });
+
+    const filePath = path.join(__dirname, 'src', 'agents', 'master.mjs');
+    let content = await readFile(filePath, 'utf-8');
+
+    if (!agent || agent === 'master') {
+      // Substituir o MASTER_SYSTEM_PROMPT
+      const start = content.indexOf('export const MASTER_SYSTEM_PROMPT = `');
+      const end = content.indexOf('`;', start) + 2;
+      if (start === -1 || end === 1) return res.status(500).json({ error: 'Nao encontrou MASTER_SYSTEM_PROMPT no arquivo' });
+      content = content.substring(0, start) + 'export const MASTER_SYSTEM_PROMPT = `' + prompt.replace(/`/g, '\\`').replace(/\$/g, '\\$') + '`;' + content.substring(end);
+    }
+
+    await writeFile(filePath, content, 'utf-8');
+
+    // Limpar cache do modulo para recarregar
+    const modUrl = new URL('./src/agents/master.mjs', import.meta.url).href;
+    delete globalThis[modUrl];
+
+    res.json({ success: true, message: 'Prompt salvo. Reinicie o Jarvis para aplicar.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // --- Dashboard Chat ---
 const dashboardChatHistory = [];
 app.post('/dashboard/chat', auth, async (req, res) => {
