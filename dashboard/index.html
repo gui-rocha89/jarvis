@@ -1157,21 +1157,25 @@
       btn.disabled = true;
 
       try {
-        const res = await api('/dashboard/voice/test', {
+        const res = await fetch(`${API_BASE}/dashboard/voice/test`, {
           method: 'POST',
+          headers: { 'x-api-key': API_KEY, 'Content-Type': 'application/json' },
           body: JSON.stringify({ text }),
         });
-        const data = await res.json();
-        if (data.audio) {
-          const audio = document.getElementById('voice-audio');
-          audio.src = `data:audio/mp3;base64,${data.audio}`;
-          document.getElementById('voice-test-result').classList.remove('hidden');
-          audio.play();
-          notify('Audio gerado!', 'success');
-        } else {
-          notify('Nenhum audio retornado', 'warn');
+        if (res.status === 401) { localStorage.removeItem('jarvis_api_key'); location.reload(); return; }
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Falha na sintese');
         }
-      } catch (e) { notify('Erro ao sintetizar voz', 'error'); }
+        const blob = await res.blob();
+        if (blob.size === 0) { notify('Nenhum audio retornado', 'warn'); return; }
+        const audioUrl = URL.createObjectURL(blob);
+        const audio = document.getElementById('voice-audio');
+        audio.src = audioUrl;
+        document.getElementById('voice-test-result').classList.remove('hidden');
+        audio.play();
+        notify('Audio gerado!', 'success');
+      } catch (e) { notify('Erro ao sintetizar voz: ' + e.message, 'error'); }
       finally {
         btn.textContent = 'SINTETIZAR VOZ';
         btn.disabled = false;
