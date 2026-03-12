@@ -1848,11 +1848,11 @@
           const isPast = (data.totalMemories || 0) >= p.min;
           const opacity = isPast ? 'opacity-100' : 'opacity-30';
           const border = isActive ? `border: 2px solid ${p.cor}; box-shadow: 0 0 12px ${p.cor}60;` : isPast ? `border: 1px solid ${p.cor}50;` : 'border: 1px solid #1a2744;';
-          return `<div class="flex-shrink-0 flex flex-col items-center px-3 py-2 rounded-lg ${opacity}" style="${border} min-width: 90px;">
-            <span class="text-xl">${p.icon}</span>
-            <span class="text-[9px] font-orbitron mt-1" style="color:${p.cor}">${p.nome}</span>
-            <span class="text-[8px] text-stark-dim font-mono">${p.min.toLocaleString()}+</span>
-          </div>${i < allPat.length - 1 ? '<div class="flex-shrink-0 text-stark-dim text-xs">→</div>' : ''}`;
+          return `<div class="flex-shrink-0 flex flex-col items-center px-2 py-1.5 rounded-lg ${opacity}" style="${border} min-width: 75px;">
+            <span class="text-lg">${p.icon}</span>
+            <span class="text-[8px] font-orbitron mt-0.5 text-center leading-tight" style="color:${p.cor}">${p.nome}</span>
+            <span class="text-[7px] text-stark-dim font-mono">${p.min >= 1000 ? (p.min/1000).toFixed(0) + 'k+' : p.min + '+'}</span>
+          </div>${i < allPat.length - 1 ? '<div class="flex-shrink-0 text-stark-dim text-[10px]">→</div>' : ''}`;
         }).join('');
 
         // === Stats ===
