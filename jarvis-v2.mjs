@@ -22,9 +22,10 @@ import jwt from 'jsonwebtoken';
 // Módulos do Jarvis 2.0
 import { CONFIG, AUDIO_ALLOWED, teamPhones, teamWhatsApp } from './src/config.mjs';
 import { pool, initDB, storeMessage, getRecentMessages, getContactInfo, getGroupInfo, upsertContact, upsertGroup, getMessageCount } from './src/database.mjs';
-import { initMemory, processMemory, getMemoryContext, getMemoryStats, searchMemories, storeFacts } from './src/memory.mjs';
+import { initMemory, processMemory, getMemoryContext, getMemoryStats, searchMemories, storeFacts, extractFacts } from './src/memory.mjs';
 import { shouldJarvisRespond, isValidResponse, generateResponse, markConversationActive, isConversationActive, findTeamJid, extractMentionsFromText, generateDailyReport } from './src/brain.mjs';
 import { voiceConfig, loadVoiceConfig, saveVoiceConfig, transcribeAudio, generateAudio } from './src/audio.mjs';
+import { synthesizeProfile, getProfile, listProfiles, syncProfiles } from './src/profiles.mjs';
 import { asanaRequest, getOverdueTasks, getGCalClient, JARVIS_TOOLS } from './src/skills/loader.mjs';
 import { getMediaType, extractSender } from './src/helpers.mjs';
 
@@ -697,6 +698,176 @@ app.post('/dashboard/memory/add', auth, async (req, res) => {
     if (!content) return res.status(400).json({ error: 'Conteudo obrigatorio' });
     await storeFacts([{ content, category: category || 'general', importance: importance || 7 }], scope || 'agent', scopeId || null);
     res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- Memory: Test Extract (diagnóstico) ---
+app.post('/dashboard/memory/test-extract', auth, async (req, res) => {
+  try {
+    const { text, senderName } = req.body;
+    if (!text) return res.status(400).json({ error: 'Texto obrigatório' });
+    const facts = await extractFacts(text, senderName || 'Teste', 'test-chat', false);
+    res.json({ facts, count: facts.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- Memory: Batch Processing (processar histórico) ---
+let batchState = { running: false, processed: 0, total: 0, errors: 0, startedAt: null, stoppedAt: null };
+
+app.post('/dashboard/memory/batch/start', auth, async (req, res) => {
+  if (batchState.running) return res.status(409).json({ error: 'Batch já em execução' });
+  batchState = { running: true, processed: 0, total: 0, errors: 0, startedAt: new Date().toISOString(), stoppedAt: null };
+
+  // Adicionar coluna se não existe
+  await pool.query('ALTER TABLE jarvis_messages ADD COLUMN IF NOT EXISTS memory_processed BOOLEAN DEFAULT false').catch(() => {});
+
+  // Contar total elegível
+  const { rows: [{ cnt }] } = await pool.query(`
+    SELECT COUNT(*)::int as cnt FROM jarvis_messages
+    WHERE (memory_processed = false OR memory_processed IS NULL)
+      AND text IS NOT NULL AND LENGTH(text) >= 30
+      AND text NOT IN ('[audio]', '[midia]', '[sticker]', '[documento]', '[contato]', '[localização]')
+      AND is_group = true
+  `);
+  batchState.total = cnt;
+
+  res.json({ success: true, total: cnt, message: `Iniciando processamento de ${cnt} mensagens` });
+
+  // Processar em background
+  (async () => {
+    try {
+      while (batchState.running) {
+        const { rows: messages } = await pool.query(`
+          SELECT id, chat_id, sender, push_name, text, is_group FROM jarvis_messages
+          WHERE (memory_processed = false OR memory_processed IS NULL)
+            AND text IS NOT NULL AND LENGTH(text) >= 30
+            AND text NOT IN ('[audio]', '[midia]', '[sticker]', '[documento]', '[contato]', '[localização]')
+            AND is_group = true
+          ORDER BY timestamp DESC LIMIT 50
+        `);
+
+        if (messages.length === 0) {
+          console.log(`[BATCH] Concluído! ${batchState.processed} mensagens processadas, ${batchState.errors} erros`);
+          batchState.running = false;
+          batchState.stoppedAt = new Date().toISOString();
+          break;
+        }
+
+        for (const msg of messages) {
+          if (!batchState.running) break;
+          try {
+            const facts = await extractFacts(msg.text, msg.push_name || 'Desconhecido', msg.chat_id, msg.is_group);
+            if (facts.length > 0) {
+              await storeFacts(facts, 'user', msg.sender);
+              if (msg.is_group) await storeFacts(facts, 'chat', msg.chat_id);
+            }
+            await pool.query('UPDATE jarvis_messages SET memory_processed = true WHERE id = $1', [msg.id]);
+            batchState.processed++;
+          } catch (err) {
+            batchState.errors++;
+            console.error(`[BATCH] Erro msg ${msg.id}:`, err.message);
+            // Marcar como processada mesmo com erro para não travar
+            await pool.query('UPDATE jarvis_messages SET memory_processed = true WHERE id = $1', [msg.id]).catch(() => {});
+          }
+          // Rate limit: ~2 chamadas/segundo
+          await new Promise(r => setTimeout(r, 500));
+        }
+
+        if (batchState.processed % 100 === 0 && batchState.processed > 0) {
+          console.log(`[BATCH] Progresso: ${batchState.processed}/${batchState.total} (${Math.round(batchState.processed / batchState.total * 100)}%)`);
+        }
+      }
+    } catch (err) {
+      console.error('[BATCH] Erro fatal:', err.message);
+      batchState.running = false;
+      batchState.stoppedAt = new Date().toISOString();
+    }
+  })();
+});
+
+app.get('/dashboard/memory/batch/status', auth, async (req, res) => {
+  const elapsed = batchState.startedAt ? (Date.now() - new Date(batchState.startedAt).getTime()) / 1000 : 0;
+  const speed = elapsed > 0 ? Math.round(batchState.processed / elapsed * 3600) : 0;
+  const remaining = speed > 0 ? Math.round((batchState.total - batchState.processed) / speed * 60) : 0;
+  res.json({
+    ...batchState,
+    speed, // mensagens/hora
+    remainingMinutes: remaining,
+    percentage: batchState.total > 0 ? Math.round(batchState.processed / batchState.total * 100) : 0,
+  });
+});
+
+app.post('/dashboard/memory/batch/stop', auth, async (req, res) => {
+  batchState.running = false;
+  batchState.stoppedAt = new Date().toISOString();
+  res.json({ success: true, message: 'Batch parado', processed: batchState.processed });
+});
+
+// --- Memory: Browse (listagem paginada) ---
+app.get('/dashboard/memory/browse', auth, async (req, res) => {
+  try {
+    const { category, scope, page = 1, limit = 20, search } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    let sql = 'SELECT id, scope, scope_id, category, content, importance, access_count, created_at, updated_at FROM jarvis_memories WHERE 1=1';
+    const params = [];
+    let idx = 1;
+    if (category) { sql += ` AND category = $${idx++}`; params.push(category); }
+    if (scope) { sql += ` AND scope = $${idx++}`; params.push(scope); }
+    if (search) { sql += ` AND content ILIKE $${idx++}`; params.push(`%${search}%`); }
+    const countSql = sql.replace(/SELECT .* FROM/, 'SELECT COUNT(*)::int as cnt FROM');
+    const { rows: [{ cnt }] } = await pool.query(countSql, params);
+    sql += ` ORDER BY importance DESC, updated_at DESC LIMIT $${idx++} OFFSET $${idx++}`;
+    params.push(parseInt(limit), offset);
+    const { rows } = await pool.query(sql, params);
+    res.json({ memories: rows, total: cnt, page: parseInt(page), pages: Math.ceil(cnt / parseInt(limit)) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- Memory: Timeline (evolução do aprendizado) ---
+app.get('/dashboard/memory/timeline', auth, async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 30;
+    const { rows } = await pool.query(`
+      SELECT DATE(created_at) as day, COUNT(*)::int as count, category,
+             ROUND(AVG(importance)::numeric, 1)::float as avg_importance
+      FROM jarvis_memories
+      WHERE created_at > NOW() - INTERVAL '1 day' * $1
+      GROUP BY DATE(created_at), category
+      ORDER BY day DESC
+    `, [days]);
+    res.json({ timeline: rows, days });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- Profiles (perfis sintetizados) ---
+app.get('/dashboard/profiles', auth, async (req, res) => {
+  try {
+    const profiles = await listProfiles(req.query.type || null);
+    res.json({ profiles, count: profiles.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/dashboard/profiles/:entityType/:entityId', auth, async (req, res) => {
+  try {
+    const profile = await getProfile(req.params.entityType, req.params.entityId);
+    if (!profile) return res.status(404).json({ error: 'Perfil não encontrado' });
+    res.json(profile);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/dashboard/profiles/sync', auth, async (req, res) => {
+  try {
+    const results = await syncProfiles();
+    res.json(results);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/dashboard/profiles/synthesize', auth, async (req, res) => {
+  try {
+    const { entityType, entityId, entityName } = req.body;
+    if (!entityType || !entityId) return res.status(400).json({ error: 'entityType e entityId obrigatórios' });
+    const profile = await synthesizeProfile(entityType, entityId, entityName);
+    res.json({ success: !!profile, profile });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

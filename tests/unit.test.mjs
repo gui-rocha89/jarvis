@@ -238,6 +238,7 @@ describe('Estrutura do projeto', () => {
       '../src/helpers.mjs',
       '../src/agents/master.mjs',
       '../src/skills/loader.mjs',
+      '../src/profiles.mjs',
     ];
 
     const dangerousPatterns = [

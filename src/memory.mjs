@@ -6,6 +6,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { pool } from './database.mjs';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
+const MEMORY_MODEL = process.env.MEMORY_MODEL || 'claude-haiku-3-5-20241022';
 
 export async function initMemory() {
   try {
@@ -44,19 +45,24 @@ export async function initMemory() {
 export async function extractFacts(text, senderName, chatId, isGroup) {
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 500,
-      system: `Voce e um extrator de fatos. Analise a mensagem e extraia APENAS fatos relevantes sobre:
+      model: MEMORY_MODEL,
+      max_tokens: 800,
+      system: `Voce e um extrator de fatos de uma agencia de marketing (Stream Lab). Analise a mensagem e extraia APENAS fatos relevantes sobre:
 - Preferencias da pessoa (gosta de X, nao gosta de Y)
-- Informacoes sobre clientes (empresa, contato, projeto)
+- Informacoes sobre clientes (empresa, contato, projeto, marca)
+- Perfil de clientes (quem decide, tom de voz da marca, preferencias de conteudo)
 - Decisoes tomadas (escolheu X, aprovou Y)
 - Prazos e datas mencionados
 - Regras ou instrucoes dadas
 - Estilo de comunicacao da pessoa
+- Informacoes sobre membros da equipe (habilidades, responsabilidades, historico)
+- Processos e fluxos de trabalho (como as coisas funcionam)
+- Padroes comportamentais (frequencia, horarios, preferencias de comunicacao)
 
 Responda APENAS em JSON array. Se nao houver fatos relevantes, responda [].
-Cada fato: {"content": "fato", "category": "preference|client|decision|deadline|rule|style", "importance": 1-10}
-NUNCA extraia fatos triviais como cumprimentos.`,
+Cada fato: {"content": "fato claro e completo", "category": "preference|client|client_profile|decision|deadline|rule|style|team_member|process|pattern", "importance": 1-10}
+NUNCA extraia fatos triviais como cumprimentos, "ok", "bom dia", emojis isolados.
+Priorize fatos que ajudem a entender QUEM sao as pessoas, COMO trabalham, e O QUE preferem.`,
       messages: [{ role: 'user', content: `Mensagem de ${senderName} no ${isGroup ? 'grupo' : 'privado'}:\n"${text}"` }],
     });
 
@@ -65,7 +71,10 @@ NUNCA extraia fatos triviais como cumprimentos.`,
     if (!match) return [];
     const facts = JSON.parse(match[0]);
     return Array.isArray(facts) ? facts : [];
-  } catch { return []; }
+  } catch (err) {
+    console.error('[MEMORY] extractFacts ERRO:', err.message, '| texto:', text.substring(0, 50));
+    return [];
+  }
 }
 
 export async function storeFacts(facts, scope, scopeId) {
@@ -156,6 +165,39 @@ export async function getMemoryContext(senderJid, chatId, text) {
       agentMemories.forEach(m => contexts.push(`- ${m.content}`));
     }
 
+    // Perfil do grupo/cliente (se existir)
+    try {
+      const { rows: profiles } = await pool.query(
+        `SELECT entity_type, entity_name, profile FROM jarvis_profiles WHERE entity_id = $1`,
+        [chatId]
+      );
+      if (profiles.length > 0) {
+        for (const p of profiles) {
+          const prof = typeof p.profile === 'string' ? JSON.parse(p.profile) : p.profile;
+          contexts.push(`\nPERFIL ${p.entity_type === 'client' ? 'DO CLIENTE' : 'DO GRUPO'} (${p.entity_name || 'desconhecido'}):`);
+          for (const [key, val] of Object.entries(prof)) {
+            if (val && val !== null) contexts.push(`- ${key}: ${Array.isArray(val) ? val.join(', ') : val}`);
+          }
+        }
+      }
+    } catch {}
+
+    // Perfil da pessoa que enviou (se existir)
+    try {
+      const { rows: senderProfiles } = await pool.query(
+        `SELECT entity_name, profile FROM jarvis_profiles WHERE entity_id = $1 AND entity_type = 'team_member'`,
+        [senderJid]
+      );
+      if (senderProfiles.length > 0) {
+        const p = senderProfiles[0];
+        const prof = typeof p.profile === 'string' ? JSON.parse(p.profile) : p.profile;
+        contexts.push(`\nPERFIL DE ${p.entity_name || 'esta pessoa'}:`);
+        for (const [key, val] of Object.entries(prof)) {
+          if (val && val !== null) contexts.push(`- ${key}: ${Array.isArray(val) ? val.join(', ') : val}`);
+        }
+      }
+    } catch {}
+
     try {
       const { rows } = await pool.query('SELECT content FROM homework ORDER BY created_at DESC LIMIT 10');
       if (rows.length > 0) {
@@ -174,11 +216,18 @@ export async function getMemoryContext(senderJid, chatId, text) {
 export async function processMemory(text, senderName, senderJid, chatId, isGroup) {
   if (!text || text.length < 15) return;
   try {
+    console.log(`[MEMORY] Processando: "${text.substring(0, 40)}..." de ${senderName}`);
     const facts = await extractFacts(text, senderName, chatId, isGroup);
-    if (facts.length === 0) return;
+    if (facts.length === 0) {
+      console.log(`[MEMORY] Nenhum fato extraído de: "${text.substring(0, 40)}..."`);
+      return;
+    }
+    console.log(`[MEMORY] ${facts.length} fato(s) extraído(s) de ${senderName}`);
     await storeFacts(facts, 'user', senderJid);
     if (isGroup) await storeFacts(facts, 'chat', chatId);
-  } catch {}
+  } catch (err) {
+    console.error('[MEMORY] processMemory ERRO:', err.message);
+  }
 }
 
 export async function getMemoryStats() {

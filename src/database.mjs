@@ -132,6 +132,19 @@ export async function initDB() {
       )
     `);
 
+    // Tabela de perfis sintetizados (clientes, equipe, processos)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS jarvis_profiles (
+        id SERIAL PRIMARY KEY,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        entity_name TEXT,
+        profile JSONB DEFAULT '{}',
+        last_updated TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(entity_type, entity_id)
+      )
+    `);
+
     console.log('[DB] Tabelas verificadas/criadas');
   } catch (err) {
     console.error('[DB] Erro ao conectar:', err.message);

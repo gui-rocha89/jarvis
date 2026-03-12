@@ -212,7 +212,9 @@ export async function generateResponse(text, chatId, senderJid, pushName, isGrou
     }
 
     // Processar memória em background (não bloqueia a resposta)
-    processMemory(text, pushName, senderJid, chatId, isGroup).catch(() => {});
+    processMemory(text, pushName, senderJid, chatId, isGroup).catch(err => {
+      console.error('[MEMORY] Erro no processamento em background:', err.message);
+    });
 
     return { text: finalText || null, mentions, agent: intent.agent };
   } catch (err) {
