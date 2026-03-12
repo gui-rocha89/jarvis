@@ -1,14 +1,16 @@
 {
   "name": "jarvis",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "version": "2.0.0",
+  "type": "module",
+  "description": "Jarvis 2.0 - Assistente de IA autonomo no WhatsApp",
+  "main": "jarvis-v2.mjs",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node jarvis-v2.mjs",
+    "test": "node --test tests/"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": ["whatsapp", "ai", "agent", "anthropic", "claude"],
+  "author": "Stream Lab",
+  "license": "UNLICENSED",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",

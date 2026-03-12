@@ -24,6 +24,7 @@ import { initMemory, processMemory, getMemoryContext, getMemoryStats, searchMemo
 import { shouldJarvisRespond, isValidResponse, generateResponse, markConversationActive, isConversationActive, findTeamJid, extractMentionsFromText, generateDailyReport } from './src/brain.mjs';
 import { voiceConfig, loadVoiceConfig, saveVoiceConfig, transcribeAudio, generateAudio } from './src/audio.mjs';
 import { asanaRequest, getOverdueTasks, getGCalClient, JARVIS_TOOLS } from './src/skills/loader.mjs';
+import { getMediaType, extractSender } from './src/helpers.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,31 +32,6 @@ const __dirname = path.dirname(__filename);
 let sock = null;
 let connectionStatus = 'disconnected';
 const sentByBot = new Set();
-
-// ============================================
-// HELPERS
-// ============================================
-function getMediaType(m) {
-  if (!m.message) return null;
-  if (m.message.audioMessage) return 'audio';
-  if (m.message.imageMessage) return 'image';
-  if (m.message.videoMessage) return 'video';
-  if (m.message.documentMessage) return 'document';
-  if (m.message.stickerMessage) return 'sticker';
-  if (m.message.contactMessage) return 'contact';
-  if (m.message.locationMessage) return 'location';
-  return null;
-}
-
-function extractSender(m, from, isGroup) {
-  if (!isGroup) return from;
-  const participant = m.key?.participant || m.key?.participantAlt || m.participant || null;
-  if (participant && participant !== '' && !participant.endsWith('@g.us') && !participant.endsWith('@broadcast')) {
-    return participant;
-  }
-  if (m.key?.fromMe) return 'jarvis@bot';
-  return from;
-}
 
 // ============================================
 // WHATSAPP - Envio de mensagens

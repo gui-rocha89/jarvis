@@ -1,0 +1,46 @@
+name: Deploy para VPS
+
+on:
+  workflow_run:
+    workflows: ["CI - Testes"]
+    types: [completed]
+    branches: [master]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy arquivos
+        run: |
+          rsync -avz --delete \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='auth_session' \
+            --exclude='.env' \
+            --exclude='google-calendar-key.json' \
+            --exclude='dashboard' \
+            --exclude='*.bak' \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            ./ ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/jarvis/
+
+      - name: Instalar deps e reiniciar
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'EOF'
+          cd /opt/jarvis
+          npm ci --production
+          /root/.npm/_npx/5f7878ce38f1eb13/node_modules/pm2/bin/pm2 restart jarvis
+          sleep 5
+          /root/.npm/_npx/5f7878ce38f1eb13/node_modules/pm2/bin/pm2 status jarvis
+          EOF
