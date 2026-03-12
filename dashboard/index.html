@@ -776,39 +776,53 @@
         const res = await api('/dashboard/health');
         const data = await res.json();
 
-        document.getElementById('stat-status').textContent = data.whatsapp || 'ONLINE';
-        document.getElementById('stat-status').className = `font-orbitron text-2xl ${data.whatsapp === 'connected' || data.whatsapp === 'open' ? 'text-stark-green' : 'text-stark-red'}`;
+        // Status: API retorna data.status ("connected"|"open"|etc)
+        const waStatus = data.status || '--';
+        const isOnline = waStatus === 'connected' || waStatus === 'open';
+        document.getElementById('stat-status').textContent = isOnline ? 'ONLINE' : waStatus.toUpperCase();
+        document.getElementById('stat-status').className = `font-orbitron text-2xl ${isOnline ? 'text-stark-green' : 'text-stark-red'}`;
 
-        if (data.uptime) {
-          const h = Math.floor(data.uptime / 3600);
-          const m = Math.floor((data.uptime % 3600) / 60);
-          document.getElementById('stat-uptime').textContent = `${h}h ${m}m uptime`;
+        // Uptime
+        document.getElementById('stat-uptime').textContent = data.uptimeFormatted || `${Math.floor((data.uptime||0)/3600)}h ${Math.floor(((data.uptime||0)%3600)/60)}m uptime`;
+
+        // Mensagens: API retorna data.totalMessages
+        document.getElementById('stat-messages').textContent = (data.totalMessages || 0).toLocaleString();
+
+        // Memorias
+        document.getElementById('stat-memories').textContent = data.totalMemories || 0;
+        if (data.memoriesByScope && data.memoriesByScope.length > 0) {
+          const byScope = {};
+          data.memoriesByScope.forEach(s => byScope[s.scope] = parseInt(s.count));
+          document.getElementById('stat-mem-detail').textContent = `U:${byScope.user||0} C:${byScope.chat||0} A:${byScope.agent||0}`;
+        } else {
+          document.getElementById('stat-mem-detail').textContent = 'Sem memorias ainda';
         }
 
-        document.getElementById('stat-messages').textContent = (data.messages || 0).toLocaleString();
-
+        // RAM: API retorna data.memory.rss JA EM MB (nao bytes!)
         if (data.memory) {
-          const rss = (data.memory.rss / 1024 / 1024).toFixed(0);
-          const heap = (data.memory.heapUsed / 1024 / 1024).toFixed(0);
-          const heapTotal = (data.memory.heapTotal / 1024 / 1024).toFixed(0);
-          const pct = Math.round((data.memory.heapUsed / data.memory.heapTotal) * 100);
+          const rss = data.memory.rss || 0;
+          const heap = data.memory.heapUsed || 0;
+          const pct = rss > 0 ? Math.min(Math.round((heap / rss) * 100), 100) : 50;
           document.getElementById('ram-val').textContent = `${rss} MB`;
-          document.getElementById('ram-bar').style.width = `${Math.min(pct, 100)}%`;
-          document.getElementById('heap-val').textContent = `${heap} / ${heapTotal} MB`;
+          document.getElementById('ram-bar').style.width = `${pct}%`;
+          document.getElementById('heap-val').textContent = `${heap} MB heap`;
         }
 
-        document.getElementById('wa-status').textContent = data.whatsapp || '--';
-        document.getElementById('wa-status').className = `text-xs font-mono ${data.whatsapp === 'connected' || data.whatsapp === 'open' ? 'text-stark-green' : 'text-stark-red'}`;
+        // WhatsApp status no painel sistema
+        document.getElementById('wa-status').textContent = waStatus;
+        document.getElementById('wa-status').className = `text-xs font-mono ${isOnline ? 'text-stark-green' : 'text-stark-red'}`;
 
-        // Connection status indicator
+        // Indicador de conexao no header
         const connEl = document.getElementById('conn-status');
-        if (data.whatsapp === 'connected' || data.whatsapp === 'open') {
+        if (isOnline) {
           connEl.innerHTML = '<div class="pulse-dot bg-stark-green"></div><span class="text-xs font-mono text-stark-green">ONLINE</span>';
         } else {
           connEl.innerHTML = '<div class="pulse-dot bg-stark-red"></div><span class="text-xs font-mono text-stark-red">OFFLINE</span>';
         }
       } catch (e) {
         console.error('Health error:', e);
+        const connEl = document.getElementById('conn-status');
+        connEl.innerHTML = '<div class="pulse-dot bg-stark-red"></div><span class="text-xs font-mono text-stark-red">SEM CONEXAO</span>';
       }
     }
 
@@ -816,9 +830,13 @@
       try {
         const res = await api('/dashboard/config');
         const data = await res.json();
-        document.getElementById('stat-model').textContent = (data.model || '--').replace('claude-', '').replace('-20250514', '');
-        document.getElementById('stat-version').textContent = `Jarvis ${data.version || '2.0'}`;
-        document.getElementById('api-keys-status').textContent = `${Object.values(data.keys || {}).filter(k => k !== '***').length} configuradas`;
+        // API retorna data.ai.model
+        const model = data.ai?.model || '--';
+        document.getElementById('stat-model').textContent = model.replace('claude-', '').replace('-20250514', '');
+        document.getElementById('stat-version').textContent = 'Jarvis 2.0';
+        // Contar chaves configuradas
+        const keyCount = [data.ai?.model, data.asana?.workspace, data.whatsapp?.groupTarefas].filter(Boolean).length;
+        document.getElementById('api-keys-status').textContent = `${keyCount} servicos`;
       } catch (e) { console.error('Config error:', e); }
     }
 
@@ -871,19 +889,19 @@
             return;
           }
           logs.forEach(log => {
-            const time = new Date(log.created_at).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
-            const direction = log.direction === 'in' ? '<span class="text-stark-green">IN</span>' : '<span class="text-stark-blue">OUT</span>';
-            const contact = log.contact_name || log.from_jid?.split('@')[0] || '--';
-            const badge = log.media_type ? `<span class="badge-info px-1.5 py-0.5 rounded text-[10px]">${log.media_type}</span>` : '';
-            const text = (log.body || log.text_content || '').substring(0, 120);
+            // API retorna: timestamp, type, from, chatId, text
+            const ts = log.timestamp || log.created_at;
+            const time = ts ? new Date(ts).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '--';
+            const typeColor = log.type === 'group' ? '<span class="text-stark-purple" style="color:#7b61ff">GRP</span>' : '<span class="text-stark-green">PV</span>';
+            const contact = log.from || log.contact_name || '--';
+            const text = (log.text || log.body || '').substring(0, 120);
 
             el.innerHTML += `
               <div class="flex items-start gap-3 py-2 px-3 bg-stark-bg/30 rounded hover:bg-stark-bg/60 transition-colors">
                 <span class="text-[10px] text-stark-dim whitespace-nowrap mt-0.5">${time}</span>
-                <span class="text-[10px] w-6 mt-0.5">${direction}</span>
-                <span class="text-xs text-stark-blue font-semibold whitespace-nowrap">${contact}</span>
-                ${badge}
-                <span class="text-xs text-gray-400 truncate flex-1">${text}</span>
+                <span class="text-[10px] w-8 mt-0.5">${typeColor}</span>
+                <span class="text-xs text-stark-blue font-semibold whitespace-nowrap max-w-[120px] truncate">${escapeHtml(contact)}</span>
+                <span class="text-xs text-gray-400 truncate flex-1">${escapeHtml(text)}</span>
               </div>`;
           });
         };
@@ -1043,37 +1061,43 @@
         const res = await api('/dashboard/voice');
         const data = await res.json();
 
+        // API retorna: { provider, openai: {...}, elevenlabs: { voiceId, stability, ..., voices: [...] } }
         if (data.provider) document.getElementById('voice-provider').value = data.provider;
-        if (data.stability != null) {
-          document.getElementById('voice-stability').value = data.stability;
-          document.getElementById('val-stability').textContent = data.stability;
+
+        const el = data.elevenlabs || {};
+        if (el.stability != null) {
+          document.getElementById('voice-stability').value = el.stability;
+          document.getElementById('val-stability').textContent = el.stability;
         }
-        if (data.similarity_boost != null) {
-          document.getElementById('voice-similarity').value = data.similarity_boost;
-          document.getElementById('val-similarity').textContent = data.similarity_boost;
+        if (el.similarity_boost != null) {
+          document.getElementById('voice-similarity').value = el.similarity_boost;
+          document.getElementById('val-similarity').textContent = el.similarity_boost;
         }
-        if (data.style != null) {
-          document.getElementById('voice-style').value = data.style;
-          document.getElementById('val-style').textContent = data.style;
+        if (el.style != null) {
+          document.getElementById('voice-style').value = el.style;
+          document.getElementById('val-style').textContent = el.style;
         }
-        if (data.use_speaker_boost === false) {
+        if (el.use_speaker_boost === false) {
           document.getElementById('voice-boost').classList.remove('active');
         }
 
-        // Populate ElevenLabs voices
-        if (data.voices && data.voices.length > 0) {
+        // Populate ElevenLabs voices (dentro de data.elevenlabs.voices)
+        const voices = el.voices || [];
+        if (voices.length > 0) {
           const select = document.getElementById('voice-el-voice');
           select.innerHTML = '';
-          data.voices.forEach(v => {
+          voices.forEach(v => {
             const opt = document.createElement('option');
-            opt.value = v.voice_id;
-            opt.textContent = `${v.name} - ${v.category || 'custom'}`;
-            if (v.voice_id === data.elevenlabsVoiceId) opt.selected = true;
+            opt.value = v.id || v.voice_id;
+            const desc = v.description ? ` (${v.description})` : '';
+            opt.textContent = `${v.name}${desc}`;
+            if ((v.id || v.voice_id) === el.voiceId) opt.selected = true;
             select.appendChild(opt);
           });
         }
 
-        if (data.voice) document.getElementById('voice-oai-voice').value = data.voice;
+        // OpenAI voice
+        if (data.openai?.voice) document.getElementById('voice-oai-voice').value = data.openai.voice;
         updateVoiceUI();
       } catch (e) { console.error('Voice config error:', e); }
     }
