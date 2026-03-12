@@ -859,6 +859,9 @@ app.post('/dashboard/memory/batch/start', auth, async (req, res) => {
           console.log(`[BATCH] Concluído! ${batchState.processed} mensagens processadas, ${batchState.errors} erros`);
           batchState.running = false;
           batchState.stoppedAt = new Date().toISOString();
+          // Auto-sync de perfis após batch concluir
+          console.log('[BATCH] Iniciando sync de perfis automaticamente...');
+          syncProfiles().then(r => console.log(`[BATCH] Perfis sincronizados: ${r.synced} perfis, ${r.errors} erros`)).catch(err => console.error('[BATCH] Erro ao sincronizar perfis:', err.message));
           break;
         }
 
@@ -945,6 +948,27 @@ app.get('/dashboard/memory/timeline', auth, async (req, res) => {
       ORDER BY day DESC
     `, [days]);
     res.json({ timeline: rows, days });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- Memory: Atividade recente ---
+app.get('/dashboard/memory/recent', auth, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+    const { rows } = await pool.query(`
+      SELECT content, category, importance, scope, scope_id, created_at
+      FROM jarvis_memories ORDER BY created_at DESC LIMIT $1
+    `, [limit]);
+    res.json({ memories: rows, count: rows.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- Memory: Estatísticas do dia ---
+app.get('/dashboard/memory/today', auth, async (req, res) => {
+  try {
+    const { rows: [{ total }] } = await pool.query(`SELECT COUNT(*)::int as total FROM jarvis_memories WHERE created_at >= CURRENT_DATE`);
+    const { rows: byCategory } = await pool.query(`SELECT category, COUNT(*)::int as count FROM jarvis_memories WHERE created_at >= CURRENT_DATE GROUP BY category ORDER BY count DESC`);
+    res.json({ total, byCategory });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1202,7 +1226,18 @@ app.listen(CONFIG.API_PORT, async () => {
 // CRON JOBS
 // ============================================
 function setupCronJobs() {
-  console.log('[CRON] Jobs DESATIVADOS temporariamente por ordem do Gui');
+  // Sync de perfis a cada 6 horas (0h, 6h, 12h, 18h)
+  cron.schedule('0 */6 * * *', async () => {
+    console.log('[CRON] Iniciando sync de perfis...');
+    try {
+      const result = await syncProfiles();
+      console.log(`[CRON] Perfis sincronizados: ${result.synced} perfis, ${result.errors} erros`);
+    } catch (err) {
+      console.error('[CRON] Erro no sync de perfis:', err.message);
+    }
+  });
+
+  console.log('[CRON] Jobs ativados: syncProfiles a cada 6h');
 }
 
 // ============================================

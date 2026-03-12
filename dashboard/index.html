@@ -546,7 +546,7 @@
     <!-- ==================== MEMORY TAB ==================== -->
     <div id="tab-memory" class="tab-content hidden space-y-6">
       <!-- Memory Stats -->
-      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <div class="panel p-4 stat-card">
           <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Total</div>
           <div id="mem-total" class="font-orbitron text-2xl text-stark-purple" style="color:#7b61ff">--</div>
@@ -563,25 +563,72 @@
           <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Agente</div>
           <div id="mem-agent" class="font-orbitron text-2xl text-stark-gold" style="color:#ffd700">--</div>
         </div>
+        <div class="panel p-4 stat-card relative overflow-hidden">
+          <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Hoje</div>
+          <div id="mem-today" class="font-orbitron text-2xl text-stark-green">--</div>
+          <div class="text-[10px] text-stark-dim mt-1">aprendidas hoje</div>
+        </div>
       </div>
 
-      <!-- Memory Search -->
+      <!-- Timeline + Feed side by side -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <!-- Timeline Chart -->
+        <div class="panel p-5">
+          <h3 class="font-orbitron text-sm tracking-wider mb-4" style="color:#00f0ff">EVOLUÇÃO (14 DIAS)</h3>
+          <div id="mem-timeline" class="flex items-end gap-1 h-32">
+            <div class="text-sm text-stark-dim text-center w-full py-8">Carregando...</div>
+          </div>
+        </div>
+
+        <!-- Feed de Atividade -->
+        <div class="panel p-5">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-orbitron text-sm tracking-wider" style="color:#00f0ff">ATIVIDADE RECENTE</h3>
+            <span class="flex items-center gap-1 text-[10px]" style="color:#00ff88">
+              <span class="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style="background:#00ff88"></span> ao vivo
+            </span>
+          </div>
+          <div id="mem-feed" class="space-y-2 max-h-48 overflow-y-auto pr-1" style="scrollbar-width:thin;scrollbar-color:#1e293b transparent">
+            <div class="text-sm text-stark-dim text-center py-8">Carregando...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Memory Search (upgraded) -->
       <div class="panel p-5">
-        <h3 class="font-orbitron text-sm text-stark-blue mb-4 tracking-wider">BUSCA DE MEMÓRIAS</h3>
-        <div class="flex gap-2 mb-4">
+        <h3 class="font-orbitron text-sm text-stark-blue mb-4 tracking-wider">NAVEGADOR DE MEMÓRIAS</h3>
+        <div class="flex flex-wrap gap-2 mb-4">
           <input id="mem-search-input" type="text" placeholder="Buscar nas memórias do Jarvis..."
-            class="flex-1 bg-stark-bg border border-stark-border rounded px-4 py-2.5 text-sm text-white focus:border-stark-blue focus:outline-none transition-colors"
+            class="flex-1 min-w-[200px] bg-stark-bg border border-stark-border rounded px-4 py-2.5 text-sm text-white focus:border-stark-blue focus:outline-none transition-colors"
             onkeydown="if(event.key==='Enter')searchMemories()">
           <select id="mem-scope-filter" class="bg-stark-bg border border-stark-border rounded px-3 py-2.5 text-sm text-white focus:border-stark-blue focus:outline-none">
-            <option value="">Todos</option>
+            <option value="">Escopo</option>
             <option value="user">Usuário</option>
             <option value="chat">Chat</option>
             <option value="agent">Agente</option>
           </select>
+          <select id="mem-category-filter" class="bg-stark-bg border border-stark-border rounded px-3 py-2.5 text-sm text-white focus:border-stark-blue focus:outline-none">
+            <option value="">Categoria</option>
+            <option value="preference">Preferência</option>
+            <option value="client">Cliente</option>
+            <option value="client_profile">Perfil de Cliente</option>
+            <option value="decision">Decisão</option>
+            <option value="deadline">Prazo</option>
+            <option value="rule">Regra</option>
+            <option value="style">Estilo</option>
+            <option value="team_member">Equipe</option>
+            <option value="process">Processo</option>
+            <option value="pattern">Padrão</option>
+          </select>
           <button onclick="searchMemories()" class="bg-stark-blue/20 border border-stark-blue text-stark-blue px-4 rounded hover:bg-stark-blue/30 transition-colors text-sm font-semibold">BUSCAR</button>
         </div>
-        <div id="mem-results" class="space-y-2 max-h-96 overflow-y-auto">
-          <div class="text-sm text-stark-dim text-center py-8">Digite algo para buscar nas memórias</div>
+        <div id="mem-results" class="space-y-2 max-h-96 overflow-y-auto pr-1" style="scrollbar-width:thin;scrollbar-color:#1e293b transparent">
+          <div class="text-sm text-stark-dim text-center py-8">Digite algo para buscar ou use os filtros</div>
+        </div>
+        <div id="mem-pagination" class="flex items-center justify-center gap-3 mt-4 hidden">
+          <button onclick="memPagePrev()" id="mem-page-prev" class="text-xs text-stark-dim hover:text-white px-3 py-1 border border-stark-border rounded">← Anterior</button>
+          <span id="mem-page-info" class="text-xs text-stark-dim">1/1</span>
+          <button onclick="memPageNext()" id="mem-page-next" class="text-xs text-stark-dim hover:text-white px-3 py-1 border border-stark-border rounded">Próxima →</button>
         </div>
       </div>
 
@@ -593,12 +640,13 @@
         <div class="flex gap-2 items-center">
           <select id="mem-add-category" class="bg-stark-bg border border-stark-border rounded px-3 py-2 text-sm text-white focus:border-stark-blue focus:outline-none">
             <option value="general">Geral</option>
-            <option value="preference">Preferencia</option>
-            <option value="fact">Fato</option>
-            <option value="instruction">Instrução</option>
+            <option value="preference">Preferência</option>
+            <option value="client">Cliente</option>
+            <option value="rule">Regra</option>
+            <option value="process">Processo</option>
           </select>
           <select id="mem-add-importance" class="bg-stark-bg border border-stark-border rounded px-3 py-2 text-sm text-white focus:border-stark-blue focus:outline-none">
-            <option value="medium">Media</option>
+            <option value="medium">Média</option>
             <option value="high">Alta</option>
             <option value="low">Baixa</option>
           </select>
@@ -1045,7 +1093,7 @@
 
       // Load data for tab
       if (tab === 'logs') loadLogs();
-      if (tab === 'memory') loadMemoryStats();
+      if (tab === 'memory') { loadMemoryStats(); loadMemoryFeed(); loadMemoryTimeline(); }
       if (tab === 'voice') loadVoiceConfig();
       if (tab === 'homework') loadHomework();
       if (tab === 'prompt') loadPrompt();
@@ -1291,74 +1339,182 @@
     // ============================================
     // MEMORY
     // ============================================
+    // ============================================
+    // MEMORY TAB - Stats, Feed, Search, Timeline
+    // ============================================
+    const categoryColors = {
+      preference: '#a855f7', client: '#3b82f6', client_profile: '#06b6d4', decision: '#f59e0b',
+      deadline: '#ef4444', rule: '#f97316', style: '#ec4899', team_member: '#10b981',
+      process: '#22d3ee', pattern: '#8b5cf6', general: '#6b7280'
+    };
+    const categoryIcons = {
+      preference: '💜', client: '🏢', client_profile: '👤', decision: '✅',
+      deadline: '⏰', rule: '📌', style: '🎨', team_member: '👥',
+      process: '⚙️', pattern: '📊', general: '📝'
+    };
+    let memCurrentPage = 1;
+    let memTotalPages = 1;
+
+    function timeAgo(date) {
+      const s = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
+      if (s < 60) return 'agora';
+      if (s < 3600) return `há ${Math.floor(s/60)} min`;
+      if (s < 86400) return `há ${Math.floor(s/3600)}h`;
+      return `há ${Math.floor(s/86400)}d`;
+    }
+
     async function loadMemoryStats() {
       try {
-        const res = await api('/dashboard/memory');
-        const data = await res.json();
-        document.getElementById('mem-total').textContent = data.total || 0;
-        document.getElementById('mem-user').textContent = data.user || 0;
-        document.getElementById('mem-chat').textContent = data.chat || 0;
-        document.getElementById('mem-agent').textContent = data.agent || 0;
-        document.getElementById('stat-memories').textContent = data.total || 0;
+        const [statsRes, todayRes] = await Promise.all([api('/dashboard/memory'), api('/dashboard/memory/today')]);
+        const data = await statsRes.json();
+        const today = await todayRes.json();
+        document.getElementById('mem-total').textContent = (data.total || 0).toLocaleString();
+        document.getElementById('mem-user').textContent = (data.user || 0).toLocaleString();
+        document.getElementById('mem-chat').textContent = (data.chat || 0).toLocaleString();
+        document.getElementById('mem-agent').textContent = (data.agent || 0).toLocaleString();
+        document.getElementById('mem-today').textContent = today.total || 0;
+        document.getElementById('stat-memories').textContent = (data.total || 0).toLocaleString();
       } catch (e) { console.error('Memory stats error:', e); }
+    }
+
+    async function loadMemoryFeed() {
+      try {
+        const res = await api('/dashboard/memory/recent?limit=15');
+        const data = await res.json();
+        const feed = document.getElementById('mem-feed');
+        if (!data.memories || data.memories.length === 0) {
+          feed.innerHTML = '<div class="text-sm text-stark-dim text-center py-8">Nenhuma memória ainda</div>';
+          return;
+        }
+        feed.innerHTML = data.memories.map(m => {
+          const cat = m.category || 'general';
+          const color = categoryColors[cat] || '#6b7280';
+          const icon = categoryIcons[cat] || '📝';
+          const content = escapeHtml(m.content.length > 90 ? m.content.substring(0, 90) + '...' : m.content);
+          const scopeBadge = m.scope === 'user' ? '👤' : m.scope === 'chat' ? '💬' : '🤖';
+          return `<div class="flex items-start gap-2 py-1.5 border-b border-stark-border/20 last:border-0">
+            <span class="text-sm flex-shrink-0">${icon}</span>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs text-gray-300 leading-relaxed">${content}</p>
+              <div class="flex items-center gap-2 mt-0.5">
+                <span class="text-[9px] font-mono px-1.5 py-0.5 rounded" style="background:${color}20;color:${color}">${cat}</span>
+                <span class="text-[9px]">${scopeBadge}</span>
+                <span class="text-[9px] text-stark-dim ml-auto">${timeAgo(m.created_at)}</span>
+              </div>
+            </div>
+          </div>`;
+        }).join('');
+      } catch (e) { console.error('Memory feed error:', e); }
+    }
+
+    async function loadMemoryTimeline() {
+      try {
+        const res = await api('/dashboard/memory/timeline?days=14');
+        const data = await res.json();
+        const container = document.getElementById('mem-timeline');
+        if (!data.timeline || data.timeline.length === 0) {
+          container.innerHTML = '<div class="text-sm text-stark-dim text-center w-full py-8">Sem dados ainda</div>';
+          return;
+        }
+        // Agregar por dia
+        const dayMap = {};
+        data.timeline.forEach(r => {
+          dayMap[r.day] = (dayMap[r.day] || 0) + r.count;
+        });
+        // Gerar últimos 14 dias
+        const days = [];
+        for (let i = 13; i >= 0; i--) {
+          const d = new Date(); d.setDate(d.getDate() - i);
+          const key = d.toISOString().split('T')[0];
+          days.push({ day: key, count: dayMap[key] || 0, label: d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) });
+        }
+        const max = Math.max(...days.map(d => d.count), 1);
+        container.innerHTML = days.map(d => {
+          const h = Math.max(d.count > 0 ? (d.count / max * 100) : 2, 2);
+          const isToday = d.day === new Date().toISOString().split('T')[0];
+          return `<div class="flex-1 flex flex-col items-center gap-1 group cursor-default">
+            <span class="text-[9px] text-stark-dim opacity-0 group-hover:opacity-100 transition-opacity">${d.count}</span>
+            <div class="w-full rounded-t relative" style="height:${h}%;background:linear-gradient(to top,#00f0ff,#7b61ff);min-height:3px;${isToday ? 'box-shadow:0 0 8px #00f0ff' : ''}"></div>
+            <span class="text-[8px] text-stark-dim ${isToday ? 'text-white font-bold' : ''}">${d.label}</span>
+          </div>`;
+        }).join('');
+      } catch (e) { console.error('Timeline error:', e); }
     }
 
     async function searchMemories() {
       const q = document.getElementById('mem-search-input').value.trim();
-      if (!q) return;
       const scope = document.getElementById('mem-scope-filter').value;
+      const category = document.getElementById('mem-category-filter').value;
+      if (!q && !scope && !category) return;
 
       try {
-        let url = `/dashboard/memory/search?q=${encodeURIComponent(q)}&limit=30`;
+        let url = `/dashboard/memory/browse?page=${memCurrentPage}&limit=20`;
+        if (q) url += `&search=${encodeURIComponent(q)}`;
         if (scope) url += `&scope=${scope}`;
+        if (category) url += `&category=${category}`;
 
         const res = await api(url);
         const data = await res.json();
         const container = document.getElementById('mem-results');
-        container.innerHTML = '';
+        memTotalPages = data.pages || 1;
 
-        if (!data.results || data.results.length === 0) {
+        if (!data.memories || data.memories.length === 0) {
           container.innerHTML = '<div class="text-sm text-stark-dim text-center py-8">Nenhuma memória encontrada</div>';
+          document.getElementById('mem-pagination').classList.add('hidden');
           return;
         }
 
-        data.results.forEach(mem => {
-          const scopeColor = { user: 'text-stark-blue', chat: 'text-stark-cyan', agent: 'text-stark-gold' };
-          const impColor = { high: 'text-stark-red', medium: 'text-stark-orange', low: 'text-stark-dim' };
+        container.innerHTML = data.memories.map(mem => {
+          const cat = mem.category || 'general';
+          const color = categoryColors[cat] || '#6b7280';
+          const stars = '⭐'.repeat(Math.min(Math.ceil((mem.importance || 5) / 3), 3));
+          const scopeColor = { user: '#3b82f6', chat: '#00f0ff', agent: '#ffd700' };
           const time = new Date(mem.created_at).toLocaleDateString('pt-BR');
+          return `<div class="bg-stark-bg/50 rounded p-3 border border-stark-border/30">
+            <div class="flex items-center gap-2 mb-1.5 flex-wrap">
+              <span class="text-[10px] font-mono px-1.5 py-0.5 rounded" style="background:${color}20;color:${color}">${cat}</span>
+              <span class="text-[10px] font-mono px-1.5 py-0.5 rounded" style="background:${(scopeColor[mem.scope] || '#666')}20;color:${scopeColor[mem.scope] || '#666'}">${mem.scope || '--'}</span>
+              <span class="text-[10px]">${stars}</span>
+              <span class="text-[10px] text-stark-dim ml-auto">${time}</span>
+            </div>
+            <p class="text-sm text-gray-300">${escapeHtml(mem.content)}</p>
+          </div>`;
+        }).join('');
 
-          container.innerHTML += `
-            <div class="bg-stark-bg/50 rounded p-3 border border-stark-border/30">
-              <div class="flex items-center gap-2 mb-1.5">
-                <span class="text-[10px] font-mono ${scopeColor[mem.scope] || 'text-stark-dim'} uppercase">${mem.scope || '--'}</span>
-                <span class="text-[10px] font-mono ${impColor[mem.importance] || 'text-stark-dim'}">${mem.importance || '--'}</span>
-                <span class="text-[10px] text-stark-dim ml-auto">${time}</span>
-              </div>
-              <p class="text-sm text-gray-300">${escapeHtml(mem.content)}</p>
-              ${mem.category ? `<span class="text-[10px] text-stark-dim mt-1 inline-block">#${mem.category}</span>` : ''}
-            </div>`;
-        });
+        // Paginação
+        const pagEl = document.getElementById('mem-pagination');
+        if (memTotalPages > 1) {
+          pagEl.classList.remove('hidden');
+          document.getElementById('mem-page-info').textContent = `${memCurrentPage}/${memTotalPages}`;
+          document.getElementById('mem-page-prev').disabled = memCurrentPage <= 1;
+          document.getElementById('mem-page-next').disabled = memCurrentPage >= memTotalPages;
+        } else {
+          pagEl.classList.add('hidden');
+        }
       } catch (e) { notify('Erro ao buscar memórias', 'error'); }
     }
+
+    function memPagePrev() { if (memCurrentPage > 1) { memCurrentPage--; searchMemories(); } }
+    function memPageNext() { if (memCurrentPage < memTotalPages) { memCurrentPage++; searchMemories(); } }
 
     async function addMemory() {
       const content = document.getElementById('mem-add-content').value.trim();
       if (!content) return;
-
       try {
         await api('/dashboard/memory/add', {
           method: 'POST',
           body: JSON.stringify({
             content,
             category: document.getElementById('mem-add-category').value,
-            importance: document.getElementById('mem-add-importance').value,
-            scope: 'user',
-            scopeId: 'dashboard',
+            importance: document.getElementById('mem-add-importance').value === 'high' ? 9 : document.getElementById('mem-add-importance').value === 'low' ? 3 : 6,
+            scope: 'agent',
+            scopeId: null,
           }),
         });
         document.getElementById('mem-add-content').value = '';
         notify('Memória salva!', 'success');
         loadMemoryStats();
+        loadMemoryFeed();
       } catch (e) { notify('Erro ao salvar memória', 'error'); }
     }
 
@@ -1829,8 +1985,14 @@
         loadHealth();
         if (activeTab === 'overview') loadIntelligence();
         if (activeTab === 'logs') loadLogs();
-        if (activeTab === 'memory') loadMemoryStats();
+        if (activeTab === 'memory') { loadMemoryStats(); loadMemoryFeed(); }
       }, 30000);
+
+      // Feed de memória: refresh extra a cada 15s quando na tab memory
+      setInterval(() => {
+        const activeTab = document.querySelector('.tab-btn.tab-active')?.dataset?.tab;
+        if (activeTab === 'memory') loadMemoryFeed();
+      }, 15000);
     }
 
     // Boot
