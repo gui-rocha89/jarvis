@@ -11,11 +11,13 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 import express from 'express';
 import cron from 'node-cron';
-import { randomUUID } from 'crypto';
+import { randomUUID, randomInt } from 'crypto';
 import { readFile, writeFile } from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
+import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
 
 // Módulos do Jarvis 2.0
 import { CONFIG, AUDIO_ALLOWED, teamPhones, teamWhatsApp } from './src/config.mjs';
@@ -193,11 +195,331 @@ async function handleIncomingMessage(m) {
 const app = express();
 app.use(express.json());
 
+// --- Auth: API key (interno) OU JWT (dashboard) ---
 function auth(req, res, next) {
-  const key = req.headers['x-api-key'] || req.query.apikey;
-  if (key !== CONFIG.API_KEY) return res.status(401).json({ error: 'API key invalida' });
-  next();
+  const apiKey = req.headers['x-api-key'] || req.query.apikey;
+  if (apiKey && apiKey === CONFIG.API_KEY) return next();
+
+  const authHeader = req.headers['authorization'];
+  if (authHeader?.startsWith('Bearer ')) {
+    try {
+      if (!CONFIG.JWT_SECRET) return res.status(500).json({ error: 'JWT_SECRET não configurado' });
+      const decoded = jwt.verify(authHeader.split(' ')[1], CONFIG.JWT_SECRET);
+      req.user = decoded;
+      return next();
+    } catch { return res.status(401).json({ error: 'Token inválido ou expirado' }); }
+  }
+
+  return res.status(401).json({ error: 'Autenticação necessária' });
 }
+
+// --- Rate limiting para auth (anti brute-force) ---
+const authRateLimit = new Map(); // ip -> { count, resetAt }
+function checkAuthRateLimit(ip) {
+  const now = Date.now();
+  const entry = authRateLimit.get(ip);
+  if (!entry || now > entry.resetAt) {
+    authRateLimit.set(ip, { count: 1, resetAt: now + 60000 }); // 1 min window
+    return true;
+  }
+  entry.count++;
+  if (entry.count > 10) return false; // max 10 tentativas/min
+  return true;
+}
+
+// Cache de geolocalização de IP
+const geoCache = new Map(); // ip -> { data, cachedAt }
+async function getGeoFromIP(ip) {
+  if (!ip || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('192.168.') || ip.startsWith('10.')) {
+    return { city: 'Local', region: '', country: 'LAN' };
+  }
+  const cached = geoCache.get(ip);
+  if (cached && Date.now() - cached.cachedAt < 3600000) return cached.data;
+  try {
+    const resp = await fetch(`http://ip-api.com/json/${ip}?fields=city,regionName,country`);
+    if (resp.ok) {
+      const data = await resp.json();
+      const geo = { city: data.city || '', region: data.regionName || '', country: data.country || '' };
+      geoCache.set(ip, { data: geo, cachedAt: Date.now() });
+      return geo;
+    }
+  } catch {}
+  return { city: '', region: '', country: '' };
+}
+
+function getClientIP(req) {
+  return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.headers['x-real-ip'] || req.socket.remoteAddress || '';
+}
+
+async function logAccess(email, ip, userAgent, action, success) {
+  const geo = await getGeoFromIP(ip);
+  await pool.query(
+    'INSERT INTO dashboard_access_log (email, ip, user_agent, action, success, city, region, country) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+    [email, ip, userAgent || '', action, success, geo.city, geo.region, geo.country]
+  ).catch(() => {});
+  return geo;
+}
+
+// --- Auth Endpoints (públicos — sem middleware) ---
+
+// Verificar se já existe usuário cadastrado
+app.get('/dashboard/auth/status', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT COUNT(*) as cnt FROM dashboard_users');
+    const hasUsers = parseInt(rows[0].cnt) > 0;
+    res.json({ hasUsers });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Cadastro inicial (só funciona se não existe nenhum usuário)
+app.post('/dashboard/auth/setup', async (req, res) => {
+  try {
+    const { email, password, phone_2fa } = req.body;
+    if (!email || !password || !phone_2fa) return res.status(400).json({ error: 'Email, senha e telefone 2FA obrigatórios' });
+    if (password.length < 8) return res.status(400).json({ error: 'Senha deve ter no mínimo 8 caracteres' });
+
+    const { rows } = await pool.query('SELECT COUNT(*) as cnt FROM dashboard_users');
+    if (parseInt(rows[0].cnt) > 0) return res.status(403).json({ error: 'Conta já existe. Use o login.' });
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const phoneJid = phone_2fa.replace(/\D/g, '') + '@s.whatsapp.net';
+    await pool.query(
+      'INSERT INTO dashboard_users (email, password_hash, phone_2fa) VALUES ($1, $2, $3)',
+      [email.toLowerCase(), passwordHash, phoneJid]
+    );
+
+    const ip = getClientIP(req);
+    await logAccess(email, ip, req.headers['user-agent'], 'account_created', true);
+
+    res.json({ success: true, message: 'Conta criada com sucesso!' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Login Step 1: Email + Senha → envia código 2FA
+app.post('/dashboard/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'Email e senha obrigatórios' });
+
+    const ip = getClientIP(req);
+    const ua = req.headers['user-agent'] || '';
+
+    // Rate limiting
+    if (!checkAuthRateLimit(ip)) {
+      await logAccess(email, ip, ua, 'rate_limited', false);
+      return res.status(429).json({ error: 'Muitas tentativas. Aguarde 1 minuto.' });
+    }
+
+    const { rows } = await pool.query('SELECT * FROM dashboard_users WHERE email = $1 AND is_active = true', [email.toLowerCase()]);
+    if (rows.length === 0) {
+      await logAccess(email, ip, ua, 'login_failed_email', false);
+      return res.status(401).json({ error: 'Credenciais inválidas' });
+    }
+
+    const user = rows[0];
+
+    // Verificar bloqueio
+    if (user.locked_until && new Date(user.locked_until) > new Date()) {
+      const minLeft = Math.ceil((new Date(user.locked_until) - new Date()) / 60000);
+      await logAccess(email, ip, ua, 'login_blocked', false);
+      return res.status(423).json({ error: `Conta bloqueada. Tente novamente em ${minLeft} minuto(s).` });
+    }
+
+    // Verificar senha
+    const validPassword = await bcrypt.compare(password, user.password_hash);
+    if (!validPassword) {
+      const attempts = user.failed_attempts + 1;
+      if (attempts >= 5) {
+        await pool.query("UPDATE dashboard_users SET failed_attempts = $1, locked_until = NOW() + INTERVAL '15 minutes' WHERE id = $2", [attempts, user.id]);
+        await logAccess(email, ip, ua, 'login_locked', false);
+        // Alerta WhatsApp
+        if (sock && user.phone_2fa) {
+          sendText(user.phone_2fa, `🚨 *ALERTA DE SEGURANÇA*\n\nSua conta do Dashboard foi bloqueada após 5 tentativas de login falhadas.\nIP: ${ip}\nBloqueio: 15 minutos.\n\nSe não foi você, altere sua senha imediatamente.`).catch(() => {});
+        }
+        return res.status(423).json({ error: 'Conta bloqueada por 15 minutos após 5 tentativas.' });
+      }
+      await pool.query('UPDATE dashboard_users SET failed_attempts = $1 WHERE id = $2', [attempts, user.id]);
+      await logAccess(email, ip, ua, 'login_failed_password', false);
+      return res.status(401).json({ error: 'Credenciais inválidas', attemptsLeft: 5 - attempts });
+    }
+
+    // Senha correta — resetar tentativas e gerar código 2FA
+    await pool.query('UPDATE dashboard_users SET failed_attempts = 0, locked_until = NULL WHERE id = $1', [user.id]);
+
+    const code = String(randomInt(100000, 999999));
+    await pool.query(
+      "INSERT INTO dashboard_2fa_codes (email, code, expires_at) VALUES ($1, $2, NOW() + INTERVAL '5 minutes')",
+      [email.toLowerCase(), code]
+    );
+
+    // Enviar código via WhatsApp
+    if (sock && user.phone_2fa) {
+      await sendText(user.phone_2fa, `🔐 *Código de acesso ao Dashboard*\n\n*${code}*\n\nExpira em 5 minutos.\nSe não foi você, ignore esta mensagem.`).catch(() => {});
+    }
+
+    await logAccess(email, ip, ua, 'login_2fa_sent', true);
+    res.json({ requires_2fa: true, message: 'Código enviado no seu WhatsApp' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Login Step 2: Verificar código 2FA → retorna JWT
+app.post('/dashboard/auth/verify', async (req, res) => {
+  try {
+    const { email, code } = req.body;
+    if (!email || !code) return res.status(400).json({ error: 'Email e código obrigatórios' });
+
+    const ip = getClientIP(req);
+    const ua = req.headers['user-agent'] || '';
+
+    if (!checkAuthRateLimit(ip)) {
+      await logAccess(email, ip, ua, 'verify_rate_limited', false);
+      return res.status(429).json({ error: 'Muitas tentativas. Aguarde 1 minuto.' });
+    }
+
+    // Buscar código válido (não expirado, não usado)
+    const { rows } = await pool.query(
+      'SELECT * FROM dashboard_2fa_codes WHERE email = $1 AND code = $2 AND used = false AND expires_at > NOW() ORDER BY created_at DESC LIMIT 1',
+      [email.toLowerCase(), code]
+    );
+
+    if (rows.length === 0) {
+      await logAccess(email, ip, ua, 'verify_failed', false);
+      return res.status(401).json({ error: 'Código inválido ou expirado' });
+    }
+
+    // Marcar código como usado
+    await pool.query('UPDATE dashboard_2fa_codes SET used = true WHERE id = $1', [rows[0].id]);
+
+    // Gerar JWT
+    if (!CONFIG.JWT_SECRET) return res.status(500).json({ error: 'JWT_SECRET não configurado no servidor' });
+    const token = jwt.sign({ email: email.toLowerCase() }, CONFIG.JWT_SECRET, { expiresIn: '8h' });
+
+    const geo = await logAccess(email, ip, ua, 'login_success', true);
+
+    // Alerta para IP desconhecido
+    const { rows: prevIPs } = await pool.query(
+      "SELECT DISTINCT ip FROM dashboard_access_log WHERE email = $1 AND action = 'login_success' AND ip != $2 AND created_at > NOW() - INTERVAL '30 days'",
+      [email.toLowerCase(), ip]
+    );
+    const knownIPs = await pool.query(
+      "SELECT COUNT(*) as cnt FROM dashboard_access_log WHERE email = $1 AND ip = $2 AND action = 'login_success'",
+      [email.toLowerCase(), ip]
+    );
+    if (parseInt(knownIPs.rows[0].cnt) <= 1 && prevIPs.rows.length > 0) {
+      // IP novo — alerta
+      const userRow = await pool.query('SELECT phone_2fa FROM dashboard_users WHERE email = $1', [email.toLowerCase()]);
+      if (sock && userRow.rows[0]?.phone_2fa) {
+        sendText(userRow.rows[0].phone_2fa, `⚠️ *Novo acesso ao Dashboard*\n\nIP: ${ip}\nLocal: ${geo.city}${geo.region ? ', ' + geo.region : ''} - ${geo.country}\nHora: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}\n\nFoi você? Se não, altere sua senha agora.`).catch(() => {});
+      }
+    }
+
+    // Limpar códigos antigos
+    pool.query("DELETE FROM dashboard_2fa_codes WHERE expires_at < NOW() OR used = true").catch(() => {});
+
+    res.json({ token, expiresIn: '8h' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Reenviar código 2FA
+app.post('/dashboard/auth/resend', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email obrigatório' });
+
+    const ip = getClientIP(req);
+    if (!checkAuthRateLimit(ip)) return res.status(429).json({ error: 'Muitas tentativas. Aguarde 1 minuto.' });
+
+    const { rows } = await pool.query('SELECT phone_2fa FROM dashboard_users WHERE email = $1 AND is_active = true', [email.toLowerCase()]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Usuário não encontrado' });
+
+    // Invalidar códigos anteriores
+    await pool.query('UPDATE dashboard_2fa_codes SET used = true WHERE email = $1 AND used = false', [email.toLowerCase()]);
+
+    const code = String(randomInt(100000, 999999));
+    await pool.query(
+      "INSERT INTO dashboard_2fa_codes (email, code, expires_at) VALUES ($1, $2, NOW() + INTERVAL '5 minutes')",
+      [email.toLowerCase(), code]
+    );
+
+    if (sock && rows[0].phone_2fa) {
+      await sendText(rows[0].phone_2fa, `🔐 *Novo código de acesso ao Dashboard*\n\n*${code}*\n\nExpira em 5 minutos.`).catch(() => {});
+    }
+
+    res.json({ success: true, message: 'Novo código enviado' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Alterar senha (requer JWT)
+app.post('/dashboard/auth/change-password', auth, async (req, res) => {
+  try {
+    if (!req.user?.email) return res.status(401).json({ error: 'Token JWT necessário' });
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Senha atual e nova obrigatórias' });
+    if (newPassword.length < 8) return res.status(400).json({ error: 'Nova senha deve ter no mínimo 8 caracteres' });
+
+    const { rows } = await pool.query('SELECT * FROM dashboard_users WHERE email = $1', [req.user.email]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Usuário não encontrado' });
+
+    const valid = await bcrypt.compare(currentPassword, rows[0].password_hash);
+    if (!valid) return res.status(401).json({ error: 'Senha atual incorreta' });
+
+    const newHash = await bcrypt.hash(newPassword, 12);
+    await pool.query('UPDATE dashboard_users SET password_hash = $1, updated_at = NOW() WHERE email = $2', [newHash, req.user.email]);
+
+    const ip = getClientIP(req);
+    await logAccess(req.user.email, ip, req.headers['user-agent'], 'password_changed', true);
+
+    res.json({ success: true, message: 'Senha alterada com sucesso!' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Log de acessos (requer JWT)
+app.get('/dashboard/auth/access-log', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT email, ip, user_agent, action, success, city, region, country, created_at FROM dashboard_access_log ORDER BY created_at DESC LIMIT 50'
+    );
+    res.json({ logs: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- Intelligence Score ---
+app.get('/dashboard/intelligence', auth, async (req, res) => {
+  try {
+    const memByCategory = await pool.query('SELECT category, COUNT(*)::int as cnt, AVG(importance)::float as avg_imp FROM jarvis_memories GROUP BY category');
+    const totalMemories = await pool.query('SELECT COUNT(*)::int as cnt FROM jarvis_memories');
+    const totalMessages = await pool.query('SELECT COUNT(*)::int as cnt FROM jarvis_messages');
+    const uniqueContacts = await pool.query('SELECT COUNT(DISTINCT sender)::int as cnt FROM jarvis_messages');
+    const gcalCount = await pool.query('SELECT COUNT(*)::int as cnt FROM gcal_sync');
+    const daysActive = await pool.query("SELECT COALESCE(EXTRACT(DAY FROM NOW() - MIN(created_at)), 0)::int as days FROM jarvis_messages");
+
+    const catMap = {};
+    for (const row of memByCategory.rows) catMap[row.category] = { count: row.cnt, avgImp: row.avg_imp };
+
+    // Calcular scores (0-100) com thresholds realistas
+    const clamp = (v) => Math.min(Math.round(v), 100);
+    const axes = {
+      clientes: clamp(((catMap['client']?.count || 0) / 20) * 100),
+      tarefas: clamp((((catMap['deadline']?.count || 0) + (catMap['decision']?.count || 0)) / 30) * 100),
+      calendario: clamp(((gcalCount.rows[0].cnt || 0) / 50) * 100),
+      procedimentos: clamp((((catMap['rule']?.count || 0) + (catMap['instruction']?.count || 0)) / 25) * 100),
+      conversacao: clamp(((totalMessages.rows[0].cnt || 0) / 1000) * 100),
+      padraoTasks: clamp(((catMap['style']?.count || 0) / 15) * 100),
+      streamLab: clamp(((catMap['general']?.count || 0) / 30) * 100),
+    };
+
+    const values = Object.values(axes);
+    const overallScore = Math.round(values.reduce((a, b) => a + b, 0) / values.length);
+
+    res.json({
+      overallScore, axes,
+      totalMemories: totalMemories.rows[0].cnt,
+      totalMessages: totalMessages.rows[0].cnt,
+      uniqueContacts: uniqueContacts.rows[0].cnt,
+      daysActive: daysActive.rows[0].days,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 // --- Status e Health ---
 app.get('/status', auth, async (req, res) => {

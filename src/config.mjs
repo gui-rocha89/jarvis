@@ -14,6 +14,7 @@ export const CONFIG = {
   ASANA_PAT: process.env.ASANA_PAT || '',
   ASANA_WORKSPACE: process.env.ASANA_WORKSPACE || '',
   JARVIS_VERSION: '2.0.0',
+  JWT_SECRET: process.env.JWT_SECRET || '',
 };
 
 // Asana GIDs da equipe (via .env JSON ou fallback vazio)

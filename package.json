@@ -8,16 +8,24 @@
     "start": "node jarvis-v2.mjs",
     "test": "node --test tests/"
   },
-  "keywords": ["whatsapp", "ai", "agent", "anthropic", "claude"],
+  "keywords": [
+    "whatsapp",
+    "ai",
+    "agent",
+    "anthropic",
+    "claude"
+  ],
   "author": "Stream Lab",
   "license": "UNLICENSED",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "audio-decode": "^2.2.3",
+    "bcrypt": "^6.0.0",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "googleapis": "^171.4.0",
+    "jsonwebtoken": "^9.0.3",
     "node-cron": "^4.2.1",
     "openai": "^6.27.0",
     "pg": "^8.20.0",

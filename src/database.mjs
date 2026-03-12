@@ -91,6 +91,47 @@ export async function initDB() {
       )
     `);
 
+    // --- Tabelas de segurança do Dashboard ---
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS dashboard_users (
+        id SERIAL PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        phone_2fa TEXT NOT NULL,
+        is_active BOOLEAN DEFAULT true,
+        failed_attempts INTEGER DEFAULT 0,
+        locked_until TIMESTAMPTZ DEFAULT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS dashboard_access_log (
+        id SERIAL PRIMARY KEY,
+        email TEXT,
+        ip TEXT NOT NULL,
+        user_agent TEXT,
+        action TEXT NOT NULL,
+        success BOOLEAN DEFAULT false,
+        city TEXT,
+        region TEXT,
+        country TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS dashboard_2fa_codes (
+        id SERIAL PRIMARY KEY,
+        email TEXT NOT NULL,
+        code TEXT NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        used BOOLEAN DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
     console.log('[DB] Tabelas verificadas/criadas');
   } catch (err) {
     console.error('[DB] Erro ao conectar:', err.message);

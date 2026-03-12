@@ -34,7 +34,8 @@ auth_session/                # Sessao WhatsApp (NAO versionado!)
 
 ### Codigo
 - **Pool PostgreSQL:** usar a variavel global `pool` exportada de `database.mjs` (NUNCA `CONFIG.DATABASE_URL`)
-- **Auth da API:** header `x-api-key` (NUNCA `Authorization: Bearer`)
+- **Auth da API interna (WhatsApp → API):** header `x-api-key` (chamadas internas do Jarvis)
+- **Auth do Dashboard:** JWT via header `Authorization: Bearer <token>` (login + 2FA obrigatorio)
 - **Google JWT:** usar sintaxe de objeto `new google.auth.JWT({ email, key, scopes })`
 - **Credenciais:** TODAS vem do `.env` — NUNCA hardcodar senhas, tokens, IPs, telefones ou GIDs no codigo
 - **Portugues SEMPRE com acentos** em todas as respostas e documentacao voltada ao usuario
@@ -95,14 +96,25 @@ Exporta: `asanaRequest`, `asanaCreateTask`, `asanaAddToProject`, `asanaAddCommen
 ## API Endpoints
 
 Base: porta configurada em `API_PORT` (.env)
-Auth: header `x-api-key`
+Auth interna: header `x-api-key` | Auth dashboard: `Authorization: Bearer <JWT>`
 
+### Endpoints de Autenticacao (publicos — sem auth)
+| Metodo | Rota | Descricao |
+|--------|------|-----------|
+| GET | /dashboard/auth/status | Verifica se ja existe conta cadastrada |
+| POST | /dashboard/auth/setup | Cadastro inicial (so funciona 1x) |
+| POST | /dashboard/auth/login | Login email+senha → envia codigo 2FA via WhatsApp |
+| POST | /dashboard/auth/verify | Valida codigo 2FA → retorna JWT (8h) |
+| POST | /dashboard/auth/resend | Reenvia codigo 2FA |
+
+### Endpoints protegidos (requer JWT ou x-api-key)
 | Metodo | Rota | Descricao |
 |--------|------|-----------|
 | GET | /status | Status do bot (versao, mensagens, memorias) |
 | POST | /send/text | Enviar mensagem de texto |
 | POST | /send/audio | Enviar mensagem de audio (TTS) |
 | GET | /dashboard/health | Health check do dashboard |
+| GET | /dashboard/intelligence | Score de inteligencia (7 eixos + geral) |
 | GET | /dashboard/voice | Configuracoes de voz atuais |
 | POST | /dashboard/voice | Atualizar configuracoes de voz (sliders) |
 | GET | /dashboard/memory | Estatisticas de memoria |
@@ -110,6 +122,8 @@ Auth: header `x-api-key`
 | POST | /dashboard/memory/add | Adicionar memoria manualmente |
 | POST | /dashboard/chat | Chat com Jarvis (via dashboard) |
 | GET | /dashboard/qr | QR code para reconexao |
+| POST | /dashboard/auth/change-password | Alterar senha (requer JWT) |
+| GET | /dashboard/auth/access-log | Historico de acessos (requer JWT) |
 
 ## Fluxo de Mensagem
 
@@ -136,6 +150,25 @@ Mensagem recebida (WhatsApp)
 
 Todas as credenciais, IDs e dados sensiveis ficam EXCLUSIVAMENTE no `.env`.
 Consulte `.env.example` para a lista completa de variaveis necessarias.
+
+## Seguranca do Dashboard
+
+O dashboard usa autenticacao em 2 fatores:
+1. **Email + Senha** (bcrypt hash, custo 12)
+2. **Codigo 2FA via WhatsApp** (6 digitos, expira 5min, single-use)
+3. **Token JWT** (expira 8h, secret no .env)
+
+Tabelas de seguranca:
+- `dashboard_users` — email, password_hash, phone_2fa, failed_attempts, locked_until
+- `dashboard_access_log` — ip, user_agent, action, success, geolocalizacao
+- `dashboard_2fa_codes` — code, expires_at, used
+
+Protecoes:
+- Bloqueio apos 5 tentativas erradas (15min)
+- Rate limiting: 10 tentativas/min por IP
+- Alerta WhatsApp para IP desconhecido
+- Geolocalizacao via ip-api.com (cache 1h)
+- API key interna (`x-api-key`) continua funcionando para chamadas do Jarvis (backward compat)
 
 ## Evolucao Futura
 

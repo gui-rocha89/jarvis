@@ -6,6 +6,7 @@
   <title>JARVIS 2.0 | Guardiao Lab</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
   <script>
     tailwind.config = {
@@ -224,13 +225,14 @@
 
       <!-- Nav Tabs -->
       <nav class="hidden md:flex items-center gap-1">
-        <button onclick="switchTab('overview')" data-tab="overview" class="tab-btn tab-active px-4 py-4 text-sm font-semibold tracking-wider uppercase transition-colors hover:text-stark-blue">Overview</button>
-        <button onclick="switchTab('chat')" data-tab="chat" class="tab-btn px-4 py-4 text-sm font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Chat</button>
-        <button onclick="switchTab('memory')" data-tab="memory" class="tab-btn px-4 py-4 text-sm font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Memory</button>
-        <button onclick="switchTab('voice')" data-tab="voice" class="tab-btn px-4 py-4 text-sm font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Voice</button>
-        <button onclick="switchTab('logs')" data-tab="logs" class="tab-btn px-4 py-4 text-sm font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Logs</button>
-        <button onclick="switchTab('homework')" data-tab="homework" class="tab-btn px-4 py-4 text-sm font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Training</button>
-        <button onclick="switchTab('prompt')" data-tab="prompt" class="tab-btn px-4 py-4 text-sm font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Prompt</button>
+        <button onclick="switchTab('overview')" data-tab="overview" class="tab-btn tab-active px-3 py-4 text-xs font-semibold tracking-wider uppercase transition-colors hover:text-stark-blue">Visão Geral</button>
+        <button onclick="switchTab('chat')" data-tab="chat" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Chat</button>
+        <button onclick="switchTab('memory')" data-tab="memory" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Memória</button>
+        <button onclick="switchTab('voice')" data-tab="voice" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Voz</button>
+        <button onclick="switchTab('logs')" data-tab="logs" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Registros</button>
+        <button onclick="switchTab('homework')" data-tab="homework" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Treinamento</button>
+        <button onclick="switchTab('prompt')" data-tab="prompt" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Prompt</button>
+        <button onclick="switchTab('security')" data-tab="security" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Segurança</button>
       </nav>
 
       <!-- Status -->
@@ -252,7 +254,7 @@
     <div class="flex justify-around py-2">
       <button onclick="switchTab('overview')" data-tab-m="overview" class="mobile-tab flex flex-col items-center gap-1 px-3 py-1 text-stark-blue">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
-        <span class="text-[10px]">Overview</span>
+        <span class="text-[10px]">Geral</span>
       </button>
       <button onclick="switchTab('chat')" data-tab-m="chat" class="mobile-tab flex flex-col items-center gap-1 px-3 py-1 text-stark-dim">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
@@ -260,15 +262,15 @@
       </button>
       <button onclick="switchTab('memory')" data-tab-m="memory" class="mobile-tab flex flex-col items-center gap-1 px-3 py-1 text-stark-dim">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
-        <span class="text-[10px]">Memory</span>
+        <span class="text-[10px]">Memória</span>
       </button>
       <button onclick="switchTab('voice')" data-tab-m="voice" class="mobile-tab flex flex-col items-center gap-1 px-3 py-1 text-stark-dim">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
-        <span class="text-[10px]">Voice</span>
+        <span class="text-[10px]">Voz</span>
       </button>
       <button onclick="switchTab('logs')" data-tab-m="logs" class="mobile-tab flex flex-col items-center gap-1 px-3 py-1 text-stark-dim">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
-        <span class="text-[10px]">Logs</span>
+        <span class="text-[10px]">Registros</span>
       </button>
     </div>
   </div>
@@ -282,18 +284,61 @@
       <p class="font-orbitron text-stark-blue text-sm tracking-widest animate-pulse">INICIALIZANDO SISTEMAS...</p>
     </div>
 
-    <!-- AUTH MODAL -->
+    <!-- AUTH MODAL — Login + 2FA + Setup -->
     <div id="auth-modal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm">
       <div class="panel p-8 w-full max-w-md mx-4 relative corner-tl corner-br">
-        <h2 class="font-orbitron text-stark-blue text-xl mb-2 glow-blue">AUTENTICACAO</h2>
-        <p class="text-sm text-stark-dim mb-6">Insira a API Key para acessar o painel</p>
-        <input id="api-key-input" type="password" placeholder="API Key"
-          class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors"
-          onkeydown="if(event.key==='Enter')authenticate()">
-        <button onclick="authenticate()" class="w-full mt-4 bg-stark-blue/20 border border-stark-blue text-stark-blue font-orbitron text-sm py-3 rounded hover:bg-stark-blue/30 transition-colors tracking-wider">
-          ACESSAR
-        </button>
-        <p id="auth-error" class="hidden text-stark-red text-xs mt-3 text-center"></p>
+
+        <!-- STEP: LOGIN -->
+        <div id="auth-step-login">
+          <h2 class="font-orbitron text-stark-blue text-xl mb-2 glow-blue">AUTENTICAÇÃO</h2>
+          <p class="text-sm text-stark-dim mb-6">Acesse o painel de controle do Jarvis</p>
+          <input id="auth-email" type="email" placeholder="E-mail"
+            class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors mb-3">
+          <input id="auth-password" type="password" placeholder="Senha"
+            class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors"
+            onkeydown="if(event.key==='Enter')authLogin()">
+          <button onclick="authLogin()" id="auth-login-btn" class="w-full mt-4 bg-stark-blue/20 border border-stark-blue text-stark-blue font-orbitron text-sm py-3 rounded hover:bg-stark-blue/30 transition-colors tracking-wider">
+            ENTRAR
+          </button>
+          <p id="auth-error" class="hidden text-stark-red text-xs mt-3 text-center"></p>
+        </div>
+
+        <!-- STEP: 2FA CODE -->
+        <div id="auth-step-2fa" class="hidden">
+          <h2 class="font-orbitron text-stark-blue text-xl mb-2 glow-blue">VERIFICAÇÃO 2FA</h2>
+          <p class="text-sm text-stark-dim mb-2">Código enviado para seu WhatsApp</p>
+          <p id="2fa-timer" class="text-xs text-stark-gold mb-4 font-mono">Expira em 5:00</p>
+          <input id="auth-2fa-code" type="text" placeholder="000000" maxlength="6"
+            class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-2xl font-mono text-white text-center tracking-[0.5em] focus:border-stark-blue focus:outline-none transition-colors"
+            onkeydown="if(event.key==='Enter')authVerify()">
+          <button onclick="authVerify()" id="auth-verify-btn" class="w-full mt-4 bg-stark-green/20 border border-stark-green text-stark-green font-orbitron text-sm py-3 rounded hover:bg-stark-green/30 transition-colors tracking-wider">
+            VERIFICAR
+          </button>
+          <button onclick="authResend()" id="auth-resend-btn" class="w-full mt-2 text-stark-dim text-xs hover:text-stark-blue transition-colors py-2">
+            Reenviar código
+          </button>
+          <p id="auth-2fa-error" class="hidden text-stark-red text-xs mt-3 text-center"></p>
+        </div>
+
+        <!-- STEP: SETUP (primeiro acesso) -->
+        <div id="auth-step-setup" class="hidden">
+          <h2 class="font-orbitron text-stark-gold text-xl mb-2 glow-blue">PRIMEIRO ACESSO</h2>
+          <p class="text-sm text-stark-dim mb-6">Cadastre suas credenciais de acesso</p>
+          <input id="setup-email" type="email" placeholder="E-mail"
+            class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors mb-3">
+          <input id="setup-password" type="password" placeholder="Senha (mínimo 8 caracteres)"
+            class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors mb-3">
+          <input id="setup-password2" type="password" placeholder="Confirmar senha"
+            class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors mb-3">
+          <input id="setup-phone" type="text" placeholder="WhatsApp para 2FA (ex: 5511999999999)"
+            class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors"
+            onkeydown="if(event.key==='Enter')authSetup()">
+          <button onclick="authSetup()" id="auth-setup-btn" class="w-full mt-4 bg-stark-gold/20 border border-stark-gold text-stark-gold font-orbitron text-sm py-3 rounded hover:bg-stark-gold/30 transition-colors tracking-wider">
+            CRIAR CONTA
+          </button>
+          <p id="auth-setup-error" class="hidden text-stark-red text-xs mt-3 text-center"></p>
+        </div>
+
       </div>
     </div>
 
@@ -327,7 +372,7 @@
           <div class="text-xs text-stark-dim mt-1">processadas</div>
         </div>
         <div class="panel p-4 stat-card relative overflow-hidden">
-          <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Memorias</div>
+          <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Memórias</div>
           <div id="stat-memories" class="font-orbitron text-2xl text-stark-purple" style="color:#7b61ff">--</div>
           <div id="stat-mem-detail" class="text-xs text-stark-dim mt-1">--</div>
         </div>
@@ -335,6 +380,37 @@
           <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Modelo IA</div>
           <div id="stat-model" class="font-orbitron text-lg text-stark-gold" style="color:#ffd700">--</div>
           <div id="stat-version" class="text-xs text-stark-dim mt-1">--</div>
+        </div>
+      </div>
+
+      <!-- Intelligence Score -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <!-- Radar Chart -->
+        <div class="panel p-5 lg:col-span-2 relative overflow-hidden">
+          <h3 class="font-orbitron text-sm text-stark-cyan mb-4 tracking-wider" style="color:#00f0ff">MAPA DE CONHECIMENTO</h3>
+          <div class="relative" style="max-height:320px">
+            <canvas id="intelligence-radar"></canvas>
+          </div>
+        </div>
+        <!-- Score Arc -->
+        <div class="panel p-5 flex flex-col items-center justify-center relative overflow-hidden">
+          <h3 class="font-orbitron text-xs text-stark-dim mb-4 tracking-wider text-center">NÍVEL DE CONHECIMENTO</h3>
+          <div class="relative w-48 h-48">
+            <svg viewBox="0 0 200 200" class="w-full h-full">
+              <circle cx="100" cy="100" r="85" fill="none" stroke="#1a2744" stroke-width="8" stroke-dasharray="400 534" stroke-dashoffset="-67" stroke-linecap="round"/>
+              <circle id="score-arc" cx="100" cy="100" r="85" fill="none" stroke="#00d4ff" stroke-width="8" stroke-dasharray="0 534" stroke-dashoffset="-67" stroke-linecap="round" class="transition-all duration-1000"/>
+            </svg>
+            <div class="absolute inset-0 flex flex-col items-center justify-center">
+              <span id="score-value" class="font-orbitron text-4xl text-stark-cyan glow-blue" style="color:#00f0ff">0%</span>
+              <span class="text-[10px] text-stark-dim mt-1 font-mono">SCORE GERAL</span>
+            </div>
+          </div>
+          <div class="mt-4 grid grid-cols-2 gap-x-6 gap-y-1 text-[10px] font-mono">
+            <div class="text-stark-dim">Memórias: <span id="intel-memories" class="text-white">0</span></div>
+            <div class="text-stark-dim">Mensagens: <span id="intel-messages" class="text-white">0</span></div>
+            <div class="text-stark-dim">Contatos: <span id="intel-contacts" class="text-white">0</span></div>
+            <div class="text-stark-dim">Dias ativo: <span id="intel-days" class="text-white">0</span></div>
+          </div>
         </div>
       </div>
 
@@ -358,7 +434,7 @@
               <span id="heap-val" class="text-xs font-mono text-white">--</span>
             </div>
             <div class="flex justify-between items-center py-1 border-b border-stark-border/50">
-              <span class="text-sm text-stark-dim">Conexao WhatsApp</span>
+              <span class="text-sm text-stark-dim">Conexão WhatsApp</span>
               <span id="wa-status" class="text-xs font-mono text-stark-green">--</span>
             </div>
             <div class="flex justify-between items-center py-1">
@@ -427,7 +503,7 @@
           <div id="mem-total" class="font-orbitron text-2xl text-stark-purple" style="color:#7b61ff">--</div>
         </div>
         <div class="panel p-4 stat-card">
-          <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Usuario</div>
+          <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Usuário</div>
           <div id="mem-user" class="font-orbitron text-2xl text-stark-blue">--</div>
         </div>
         <div class="panel p-4 stat-card">
@@ -442,35 +518,35 @@
 
       <!-- Memory Search -->
       <div class="panel p-5">
-        <h3 class="font-orbitron text-sm text-stark-blue mb-4 tracking-wider">BUSCA DE MEMORIAS</h3>
+        <h3 class="font-orbitron text-sm text-stark-blue mb-4 tracking-wider">BUSCA DE MEMÓRIAS</h3>
         <div class="flex gap-2 mb-4">
-          <input id="mem-search-input" type="text" placeholder="Buscar nas memorias do Jarvis..."
+          <input id="mem-search-input" type="text" placeholder="Buscar nas memórias do Jarvis..."
             class="flex-1 bg-stark-bg border border-stark-border rounded px-4 py-2.5 text-sm text-white focus:border-stark-blue focus:outline-none transition-colors"
             onkeydown="if(event.key==='Enter')searchMemories()">
           <select id="mem-scope-filter" class="bg-stark-bg border border-stark-border rounded px-3 py-2.5 text-sm text-white focus:border-stark-blue focus:outline-none">
             <option value="">Todos</option>
-            <option value="user">Usuario</option>
+            <option value="user">Usuário</option>
             <option value="chat">Chat</option>
             <option value="agent">Agente</option>
           </select>
           <button onclick="searchMemories()" class="bg-stark-blue/20 border border-stark-blue text-stark-blue px-4 rounded hover:bg-stark-blue/30 transition-colors text-sm font-semibold">BUSCAR</button>
         </div>
         <div id="mem-results" class="space-y-2 max-h-96 overflow-y-auto">
-          <div class="text-sm text-stark-dim text-center py-8">Digite algo para buscar nas memorias</div>
+          <div class="text-sm text-stark-dim text-center py-8">Digite algo para buscar nas memórias</div>
         </div>
       </div>
 
       <!-- Add Memory -->
       <div class="panel p-5">
-        <h3 class="font-orbitron text-sm text-stark-blue mb-4 tracking-wider">ADICIONAR MEMORIA</h3>
-        <textarea id="mem-add-content" placeholder="Conteudo da nova memoria..." rows="3"
+        <h3 class="font-orbitron text-sm text-stark-blue mb-4 tracking-wider">ADICIONAR MEMÓRIA</h3>
+        <textarea id="mem-add-content" placeholder="Conteúdo da nova memória..." rows="3"
           class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-sm text-white focus:border-stark-blue focus:outline-none transition-colors resize-none mb-3"></textarea>
         <div class="flex gap-2 items-center">
           <select id="mem-add-category" class="bg-stark-bg border border-stark-border rounded px-3 py-2 text-sm text-white focus:border-stark-blue focus:outline-none">
             <option value="general">Geral</option>
             <option value="preference">Preferencia</option>
             <option value="fact">Fato</option>
-            <option value="instruction">Instrucao</option>
+            <option value="instruction">Instrução</option>
           </select>
           <select id="mem-add-importance" class="bg-stark-bg border border-stark-border rounded px-3 py-2 text-sm text-white focus:border-stark-blue focus:outline-none">
             <option value="medium">Media</option>
@@ -550,7 +626,7 @@
         <div class="panel p-5">
           <h3 class="font-orbitron text-sm text-stark-blue mb-4 tracking-wider">TESTE DE VOZ</h3>
           <textarea id="voice-test-text" placeholder="Digite o texto para o Jarvis falar..." rows="4"
-            class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-sm text-white focus:border-stark-blue focus:outline-none transition-colors resize-none mb-4">Ola senhor, sou o Jarvis, seu assistente pessoal. Em que posso ajudar hoje?</textarea>
+            class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-sm text-white focus:border-stark-blue focus:outline-none transition-colors resize-none mb-4">Olá senhor, sou o Jarvis, seu assistente pessoal. Em que posso ajudar hoje?</textarea>
           <button onclick="testVoice()" id="voice-test-btn" class="w-full bg-stark-gold/20 border border-stark-gold text-stark-gold py-2.5 rounded hover:bg-stark-gold/30 transition-colors text-sm font-orbitron tracking-wider" style="border-color:#ffd700;color:#ffd700">
             SINTETIZAR VOZ
           </button>
@@ -586,13 +662,13 @@
     <div id="tab-homework" class="tab-content hidden space-y-6">
       <!-- Add Instruction -->
       <div class="panel p-5">
-        <h3 class="font-orbitron text-sm text-stark-blue mb-4 tracking-wider">NOVA INSTRUCAO</h3>
-        <p class="text-xs text-stark-dim mb-3">Ensine o Jarvis algo novo. Instrucoes ficam na memoria permanente.</p>
+        <h3 class="font-orbitron text-sm text-stark-blue mb-4 tracking-wider">NOVA INSTRUÇÃO</h3>
+        <p class="text-xs text-stark-dim mb-3">Ensine o Jarvis algo novo. Instruções ficam na memória permanente.</p>
         <textarea id="hw-content" placeholder="Ex: Quando alguem perguntar sobre precos, sempre mencione que fazemos orcamento personalizado..." rows="4"
           class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-sm text-white focus:border-stark-blue focus:outline-none transition-colors resize-none mb-3"></textarea>
         <div class="flex gap-2 items-center">
           <select id="hw-type" class="bg-stark-bg border border-stark-border rounded px-3 py-2 text-sm text-white focus:border-stark-blue focus:outline-none">
-            <option value="instruction">Instrucao</option>
+            <option value="instruction">Instrução</option>
             <option value="fact">Fato</option>
             <option value="rule">Regra</option>
             <option value="personality">Personalidade</option>
@@ -603,7 +679,7 @@
 
       <!-- Existing Instructions -->
       <div class="panel p-5">
-        <h3 class="font-orbitron text-sm text-stark-blue mb-4 tracking-wider">INSTRUCOES APRENDIDAS</h3>
+        <h3 class="font-orbitron text-sm text-stark-blue mb-4 tracking-wider">INSTRUÇÕES APRENDIDAS</h3>
         <div id="hw-list" class="space-y-2 max-h-96 overflow-y-auto">
           <div class="text-sm text-stark-dim">Carregando...</div>
         </div>
@@ -627,7 +703,7 @@
         <textarea id="prompt-master" rows="20"
           class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-sm text-white font-mono leading-relaxed focus:border-stark-blue focus:outline-none transition-colors resize-y"
           placeholder="Carregando system prompt..."></textarea>
-        <p class="text-[10px] text-stark-dim mt-2">Nota: Apos salvar, reinicie o Jarvis para aplicar as mudancas.</p>
+        <p class="text-[10px] text-stark-dim mt-2">Nota: Apos salvar, reinicie o Jarvis para aplicar as mudanças.</p>
       </div>
 
       <!-- Agent Prompts (read-only view) -->
@@ -662,6 +738,47 @@
       </div>
     </div>
 
+    <!-- ==================== SECURITY TAB ==================== -->
+    <div id="tab-security" class="tab-content hidden space-y-6">
+      <!-- Password Change -->
+      <div class="panel p-5">
+        <h3 class="font-orbitron text-sm text-stark-blue mb-4 tracking-wider">ALTERAR SENHA</h3>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <input id="sec-current-pw" type="password" placeholder="Senha atual"
+            class="bg-stark-bg border border-stark-border rounded px-4 py-3 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors">
+          <input id="sec-new-pw" type="password" placeholder="Nova senha (mín. 8 caracteres)"
+            class="bg-stark-bg border border-stark-border rounded px-4 py-3 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors">
+          <button onclick="changePassword()" class="bg-stark-gold/20 border border-stark-gold text-stark-gold py-3 rounded hover:bg-stark-gold/30 transition-colors text-sm font-orbitron tracking-wider" style="border-color:#ffd700;color:#ffd700">
+            ALTERAR
+          </button>
+        </div>
+      </div>
+
+      <!-- Access Log -->
+      <div class="panel p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-orbitron text-sm text-stark-blue tracking-wider">HISTÓRICO DE ACESSOS</h3>
+          <button onclick="loadAccessLog()" class="text-xs text-stark-dim hover:text-stark-blue transition-colors font-mono">ATUALIZAR</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs font-mono">
+            <thead>
+              <tr class="text-stark-dim border-b border-stark-border">
+                <th class="text-left py-2 px-2">Data</th>
+                <th class="text-left py-2 px-2">Ação</th>
+                <th class="text-left py-2 px-2">IP</th>
+                <th class="text-left py-2 px-2">Local</th>
+                <th class="text-left py-2 px-2">Status</th>
+              </tr>
+            </thead>
+            <tbody id="access-log-body">
+              <tr><td colspan="5" class="text-center py-8 text-stark-dim">Carregando...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
   </main>
 
   <!-- Notification Container -->
@@ -671,73 +788,192 @@
     // ============================================
     // CONFIG
     // ============================================
-    let API_KEY = localStorage.getItem('jarvis_api_key') || '';
+    let AUTH_TOKEN = localStorage.getItem('jarvis_token') || '';
+    let AUTH_EMAIL = '';
     const API_BASE = window.location.origin;
+    let twoFATimerInterval = null;
 
     // ============================================
-    // AUTH
+    // AUTH — Login + 2FA + Setup
     // ============================================
-    async function authenticate() {
-      const input = document.getElementById('api-key-input');
-      const key = input.value.trim();
-      if (!key) return;
-
-      try {
-        const res = await fetch(`${API_BASE}/dashboard/health`, {
-          headers: { 'x-api-key': key }
-        });
-        if (res.ok) {
-          API_KEY = key;
-          localStorage.setItem('jarvis_api_key', key);
-          document.getElementById('auth-modal').classList.add('hidden');
-          init();
-        } else {
-          document.getElementById('auth-error').textContent = 'Chave invalida';
-          document.getElementById('auth-error').classList.remove('hidden');
-          input.classList.add('border-stark-red');
-        }
-      } catch (e) {
-        document.getElementById('auth-error').textContent = 'Erro de conexao com o servidor';
-        document.getElementById('auth-error').classList.remove('hidden');
-      }
-    }
-
     async function checkAuth() {
-      if (!API_KEY) {
-        document.getElementById('loading').classList.add('hidden');
-        document.getElementById('auth-modal').classList.remove('hidden');
+      if (!AUTH_TOKEN) {
+        await showAuthModal();
         return false;
       }
       try {
         const res = await fetch(`${API_BASE}/dashboard/health`, {
-          headers: { 'x-api-key': API_KEY }
+          headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
         });
         if (!res.ok) throw new Error();
         return true;
       } catch {
-        document.getElementById('loading').classList.add('hidden');
-        document.getElementById('auth-modal').classList.remove('hidden');
+        AUTH_TOKEN = '';
+        localStorage.removeItem('jarvis_token');
+        await showAuthModal();
         return false;
       }
     }
 
+    async function showAuthModal() {
+      document.getElementById('loading').classList.add('hidden');
+      document.getElementById('auth-modal').classList.remove('hidden');
+      // Verificar se já existe conta
+      try {
+        const res = await fetch(`${API_BASE}/dashboard/auth/status`);
+        const data = await res.json();
+        if (!data.hasUsers) {
+          // Primeiro acesso — mostrar setup
+          document.getElementById('auth-step-login').classList.add('hidden');
+          document.getElementById('auth-step-2fa').classList.add('hidden');
+          document.getElementById('auth-step-setup').classList.remove('hidden');
+        } else {
+          document.getElementById('auth-step-login').classList.remove('hidden');
+          document.getElementById('auth-step-2fa').classList.add('hidden');
+          document.getElementById('auth-step-setup').classList.add('hidden');
+        }
+      } catch {
+        // Se falhar, mostra login normal
+        document.getElementById('auth-step-login').classList.remove('hidden');
+      }
+    }
+
+    async function authSetup() {
+      const email = document.getElementById('setup-email').value.trim();
+      const pw = document.getElementById('setup-password').value;
+      const pw2 = document.getElementById('setup-password2').value;
+      const phone = document.getElementById('setup-phone').value.trim();
+      const errEl = document.getElementById('auth-setup-error');
+      errEl.classList.add('hidden');
+
+      if (!email || !pw || !phone) { errEl.textContent = 'Preencha todos os campos'; errEl.classList.remove('hidden'); return; }
+      if (pw.length < 8) { errEl.textContent = 'Senha deve ter no mínimo 8 caracteres'; errEl.classList.remove('hidden'); return; }
+      if (pw !== pw2) { errEl.textContent = 'As senhas não conferem'; errEl.classList.remove('hidden'); return; }
+
+      const btn = document.getElementById('auth-setup-btn');
+      btn.textContent = 'CRIANDO...'; btn.disabled = true;
+      try {
+        const res = await fetch(`${API_BASE}/dashboard/auth/setup`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password: pw, phone_2fa: phone }),
+        });
+        const data = await res.json();
+        if (!res.ok) { errEl.textContent = data.error; errEl.classList.remove('hidden'); return; }
+        // Sucesso — ir para login
+        document.getElementById('auth-step-setup').classList.add('hidden');
+        document.getElementById('auth-step-login').classList.remove('hidden');
+        document.getElementById('auth-email').value = email;
+        notify('Conta criada! Faça login.', 'success');
+      } catch (e) { errEl.textContent = 'Erro de conexão com o servidor'; errEl.classList.remove('hidden'); }
+      finally { btn.textContent = 'CRIAR CONTA'; btn.disabled = false; }
+    }
+
+    async function authLogin() {
+      const email = document.getElementById('auth-email').value.trim();
+      const password = document.getElementById('auth-password').value;
+      const errEl = document.getElementById('auth-error');
+      errEl.classList.add('hidden');
+
+      if (!email || !password) { errEl.textContent = 'Preencha e-mail e senha'; errEl.classList.remove('hidden'); return; }
+
+      const btn = document.getElementById('auth-login-btn');
+      btn.textContent = 'VERIFICANDO...'; btn.disabled = true;
+      try {
+        const res = await fetch(`${API_BASE}/dashboard/auth/login`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          let msg = data.error;
+          if (data.attemptsLeft !== undefined) msg += ` (${data.attemptsLeft} tentativa(s) restante(s))`;
+          errEl.textContent = msg; errEl.classList.remove('hidden'); return;
+        }
+        if (data.requires_2fa) {
+          AUTH_EMAIL = email;
+          document.getElementById('auth-step-login').classList.add('hidden');
+          document.getElementById('auth-step-2fa').classList.remove('hidden');
+          document.getElementById('auth-2fa-code').focus();
+          start2FATimer();
+        }
+      } catch (e) { errEl.textContent = 'Erro de conexão com o servidor'; errEl.classList.remove('hidden'); }
+      finally { btn.textContent = 'ENTRAR'; btn.disabled = false; }
+    }
+
+    function start2FATimer() {
+      let seconds = 300; // 5 min
+      const el = document.getElementById('2fa-timer');
+      if (twoFATimerInterval) clearInterval(twoFATimerInterval);
+      twoFATimerInterval = setInterval(() => {
+        seconds--;
+        if (seconds <= 0) { clearInterval(twoFATimerInterval); el.textContent = 'Código expirado'; el.style.color = '#ff3b3b'; return; }
+        const m = Math.floor(seconds / 60);
+        const s = String(seconds % 60).padStart(2, '0');
+        el.textContent = `Expira em ${m}:${s}`;
+        el.style.color = seconds < 60 ? '#ff3b3b' : '#ffd700';
+      }, 1000);
+    }
+
+    async function authVerify() {
+      const code = document.getElementById('auth-2fa-code').value.trim();
+      const errEl = document.getElementById('auth-2fa-error');
+      errEl.classList.add('hidden');
+      if (!code || code.length < 6) { errEl.textContent = 'Digite o código de 6 dígitos'; errEl.classList.remove('hidden'); return; }
+
+      const btn = document.getElementById('auth-verify-btn');
+      btn.textContent = 'VERIFICANDO...'; btn.disabled = true;
+      try {
+        const res = await fetch(`${API_BASE}/dashboard/auth/verify`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: AUTH_EMAIL, code }),
+        });
+        const data = await res.json();
+        if (!res.ok) { errEl.textContent = data.error; errEl.classList.remove('hidden'); return; }
+        // Sucesso — salvar token
+        AUTH_TOKEN = data.token;
+        localStorage.setItem('jarvis_token', data.token);
+        if (twoFATimerInterval) clearInterval(twoFATimerInterval);
+        document.getElementById('auth-modal').classList.add('hidden');
+        init();
+      } catch (e) { errEl.textContent = 'Erro de conexão'; errEl.classList.remove('hidden'); }
+      finally { btn.textContent = 'VERIFICAR'; btn.disabled = false; }
+    }
+
+    async function authResend() {
+      const btn = document.getElementById('auth-resend-btn');
+      btn.textContent = 'Reenviando...'; btn.disabled = true;
+      try {
+        const res = await fetch(`${API_BASE}/dashboard/auth/resend`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: AUTH_EMAIL }),
+        });
+        const data = await res.json();
+        if (res.ok) { notify('Novo código enviado!', 'success'); start2FATimer(); }
+        else notify(data.error || 'Erro ao reenviar', 'error');
+      } catch { notify('Erro de conexão', 'error'); }
+      finally { setTimeout(() => { btn.textContent = 'Reenviar código'; btn.disabled = false; }, 60000); /* cooldown 60s */ }
+    }
+
     // ============================================
-    // API HELPER
+    // API HELPER (JWT)
     // ============================================
     async function api(path, opts = {}) {
       const res = await fetch(`${API_BASE}${path}`, {
         ...opts,
         headers: {
-          'x-api-key': API_KEY,
+          'Authorization': `Bearer ${AUTH_TOKEN}`,
           'Content-Type': 'application/json',
           ...(opts.headers || {}),
         },
       });
       if (res.status === 401) {
-        localStorage.removeItem('jarvis_api_key');
-        API_KEY = '';
+        AUTH_TOKEN = '';
+        localStorage.removeItem('jarvis_token');
+        document.getElementById('auth-step-login').classList.remove('hidden');
+        document.getElementById('auth-step-2fa').classList.add('hidden');
+        document.getElementById('auth-step-setup').classList.add('hidden');
         document.getElementById('auth-modal').classList.remove('hidden');
-        throw new Error('Nao autorizado');
+        throw new Error('Sessão expirada');
       }
       return res;
     }
@@ -761,6 +997,7 @@
       if (tab === 'voice') loadVoiceConfig();
       if (tab === 'homework') loadHomework();
       if (tab === 'prompt') loadPrompt();
+      if (tab === 'security') loadAccessLog();
     }
 
     // ============================================
@@ -805,14 +1042,14 @@
         // Mensagens: API retorna data.totalMessages
         document.getElementById('stat-messages').textContent = (data.totalMessages || 0).toLocaleString();
 
-        // Memorias
+        // Memórias
         document.getElementById('stat-memories').textContent = data.totalMemories || 0;
         if (data.memoriesByScope && data.memoriesByScope.length > 0) {
           const byScope = {};
           data.memoriesByScope.forEach(s => byScope[s.scope] = parseInt(s.count));
           document.getElementById('stat-mem-detail').textContent = `U:${byScope.user||0} C:${byScope.chat||0} A:${byScope.agent||0}`;
         } else {
-          document.getElementById('stat-mem-detail').textContent = 'Sem memorias ainda';
+          document.getElementById('stat-mem-detail').textContent = 'Sem memórias ainda';
         }
 
         // RAM: API retorna data.memory.rss JA EM MB (nao bytes!)
@@ -995,7 +1232,7 @@
         await api('/dashboard/chat', { method: 'POST', body: JSON.stringify({ clearHistory: true }) });
         const container = document.getElementById('chat-messages');
         container.innerHTML = '<div class="flex justify-center"><span class="text-xs text-stark-dim bg-stark-bg/50 px-3 py-1 rounded-full font-mono">Canal seguro estabelecido</span></div>';
-        notify('Historico limpo', 'success');
+        notify('Histórico limpo', 'success');
       } catch (e) { notify('Erro ao limpar', 'error'); }
     }
 
@@ -1029,7 +1266,7 @@
         container.innerHTML = '';
 
         if (!data.results || data.results.length === 0) {
-          container.innerHTML = '<div class="text-sm text-stark-dim text-center py-8">Nenhuma memoria encontrada</div>';
+          container.innerHTML = '<div class="text-sm text-stark-dim text-center py-8">Nenhuma memória encontrada</div>';
           return;
         }
 
@@ -1049,7 +1286,7 @@
               ${mem.category ? `<span class="text-[10px] text-stark-dim mt-1 inline-block">#${mem.category}</span>` : ''}
             </div>`;
         });
-      } catch (e) { notify('Erro ao buscar memorias', 'error'); }
+      } catch (e) { notify('Erro ao buscar memórias', 'error'); }
     }
 
     async function addMemory() {
@@ -1068,9 +1305,9 @@
           }),
         });
         document.getElementById('mem-add-content').value = '';
-        notify('Memoria salva!', 'success');
+        notify('Memória salva!', 'success');
         loadMemoryStats();
-      } catch (e) { notify('Erro ao salvar memoria', 'error'); }
+      } catch (e) { notify('Erro ao salvar memória', 'error'); }
     }
 
     // ============================================
@@ -1144,7 +1381,7 @@
 
       try {
         await api('/dashboard/voice', { method: 'POST', body: JSON.stringify(body) });
-        notify('Configuracao de voz salva!', 'success');
+        notify('Configuração de voz salva!', 'success');
       } catch (e) { notify('Erro ao salvar voz', 'error'); }
     }
 
@@ -1159,7 +1396,7 @@
       try {
         const res = await fetch(`${API_BASE}/dashboard/voice/test`, {
           method: 'POST',
-          headers: { 'x-api-key': API_KEY, 'Content-Type': 'application/json' },
+          headers: { 'Authorization': `Bearer ${AUTH_TOKEN}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ text }),
         });
         if (res.status === 401) { localStorage.removeItem('jarvis_api_key'); location.reload(); return; }
@@ -1168,13 +1405,13 @@
           throw new Error(err.error || 'Falha na sintese');
         }
         const blob = await res.blob();
-        if (blob.size === 0) { notify('Nenhum audio retornado', 'warn'); return; }
+        if (blob.size === 0) { notify('Nenhum áudio retornado', 'warn'); return; }
         const audioUrl = URL.createObjectURL(blob);
         const audio = document.getElementById('voice-audio');
         audio.src = audioUrl;
         document.getElementById('voice-test-result').classList.remove('hidden');
         audio.play();
-        notify('Audio gerado!', 'success');
+        notify('Áudio gerado!', 'success');
       } catch (e) { notify('Erro ao sintetizar voz: ' + e.message, 'error'); }
       finally {
         btn.textContent = 'SINTETIZAR VOZ';
@@ -1193,7 +1430,7 @@
         container.innerHTML = '';
 
         if (!data.homework || data.homework.length === 0) {
-          container.innerHTML = '<div class="text-sm text-stark-dim text-center py-4">Nenhuma instrucao registrada</div>';
+          container.innerHTML = '<div class="text-sm text-stark-dim text-center py-4">Nenhuma instrução registrada</div>';
           return;
         }
 
@@ -1223,7 +1460,7 @@
           body: JSON.stringify({ content, type: document.getElementById('hw-type').value }),
         });
         document.getElementById('hw-content').value = '';
-        notify('Instrucao registrada!', 'success');
+        notify('Instrução registrada!', 'success');
         loadHomework();
       } catch (e) { notify('Erro ao registrar', 'error'); }
     }
@@ -1245,7 +1482,7 @@
 
     async function savePrompt() {
       const prompt = document.getElementById('prompt-master').value.trim();
-      if (!prompt) return notify('Prompt nao pode estar vazio', 'warn');
+      if (!prompt) return notify('Prompt não pode estar vazio', 'warn');
 
       try {
         const res = await api('/dashboard/prompt', {
@@ -1309,8 +1546,8 @@
     // UTILS
     // ============================================
     function logout() {
-      localStorage.removeItem('jarvis_api_key');
-      API_KEY = '';
+      localStorage.removeItem('jarvis_token');
+      AUTH_TOKEN = '';
       location.reload();
     }
 
@@ -1320,13 +1557,135 @@
     }
 
     // ============================================
+    // INTELLIGENCE CHART
+    // ============================================
+    let radarChart = null;
+    async function loadIntelligence() {
+      try {
+        const res = await api('/dashboard/intelligence');
+        const data = await res.json();
+
+        // Update score arc
+        const score = data.overallScore || 0;
+        document.getElementById('score-value').textContent = score + '%';
+        const arcLength = (score / 100) * 400;
+        const arc = document.getElementById('score-arc');
+        arc.setAttribute('stroke-dasharray', `${arcLength} 534`);
+        // Color based on score
+        const color = score < 30 ? '#ff3b3b' : score < 70 ? '#ffd700' : '#00f0ff';
+        arc.setAttribute('stroke', color);
+        document.getElementById('score-value').style.color = color;
+
+        // Update stats
+        document.getElementById('intel-memories').textContent = (data.totalMemories || 0).toLocaleString();
+        document.getElementById('intel-messages').textContent = (data.totalMessages || 0).toLocaleString();
+        document.getElementById('intel-contacts').textContent = data.uniqueContacts || 0;
+        document.getElementById('intel-days').textContent = data.daysActive || 0;
+
+        // Radar chart
+        const axes = data.axes || {};
+        const labels = ['Clientes', 'Tarefas', 'Calendário', 'Procedimentos', 'Conversação', 'Padrão Tasks', 'Stream Lab'];
+        const values = [axes.clientes || 0, axes.tarefas || 0, axes.calendario || 0, axes.procedimentos || 0, axes.conversacao || 0, axes.padraoTasks || 0, axes.streamLab || 0];
+
+        const ctx = document.getElementById('intelligence-radar');
+        if (radarChart) radarChart.destroy();
+        radarChart = new Chart(ctx, {
+          type: 'radar',
+          data: {
+            labels,
+            datasets: [{
+              label: 'Conhecimento',
+              data: values,
+              backgroundColor: 'rgba(0, 212, 255, 0.15)',
+              borderColor: '#00d4ff',
+              borderWidth: 2,
+              pointBackgroundColor: '#00f0ff',
+              pointBorderColor: '#00f0ff',
+              pointRadius: 4,
+              pointHoverRadius: 6,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: { legend: { display: false } },
+            scales: {
+              r: {
+                beginAtZero: true, max: 100,
+                ticks: { display: false, stepSize: 25 },
+                grid: { color: 'rgba(26, 39, 68, 0.8)', lineWidth: 1 },
+                angleLines: { color: 'rgba(26, 39, 68, 0.6)' },
+                pointLabels: {
+                  color: '#3a4a6b', font: { family: 'JetBrains Mono', size: 10 },
+                },
+              }
+            },
+          },
+        });
+      } catch (e) { console.error('Intelligence error:', e); }
+    }
+
+    // ============================================
+    // SECURITY
+    // ============================================
+    async function loadAccessLog() {
+      try {
+        const res = await api('/dashboard/auth/access-log');
+        const data = await res.json();
+        const tbody = document.getElementById('access-log-body');
+        if (!data.logs || data.logs.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" class="text-center py-8 text-stark-dim">Nenhum registro</td></tr>';
+          return;
+        }
+        const actionLabels = {
+          'login_success': 'Login OK', 'login_failed_password': 'Senha errada', 'login_failed_email': 'E-mail inválido',
+          'login_2fa_sent': '2FA enviado', 'verify_failed': '2FA errado', 'login_locked': 'Conta bloqueada',
+          'login_blocked': 'Bloqueado', 'rate_limited': 'Rate limit', 'account_created': 'Conta criada',
+          'password_changed': 'Senha alterada', 'verify_rate_limited': 'Rate limit 2FA',
+        };
+        tbody.innerHTML = data.logs.map(l => {
+          const date = new Date(l.created_at).toLocaleString('pt-BR');
+          const action = actionLabels[l.action] || l.action;
+          const loc = [l.city, l.region, l.country].filter(Boolean).join(', ') || '--';
+          const statusColor = l.success ? 'text-stark-green' : 'text-stark-red';
+          const statusText = l.success ? 'OK' : 'FALHA';
+          return `<tr class="border-b border-stark-border/30 hover:bg-stark-panel/50">
+            <td class="py-2 px-2 text-gray-400">${date}</td>
+            <td class="py-2 px-2 text-white">${action}</td>
+            <td class="py-2 px-2 text-gray-400">${l.ip}</td>
+            <td class="py-2 px-2 text-gray-400">${loc}</td>
+            <td class="py-2 px-2 ${statusColor} font-semibold">${statusText}</td>
+          </tr>`;
+        }).join('');
+      } catch (e) { console.error('Access log error:', e); }
+    }
+
+    async function changePassword() {
+      const current = document.getElementById('sec-current-pw').value;
+      const newPw = document.getElementById('sec-new-pw').value;
+      if (!current || !newPw) { notify('Preencha senha atual e nova senha', 'warn'); return; }
+      if (newPw.length < 8) { notify('Nova senha deve ter no mínimo 8 caracteres', 'warn'); return; }
+      try {
+        const res = await api('/dashboard/auth/change-password', {
+          method: 'POST', body: JSON.stringify({ currentPassword: current, newPassword: newPw }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          notify('Senha alterada com sucesso!', 'success');
+          document.getElementById('sec-current-pw').value = '';
+          document.getElementById('sec-new-pw').value = '';
+        } else { notify(data.error || 'Erro ao alterar senha', 'error'); }
+      } catch (e) { notify('Erro ao alterar senha', 'error'); }
+    }
+
+    // ============================================
     // INIT
     // ============================================
     async function init() {
       document.getElementById('loading').classList.add('hidden');
       document.getElementById('tab-overview').classList.remove('hidden');
 
-      await Promise.all([loadHealth(), loadConfig(), loadSkills(), loadLogs(20)]);
+      await Promise.all([loadHealth(), loadConfig(), loadSkills(), loadLogs(20), loadIntelligence()]);
 
       // Auto-refresh every 30s
       setInterval(() => {

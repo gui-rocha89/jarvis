@@ -209,6 +209,7 @@ describe('Estrutura do projeto', () => {
       'OPENAI_API_KEY',
       'ELEVENLABS_API_KEY',
       'JARVIS_API_KEY',
+      'JWT_SECRET',
       'DB_PASSWORD',
       'REDIS_PASSWORD',
       'GUI_JID',
