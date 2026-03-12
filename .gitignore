@@ -1,0 +1,9 @@
+node_modules/
+auth_session/
+auth_info/
+.env
+*.bak
+.pm2/
+*.log
+google-calendar-key.json
+dashboard/

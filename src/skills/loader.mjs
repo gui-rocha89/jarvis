@@ -1,0 +1,238 @@
+// ============================================
+// JARVIS 2.0 - Skills Loader (Modular)
+// Carrega e gerencia skills dinâmicamente
+// ============================================
+import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, GCAL_KEY_PATH, GCAL_CALENDAR_ID } from '../config.mjs';
+import { pool } from '../database.mjs';
+import { readFile } from 'fs/promises';
+import { google } from 'googleapis';
+
+// ============================================
+// SKILL: ASANA
+// ============================================
+export async function asanaRequest(endpoint) {
+  if (!CONFIG.ASANA_PAT) return null;
+  try {
+    const response = await fetch(`https://app.asana.com/api/1.0${endpoint}`, {
+      headers: { Authorization: `Bearer ${CONFIG.ASANA_PAT}`, Accept: 'application/json' },
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.data;
+  } catch (err) {
+    console.error('[ASANA] Erro:', err.message);
+    return null;
+  }
+}
+
+export async function asanaCreateTask(taskData) {
+  if (!CONFIG.ASANA_PAT) return { error: 'Asana nao configurado' };
+  try {
+    const response = await fetch('https://app.asana.com/api/1.0/tasks', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${CONFIG.ASANA_PAT}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ data: taskData }),
+    });
+    const result = await response.json();
+    if (!response.ok) return { error: result.errors?.[0]?.message || 'Erro desconhecido' };
+    console.log('[ASANA] Task criada:', result.data.gid, '-', result.data.name);
+    return { success: true, gid: result.data.gid, name: result.data.name, url: `https://app.asana.com/0/${ASANA_PROJECTS.CAPTACAO}/${result.data.gid}` };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+export async function asanaAddToProject(taskGid, projectGid, sectionGid) {
+  try {
+    const body = { data: { project: projectGid } };
+    if (sectionGid) body.data.section = sectionGid;
+    const response = await fetch(`https://app.asana.com/api/1.0/tasks/${taskGid}/addProject`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${CONFIG.ASANA_PAT}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return response.ok;
+  } catch { return false; }
+}
+
+export async function asanaAddComment(taskGid, text) {
+  try {
+    const response = await fetch(`https://app.asana.com/api/1.0/tasks/${taskGid}/stories`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${CONFIG.ASANA_PAT}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: { text } }),
+    });
+    return response.ok;
+  } catch { return false; }
+}
+
+export async function getOverdueTasks() {
+  const projects = await asanaRequest(`/projects?workspace=${CONFIG.ASANA_WORKSPACE}&opt_fields=name,archived&limit=100`);
+  if (!projects) return [];
+  const today = new Date().toISOString().split('T')[0];
+  const overdue = [];
+  const { PUBLIC_ASANA_PROJECTS } = await import('../config.mjs');
+  for (const project of projects) {
+    if (!PUBLIC_ASANA_PROJECTS.has(project.gid)) continue;
+    if (project.archived) continue;
+    const tasks = await asanaRequest(`/tasks?project=${project.gid}&opt_fields=name,due_on,completed,assignee.name&completed_since=now&limit=100`);
+    if (!tasks) continue;
+    for (const task of tasks) {
+      if (!task.completed && task.due_on && task.due_on < today) {
+        overdue.push({ name: task.name, due_on: task.due_on, assignee: task.assignee?.name || 'Sem responsavel', project: project.name });
+      }
+    }
+  }
+  return overdue;
+}
+
+// ============================================
+// SKILL: GOOGLE CALENDAR
+// ============================================
+let gcalClient = null;
+
+export async function getGCalClient() {
+  if (gcalClient) return gcalClient;
+  try {
+    const keyData = JSON.parse(await readFile(GCAL_KEY_PATH, 'utf-8'));
+    const auth = new google.auth.JWT({ email: keyData.client_email, key: keyData.private_key, scopes: ['https://www.googleapis.com/auth/calendar'] });
+    gcalClient = google.calendar({ version: 'v3', auth });
+    console.log('[GCAL] Cliente autenticado:', keyData.client_email);
+    return gcalClient;
+  } catch (err) {
+    console.error('[GCAL] Erro ao criar cliente:', err.message);
+    return null;
+  }
+}
+
+export async function createGoogleCalendarEvent({ summary, date, time, location, description }) {
+  const cal = await getGCalClient();
+  if (!cal) return { success: false, error: 'Google Calendar nao configurado' };
+  try {
+    let start, end;
+    if (time) {
+      const startDT = `${date}T${time.padStart(5, '0')}:00-03:00`;
+      const endH = parseInt(time.split(':')[0]) + 2;
+      const endTime = `${String(endH).padStart(2, '0')}:${time.split(':')[1] || '00'}`;
+      const endDT = `${date}T${endTime.padStart(5, '0')}:00-03:00`;
+      start = { dateTime: startDT, timeZone: 'America/Sao_Paulo' };
+      end = { dateTime: endDT, timeZone: 'America/Sao_Paulo' };
+    } else {
+      start = { date };
+      end = { date };
+    }
+    const res = await cal.events.insert({
+      calendarId: GCAL_CALENDAR_ID,
+      resource: { summary: summary || 'Captacao', description: description || '', location: location || '', start, end },
+    });
+    console.log(`[GCAL] Evento criado: ${res.data.id} — ${summary} em ${date}`);
+    return { success: true, eventId: res.data.id, htmlLink: res.data.htmlLink };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+// ============================================
+// TOOLS DO JARVIS (Claude tool_use)
+// ============================================
+export const JARVIS_TOOLS = [
+  {
+    name: 'agendar_captacao',
+    description: 'Agendar uma captacao no Calendario de Captacao do Asana e Google Calendar.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        nome: { type: 'string', description: 'Nome/titulo da captacao' },
+        data: { type: 'string', description: 'Data no formato YYYY-MM-DD' },
+        horario: { type: 'string', description: 'Horario (ex: 13:00)' },
+        local: { type: 'string', description: 'Local da captacao' },
+        responsavel: { type: 'string', description: 'Primeiro nome do responsavel' },
+        detalhes: { type: 'string', description: 'Detalhes adicionais' },
+      },
+      required: ['nome', 'data'],
+    },
+  },
+  {
+    name: 'consultar_tarefas',
+    description: 'Consultar tarefas pendentes, atrasadas ou status de projetos no Asana.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tipo: { type: 'string', enum: ['atrasadas', 'pendentes', 'todas'], description: 'Tipo de consulta' },
+        projeto: { type: 'string', description: 'Nome do projeto (captacao, audiovisual, design, cabine)' },
+        responsavel: { type: 'string', description: 'Nome do responsavel para filtrar' },
+      },
+      required: ['tipo'],
+    },
+  },
+  {
+    name: 'lembrar',
+    description: 'Salvar uma informacao importante na memoria de longo prazo do Jarvis.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        fato: { type: 'string', description: 'O fato ou informacao a ser lembrado' },
+        categoria: { type: 'string', enum: ['client', 'preference', 'rule', 'deadline', 'decision'], description: 'Categoria da informacao' },
+        importancia: { type: 'number', description: 'Importancia de 1 a 10' },
+      },
+      required: ['fato'],
+    },
+  },
+];
+
+export async function executeJarvisTool(toolName, input, teamPhones) {
+  console.log(`[TOOL] Executando: ${toolName}`, JSON.stringify(input));
+
+  if (toolName === 'agendar_captacao') {
+    const taskData = { name: input.nome, projects: [ASANA_PROJECTS.CAPTACAO], due_on: input.data };
+    if (input.responsavel) {
+      const asanaGid = TEAM_ASANA[input.responsavel.toLowerCase()];
+      if (asanaGid) taskData.assignee = asanaGid;
+    }
+    const notes = [];
+    if (input.horario) notes.push(`Horario: ${input.horario}`);
+    if (input.local) notes.push(`Local: ${input.local}`);
+    if (input.detalhes) notes.push(`Detalhes: ${input.detalhes}`);
+    if (notes.length > 0) taskData.notes = notes.join('\n');
+
+    const result = await asanaCreateTask(taskData);
+    if (result.success) {
+      await asanaAddToProject(result.gid, ASANA_PROJECTS.AUDIOVISUAL, ASANA_SECTIONS.AV_CAPTACAO);
+      if (input.data) {
+        const calResult = await createGoogleCalendarEvent({
+          summary: input.nome, date: input.data, time: input.horario || null,
+          location: input.local || null, description: notes.join('\n') + (result.url ? `\n\nAsana: ${result.url}` : ''),
+        });
+        if (calResult.success) {
+          result.calendar_event = calResult.eventId;
+          await pool.query('INSERT INTO gcal_sync (asana_gid, gcal_event_id, task_name, event_date) VALUES ($1, $2, $3, $4) ON CONFLICT (asana_gid) DO NOTHING', [result.gid, calResult.eventId, input.nome, input.data]).catch(() => {});
+        }
+      }
+    }
+    return result;
+  }
+
+  if (toolName === 'consultar_tarefas') {
+    const overdue = await getOverdueTasks();
+    if (input.tipo === 'atrasadas') {
+      return { tasks: overdue, count: overdue.length };
+    }
+    // Para outros tipos, buscar do Asana
+    const projectMap = { captacao: ASANA_PROJECTS.CAPTACAO, audiovisual: ASANA_PROJECTS.AUDIOVISUAL, design: ASANA_PROJECTS.DESIGN, cabine: ASANA_PROJECTS.CABINE };
+    const projectGid = projectMap[input.projeto?.toLowerCase()] || ASANA_PROJECTS.CAPTACAO;
+    const tasks = await asanaRequest(`/tasks?project=${projectGid}&opt_fields=name,due_on,completed,assignee.name&completed_since=now&limit=50`);
+    return { tasks: (tasks || []).filter(t => !t.completed).map(t => ({ name: t.name, due_on: t.due_on, assignee: t.assignee?.name })), count: tasks?.length || 0 };
+  }
+
+  if (toolName === 'lembrar') {
+    const { storeFacts } = await import('../memory.mjs');
+    await storeFacts([{ content: input.fato, category: input.categoria || 'general', importance: input.importancia || 7 }], 'agent', null);
+    return { success: true, message: 'Informacao armazenada na memoria' };
+  }
+
+  return { error: 'Ferramenta desconhecida' };
+}

@@ -1,0 +1,194 @@
+// ============================================
+// JARVIS 2.0 - Sistema de Memória Inteligente
+// Inspirado no Mem0 (3 escopos + extração de fatos)
+// ============================================
+import Anthropic from '@anthropic-ai/sdk';
+import { pool } from './database.mjs';
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
+
+export async function initMemory() {
+  try {
+    await pool.query('CREATE EXTENSION IF NOT EXISTS vector').catch(() => {
+      console.log('[MEMORY] pgvector nao instalado - usando busca por texto');
+    });
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS jarvis_memories (
+        id SERIAL PRIMARY KEY,
+        scope TEXT NOT NULL DEFAULT 'global',
+        scope_id TEXT DEFAULT NULL,
+        category TEXT DEFAULT 'general',
+        content TEXT NOT NULL,
+        metadata JSONB DEFAULT '{}',
+        importance INTEGER DEFAULT 5,
+        access_count INTEGER DEFAULT 0,
+        last_accessed TIMESTAMPTZ DEFAULT NOW(),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_memories_scope ON jarvis_memories(scope, scope_id)').catch(() => {});
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_memories_category ON jarvis_memories(category)').catch(() => {});
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_memories_importance ON jarvis_memories(importance DESC)').catch(() => {});
+
+    console.log('[MEMORY] Sistema de memoria inicializado');
+    return true;
+  } catch (err) {
+    console.error('[MEMORY] Erro ao inicializar:', err.message);
+    return false;
+  }
+}
+
+export async function extractFacts(text, senderName, chatId, isGroup) {
+  try {
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 500,
+      system: `Voce e um extrator de fatos. Analise a mensagem e extraia APENAS fatos relevantes sobre:
+- Preferencias da pessoa (gosta de X, nao gosta de Y)
+- Informacoes sobre clientes (empresa, contato, projeto)
+- Decisoes tomadas (escolheu X, aprovou Y)
+- Prazos e datas mencionados
+- Regras ou instrucoes dadas
+- Estilo de comunicacao da pessoa
+
+Responda APENAS em JSON array. Se nao houver fatos relevantes, responda [].
+Cada fato: {"content": "fato", "category": "preference|client|decision|deadline|rule|style", "importance": 1-10}
+NUNCA extraia fatos triviais como cumprimentos.`,
+      messages: [{ role: 'user', content: `Mensagem de ${senderName} no ${isGroup ? 'grupo' : 'privado'}:\n"${text}"` }],
+    });
+
+    const raw = response.content[0]?.text || '[]';
+    const match = raw.match(/\[.*\]/s);
+    if (!match) return [];
+    const facts = JSON.parse(match[0]);
+    return Array.isArray(facts) ? facts : [];
+  } catch { return []; }
+}
+
+export async function storeFacts(facts, scope, scopeId) {
+  let stored = 0;
+  for (const fact of facts) {
+    try {
+      const { rows: existing } = await pool.query(
+        `SELECT id, content FROM jarvis_memories
+         WHERE scope = $1 AND (scope_id = $2 OR scope_id IS NULL)
+         AND content ILIKE '%' || $3 || '%' LIMIT 1`,
+        [scope, scopeId, fact.content.substring(0, 50)]
+      );
+
+      if (existing.length > 0) {
+        await pool.query(
+          `UPDATE jarvis_memories SET content = $1, importance = GREATEST(importance, $2),
+           access_count = access_count + 1, updated_at = NOW() WHERE id = $3`,
+          [fact.content, fact.importance || 5, existing[0].id]
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO jarvis_memories (scope, scope_id, category, content, importance)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [scope, scopeId, fact.category || 'general', fact.content, fact.importance || 5]
+        );
+        stored++;
+      }
+    } catch (err) {
+      console.error('[MEMORY] Erro ao salvar fato:', err.message);
+    }
+  }
+  if (stored > 0) console.log(`[MEMORY] ${stored} novo(s) fato(s) armazenado(s) [${scope}:${scopeId || 'global'}]`);
+  return stored;
+}
+
+export async function searchMemories(query, scope = null, scopeId = null, limit = 10) {
+  try {
+    let sql = `SELECT content, category, importance, scope, scope_id FROM jarvis_memories WHERE 1=1`;
+    const params = [];
+    let paramIdx = 1;
+
+    if (scope) { sql += ` AND scope = $${paramIdx++}`; params.push(scope); }
+    if (scopeId) { sql += ` AND (scope_id = $${paramIdx++} OR scope_id IS NULL)`; params.push(scopeId); }
+
+    if (query) {
+      const keywords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2).slice(0, 5);
+      if (keywords.length > 0) {
+        const conditions = keywords.map(k => { params.push(`%${k}%`); return `content ILIKE $${paramIdx++}`; });
+        sql += ` AND (${conditions.join(' OR ')})`;
+      }
+    }
+
+    sql += ` ORDER BY importance DESC, updated_at DESC LIMIT $${paramIdx}`;
+    params.push(limit);
+
+    const { rows } = await pool.query(sql, params);
+
+    for (const row of rows) {
+      await pool.query('UPDATE jarvis_memories SET access_count = access_count + 1, last_accessed = NOW() WHERE content = $1', [row.content]).catch(() => {});
+    }
+
+    return rows;
+  } catch (err) {
+    console.error('[MEMORY] Erro ao buscar memorias:', err.message);
+    return [];
+  }
+}
+
+export async function getMemoryContext(senderJid, chatId, text) {
+  try {
+    const contexts = [];
+
+    const userMemories = await searchMemories(text, 'user', senderJid, 5);
+    if (userMemories.length > 0) {
+      contexts.push('MEMORIAS SOBRE ESTA PESSOA:');
+      userMemories.forEach(m => contexts.push(`- [${m.category}] ${m.content}`));
+    }
+
+    const chatMemories = await searchMemories(text, 'chat', chatId, 5);
+    if (chatMemories.length > 0) {
+      contexts.push('\nMEMORIAS DESTE CHAT/GRUPO:');
+      chatMemories.forEach(m => contexts.push(`- [${m.category}] ${m.content}`));
+    }
+
+    const agentMemories = await searchMemories(text, 'agent', null, 3);
+    if (agentMemories.length > 0) {
+      contexts.push('\nCONHECIMENTO DO JARVIS:');
+      agentMemories.forEach(m => contexts.push(`- ${m.content}`));
+    }
+
+    try {
+      const { rows } = await pool.query('SELECT content FROM homework ORDER BY created_at DESC LIMIT 10');
+      if (rows.length > 0) {
+        contexts.push('\nINSTRUCOES DO DONO (obedeca):');
+        rows.forEach(r => contexts.push(`- ${r.content}`));
+      }
+    } catch {}
+
+    return contexts.length > 0 ? '\n\n' + contexts.join('\n') : '';
+  } catch (err) {
+    console.error('[MEMORY] Erro ao montar contexto:', err.message);
+    return '';
+  }
+}
+
+export async function processMemory(text, senderName, senderJid, chatId, isGroup) {
+  if (!text || text.length < 15) return;
+  try {
+    const facts = await extractFacts(text, senderName, chatId, isGroup);
+    if (facts.length === 0) return;
+    await storeFacts(facts, 'user', senderJid);
+    if (isGroup) await storeFacts(facts, 'chat', chatId);
+  } catch {}
+}
+
+export async function getMemoryStats() {
+  try {
+    const total = await pool.query('SELECT COUNT(*) as count FROM jarvis_memories');
+    const byScope = await pool.query('SELECT scope, COUNT(*) as count FROM jarvis_memories GROUP BY scope ORDER BY count DESC');
+    const byCategory = await pool.query('SELECT category, COUNT(*) as count FROM jarvis_memories GROUP BY category ORDER BY count DESC');
+    const topMemories = await pool.query('SELECT content, importance, access_count, scope FROM jarvis_memories ORDER BY importance DESC, access_count DESC LIMIT 10');
+    return { total: parseInt(total.rows[0].count), byScope: byScope.rows, byCategory: byCategory.rows, topMemories: topMemories.rows };
+  } catch (err) {
+    return { total: 0, byScope: [], byCategory: [], topMemories: [], error: err.message };
+  }
+}
