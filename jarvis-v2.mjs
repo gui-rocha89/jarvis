@@ -282,7 +282,13 @@ app.post('/dashboard/auth/setup', async (req, res) => {
     if (parseInt(rows[0].cnt) > 0) return res.status(403).json({ error: 'Conta já existe. Use o login.' });
 
     const passwordHash = await bcrypt.hash(password, 12);
-    const phoneJid = phone_2fa.replace(/\D/g, '') + '@s.whatsapp.net';
+    // Normalizar telefone para JID WhatsApp (formato: 5555XXXXXXXX@s.whatsapp.net)
+    let phoneDigits = phone_2fa.replace(/\D/g, '');
+    // Se não começa com 55 (código do Brasil), adicionar
+    if (!phoneDigits.startsWith('55')) phoneDigits = '55' + phoneDigits;
+    // Se tem 12 dígitos (55 + DDD + 8 dígitos), adicionar 9 na frente do número
+    if (phoneDigits.length === 12) phoneDigits = phoneDigits.slice(0, 4) + '9' + phoneDigits.slice(4);
+    const phoneJid = phoneDigits + '@s.whatsapp.net';
     await pool.query(
       'INSERT INTO dashboard_users (email, password_hash, phone_2fa) VALUES ($1, $2, $3)',
       [email.toLowerCase(), passwordHash, phoneJid]
