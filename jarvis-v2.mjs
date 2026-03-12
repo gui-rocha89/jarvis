@@ -28,6 +28,7 @@ import { voiceConfig, loadVoiceConfig, saveVoiceConfig, transcribeAudio, generat
 import { synthesizeProfile, getProfile, listProfiles, syncProfiles } from './src/profiles.mjs';
 import { asanaRequest, getOverdueTasks, getGCalClient, JARVIS_TOOLS } from './src/skills/loader.mjs';
 import { getMediaType, extractSender } from './src/helpers.mjs';
+import { startAsanaStudy, stopAsanaStudy, asanaBatchState } from './src/batch-asana.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1002,6 +1003,36 @@ app.post('/dashboard/profiles/synthesize', auth, async (req, res) => {
     const profile = await synthesizeProfile(entityType, entityId, entityName);
     res.json({ success: !!profile, profile });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- Estudo Exaustivo do Asana ---
+app.post('/dashboard/asana/study/start', auth, async (req, res) => {
+  try {
+    await startAsanaStudy();
+    res.json({ success: true, message: 'Estudo do Asana iniciado' });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/dashboard/asana/study/status', auth, async (req, res) => {
+  try {
+    const elapsed = asanaBatchState.startedAt
+      ? Math.round((Date.now() - new Date(asanaBatchState.startedAt).getTime()) / 1000)
+      : 0;
+    res.json({ ...asanaBatchState, elapsedSeconds: elapsed });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/dashboard/asana/study/stop', auth, async (req, res) => {
+  try {
+    stopAsanaStudy();
+    res.json({ success: true, message: 'Estudo do Asana parado' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // --- Voice Config (com sliders) ---

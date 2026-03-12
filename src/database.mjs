@@ -145,6 +145,20 @@ export async function initDB() {
       )
     `);
 
+    // Tabela de controle do estudo exaustivo do Asana
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS asana_study_log (
+        id SERIAL PRIMARY KEY,
+        entity_type TEXT NOT NULL,
+        entity_gid TEXT NOT NULL,
+        project_name TEXT,
+        processed BOOLEAN DEFAULT false,
+        facts_extracted INT DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(entity_type, entity_gid)
+      )
+    `);
+
     console.log('[DB] Tabelas verificadas/criadas');
   } catch (err) {
     console.error('[DB] Erro ao conectar:', err.message);

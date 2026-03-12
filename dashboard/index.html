@@ -463,6 +463,54 @@
         </div>
       </div>
 
+      <!-- Asana Study Panel -->
+      <div id="asana-study-panel" class="panel p-4 relative overflow-hidden">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="font-orbitron text-xs tracking-wider" style="color:#6366f1">🔬 ESTUDO EXAUSTIVO DO ASANA</h3>
+          <div class="flex gap-2">
+            <button onclick="startAsanaStudy()" id="asana-start-btn" class="text-[10px] bg-indigo-500/20 border border-indigo-500 text-indigo-400 px-3 py-1 rounded hover:bg-indigo-500/30 font-mono">INICIAR</button>
+            <button onclick="stopAsanaStudy()" id="asana-stop-btn" class="text-[10px] bg-stark-red/20 border border-stark-red text-stark-red px-3 py-1 rounded hover:bg-stark-red/30 font-mono hidden">PARAR</button>
+          </div>
+        </div>
+        <div id="asana-study-status" class="text-[10px] font-mono text-stark-dim mb-2">Aguardando início...</div>
+        <!-- Projetos -->
+        <div class="mb-2">
+          <div class="flex justify-between text-[10px] font-mono text-stark-dim mb-1">
+            <span>Projetos</span>
+            <span id="asana-projects-count">0/0</span>
+          </div>
+          <div class="w-full h-2 bg-stark-border rounded-full overflow-hidden">
+            <div id="asana-projects-bar" class="h-full rounded-full transition-all duration-500 bg-indigo-500" style="width:0%"></div>
+          </div>
+        </div>
+        <!-- Tarefas -->
+        <div class="mb-2">
+          <div class="flex justify-between text-[10px] font-mono text-stark-dim mb-1">
+            <span>Tarefas</span>
+            <span id="asana-tasks-count">0/0</span>
+          </div>
+          <div class="w-full h-2 bg-stark-border rounded-full overflow-hidden">
+            <div id="asana-tasks-bar" class="h-full rounded-full transition-all duration-500 bg-purple-500" style="width:0%"></div>
+          </div>
+        </div>
+        <!-- Comentários -->
+        <div class="mb-2">
+          <div class="flex justify-between text-[10px] font-mono text-stark-dim mb-1">
+            <span>Comentários</span>
+            <span id="asana-comments-count">0/0</span>
+          </div>
+          <div class="w-full h-2 bg-stark-border rounded-full overflow-hidden">
+            <div id="asana-comments-bar" class="h-full rounded-full transition-all duration-500 bg-pink-500" style="width:0%"></div>
+          </div>
+        </div>
+        <!-- Stats -->
+        <div class="flex justify-between text-[10px] font-mono text-stark-dim mt-2 pt-2 border-t border-stark-border/30">
+          <span id="asana-facts-count" style="color:#00ff88">0 fatos extraídos</span>
+          <span id="asana-speed">--</span>
+          <span id="asana-errors" class="text-stark-red">0 erros</span>
+        </div>
+      </div>
+
       <!-- System & Skills Row -->
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <!-- System Info -->
@@ -1918,6 +1966,82 @@
     }
 
     // ============================================
+    // ASANA STUDY
+    // ============================================
+    let asanaStudyInterval = null;
+    async function loadAsanaStudyStatus() {
+      try {
+        const res = await api('/dashboard/asana/study/status');
+        const data = await res.json();
+
+        const phases = { idle: 'Aguardando início...', projects: '📂 Lendo projetos...', tasks: '📋 Lendo tarefas...', comments: '💬 Lendo comentários...', done: '✅ Concluído!' };
+        const statusEl = document.getElementById('asana-study-status');
+
+        if (data.running) {
+          document.getElementById('asana-start-btn').classList.add('hidden');
+          document.getElementById('asana-stop-btn').classList.remove('hidden');
+          const elapsed = data.elapsedSeconds || 0;
+          const mins = Math.floor(elapsed / 60);
+          statusEl.textContent = `${phases[data.phase] || data.phase} (${mins}min)`;
+          statusEl.style.color = '#818cf8';
+
+          if (!asanaStudyInterval) asanaStudyInterval = setInterval(loadAsanaStudyStatus, 5000);
+        } else {
+          document.getElementById('asana-start-btn').classList.remove('hidden');
+          document.getElementById('asana-stop-btn').classList.add('hidden');
+          statusEl.textContent = data.phase === 'done' ? '✅ Concluído!' : 'Aguardando início...';
+          statusEl.style.color = data.phase === 'done' ? '#00ff88' : '';
+          if (asanaStudyInterval) { clearInterval(asanaStudyInterval); asanaStudyInterval = null; }
+        }
+
+        // Projetos
+        const pPct = data.projects.total > 0 ? Math.round((data.projects.processed / data.projects.total) * 100) : 0;
+        document.getElementById('asana-projects-count').textContent = `${data.projects.processed}/${data.projects.total}`;
+        document.getElementById('asana-projects-bar').style.width = pPct + '%';
+
+        // Tarefas
+        const tPct = data.tasks.total > 0 ? Math.round((data.tasks.processed / data.tasks.total) * 100) : 0;
+        document.getElementById('asana-tasks-count').textContent = `${data.tasks.processed}/${data.tasks.total}`;
+        document.getElementById('asana-tasks-bar').style.width = tPct + '%';
+
+        // Comentários
+        const cPct = data.comments.total > 0 ? Math.round((data.comments.processed / data.comments.total) * 100) : 0;
+        document.getElementById('asana-comments-count').textContent = `${data.comments.processed}/${data.comments.total}`;
+        document.getElementById('asana-comments-bar').style.width = cPct + '%';
+
+        // Stats
+        document.getElementById('asana-facts-count').textContent = `${data.facts} fatos extraídos`;
+        document.getElementById('asana-errors').textContent = `${data.errors} erros`;
+
+        // Velocidade
+        if (data.running && data.elapsedSeconds > 30) {
+          const factsPerHour = Math.round((data.facts / data.elapsedSeconds) * 3600);
+          document.getElementById('asana-speed').textContent = `~${factsPerHour} fatos/h`;
+        } else if (data.phase === 'done') {
+          document.getElementById('asana-speed').textContent = 'finalizado';
+        }
+      } catch (e) { console.error('Asana study status error:', e); }
+    }
+
+    async function startAsanaStudy() {
+      try {
+        const res = await api('/dashboard/asana/study/start', { method: 'POST' });
+        const data = await res.json();
+        if (data.error) { notify(data.error, 'error'); return; }
+        notify('Estudo do Asana iniciado!', 'success');
+        loadAsanaStudyStatus();
+      } catch (e) { notify('Erro ao iniciar estudo do Asana', 'error'); }
+    }
+
+    async function stopAsanaStudy() {
+      try {
+        await api('/dashboard/asana/study/stop', { method: 'POST' });
+        notify('Estudo do Asana parado', 'success');
+        loadAsanaStudyStatus();
+      } catch (e) { notify('Erro ao parar estudo', 'error'); }
+    }
+
+    // ============================================
     // SECURITY
     // ============================================
     async function loadAccessLog() {
@@ -1977,7 +2101,7 @@
       document.getElementById('loading').classList.add('hidden');
       document.getElementById('tab-overview').classList.remove('hidden');
 
-      await Promise.all([loadHealth(), loadConfig(), loadSkills(), loadLogs(20), loadIntelligence()]);
+      await Promise.all([loadHealth(), loadConfig(), loadSkills(), loadLogs(20), loadIntelligence(), loadAsanaStudyStatus()]);
 
       // Auto-refresh every 30s
       setInterval(() => {
