@@ -31,6 +31,7 @@ const __dirname = path.dirname(__filename);
 
 let sock = null;
 let connectionStatus = 'disconnected';
+let jarvisPaused = false; // Modo pausa: recebe mensagens mas NAO responde
 const sentByBot = new Set();
 
 // ============================================
@@ -147,6 +148,12 @@ async function handleIncomingMessage(m) {
 
   if (!shouldJarvisRespond(text, from, isGroup, isReplyToJarvis)) return;
 
+  // Modo pausa: loga mas nao responde
+  if (jarvisPaused) {
+    console.log('[JARVIS] PAUSADO - ignorando:', text.substring(0, 60));
+    return;
+  }
+
   console.log('[JARVIS] Gerando resposta para:', text.substring(0, 60));
 
   const result = await generateResponse(text, from, sender, pushName, isGroup);
@@ -211,9 +218,11 @@ app.get('/dashboard/health', auth, async (req, res) => {
     const mem = process.memoryUsage();
     res.json({
       status: connectionStatus, version: CONFIG.JARVIS_VERSION,
+      paused: jarvisPaused,
       uptime: Math.floor(uptime),
       uptimeFormatted: Math.floor(uptime / 3600) + 'h ' + Math.floor((uptime % 3600) / 60) + 'm',
       memory: { rss: Math.round(mem.rss / 1024 / 1024), heapUsed: Math.round(mem.heapUsed / 1024 / 1024) },
+      whatsapp: connectionStatus,
       totalMessages: msgCount,
       totalMemories: memStats.total,
       memoriesByScope: memStats.byScope,
@@ -221,6 +230,22 @@ app.get('/dashboard/health', auth, async (req, res) => {
       architecture: { agents: ['master', 'creative', 'manager', 'researcher'], memorySystem: 'Mem0-inspired (3 scopes)', skills: ['asana', 'gcal', 'voice', 'memory'] },
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- Controle ON/OFF ---
+app.post('/dashboard/power', auth, (req, res) => {
+  const { action } = req.body;
+  if (action === 'pause') {
+    jarvisPaused = true;
+    console.log('[JARVIS] PAUSADO pelo dashboard');
+    res.json({ success: true, paused: true, message: 'Jarvis pausado. Ele ainda recebe mensagens mas nao responde.' });
+  } else if (action === 'resume') {
+    jarvisPaused = false;
+    console.log('[JARVIS] RETOMADO pelo dashboard');
+    res.json({ success: true, paused: false, message: 'Jarvis ativo novamente.' });
+  } else {
+    res.json({ paused: jarvisPaused });
+  }
 });
 
 // --- Mensagens ---

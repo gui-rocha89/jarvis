@@ -297,6 +297,20 @@
     <!-- ==================== OVERVIEW TAB ==================== -->
     <div id="tab-overview" class="tab-content hidden space-y-6">
 
+      <!-- Power Control -->
+      <div class="panel p-4 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div id="power-indicator" class="w-4 h-4 rounded-full bg-stark-green pulse-dot"></div>
+          <div>
+            <span id="power-label" class="font-orbitron text-sm text-stark-green tracking-wider">JARVIS ATIVO</span>
+            <p id="power-desc" class="text-[10px] text-stark-dim">Respondendo mensagens normalmente</p>
+          </div>
+        </div>
+        <button id="power-btn" onclick="togglePower()" class="px-6 py-2 rounded font-orbitron text-xs tracking-wider border transition-all bg-stark-red/20 border-stark-red text-stark-red hover:bg-stark-red/30">
+          PAUSAR
+        </button>
+      </div>
+
       <!-- Status Cards Row -->
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div class="panel p-4 stat-card relative overflow-hidden corner-tl corner-br">
@@ -819,6 +833,9 @@
         } else {
           connEl.innerHTML = '<div class="pulse-dot bg-stark-red"></div><span class="text-xs font-mono text-stark-red">OFFLINE</span>';
         }
+
+        // Estado de pausa
+        if (data.paused !== undefined) updatePowerUI(data.paused);
       } catch (e) {
         console.error('Health error:', e);
         const connEl = document.getElementById('conn-status');
@@ -1235,6 +1252,50 @@
           notify(data.error || 'Erro ao salvar', 'error');
         }
       } catch (e) { notify('Erro ao salvar prompt', 'error'); }
+    }
+
+    // ============================================
+    // POWER CONTROL
+    // ============================================
+    let isPaused = false;
+
+    function updatePowerUI(paused) {
+      isPaused = paused;
+      const indicator = document.getElementById('power-indicator');
+      const label = document.getElementById('power-label');
+      const desc = document.getElementById('power-desc');
+      const btn = document.getElementById('power-btn');
+
+      if (paused) {
+        indicator.className = 'w-4 h-4 rounded-full bg-stark-orange pulse-dot';
+        label.textContent = 'JARVIS PAUSADO';
+        label.className = 'font-orbitron text-sm text-stark-orange tracking-wider';
+        desc.textContent = 'Recebendo mensagens mas NAO responde';
+        btn.textContent = 'ATIVAR';
+        btn.className = 'px-6 py-2 rounded font-orbitron text-xs tracking-wider border transition-all bg-stark-green/20 border-stark-green text-stark-green hover:bg-stark-green/30';
+      } else {
+        indicator.className = 'w-4 h-4 rounded-full bg-stark-green pulse-dot';
+        label.textContent = 'JARVIS ATIVO';
+        label.className = 'font-orbitron text-sm text-stark-green tracking-wider';
+        desc.textContent = 'Respondendo mensagens normalmente';
+        btn.textContent = 'PAUSAR';
+        btn.className = 'px-6 py-2 rounded font-orbitron text-xs tracking-wider border transition-all bg-stark-red/20 border-stark-red text-stark-red hover:bg-stark-red/30';
+      }
+    }
+
+    async function togglePower() {
+      const action = isPaused ? 'resume' : 'pause';
+      try {
+        const res = await api('/dashboard/power', {
+          method: 'POST',
+          body: JSON.stringify({ action }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          updatePowerUI(data.paused);
+          notify(data.message, data.paused ? 'warn' : 'success');
+        }
+      } catch (e) { notify('Erro ao controlar Jarvis', 'error'); }
     }
 
     // ============================================
