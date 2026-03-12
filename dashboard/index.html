@@ -598,23 +598,27 @@
         <div class="panel p-4 stat-card">
           <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Total</div>
           <div id="mem-total" class="font-orbitron text-2xl text-stark-purple" style="color:#7b61ff">--</div>
+          <div class="text-[9px] text-stark-dim mt-1">todas as memórias</div>
         </div>
         <div class="panel p-4 stat-card">
-          <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Usuário</div>
+          <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Pessoas</div>
           <div id="mem-user" class="font-orbitron text-2xl text-stark-blue">--</div>
+          <div class="text-[9px] text-stark-dim mt-1">equipe, clientes, contatos</div>
         </div>
         <div class="panel p-4 stat-card">
-          <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Chat</div>
+          <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Conversas</div>
           <div id="mem-chat" class="font-orbitron text-2xl text-stark-cyan" style="color:#00f0ff">--</div>
+          <div class="text-[9px] text-stark-dim mt-1">grupos e chats</div>
         </div>
         <div class="panel p-4 stat-card">
-          <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Agente</div>
+          <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Operacional</div>
           <div id="mem-agent" class="font-orbitron text-2xl text-stark-gold" style="color:#ffd700">--</div>
+          <div class="text-[9px] text-stark-dim mt-1">asana, processos, regras</div>
         </div>
         <div class="panel p-4 stat-card relative overflow-hidden">
           <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Hoje</div>
           <div id="mem-today" class="font-orbitron text-2xl text-stark-green">--</div>
-          <div class="text-[10px] text-stark-dim mt-1">aprendidas hoje</div>
+          <div class="text-[9px] text-stark-dim mt-1">aprendidas hoje</div>
         </div>
       </div>
 
@@ -651,9 +655,9 @@
             onkeydown="if(event.key==='Enter')searchMemories()">
           <select id="mem-scope-filter" class="bg-stark-bg border border-stark-border rounded px-3 py-2.5 text-sm text-white focus:border-stark-blue focus:outline-none">
             <option value="">Escopo</option>
-            <option value="user">Usuário</option>
-            <option value="chat">Chat</option>
-            <option value="agent">Agente</option>
+            <option value="user">Pessoas</option>
+            <option value="chat">Conversas</option>
+            <option value="agent">Operacional</option>
           </select>
           <select id="mem-category-filter" class="bg-stark-bg border border-stark-border rounded px-3 py-2.5 text-sm text-white focus:border-stark-blue focus:outline-none">
             <option value="">Categoria</option>
