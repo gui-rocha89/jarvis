@@ -944,11 +944,11 @@ app.get('/dashboard/memory/timeline', auth, async (req, res) => {
   try {
     const days = parseInt(req.query.days) || 30;
     const { rows } = await pool.query(`
-      SELECT DATE(created_at) as day, COUNT(*)::int as count, category,
+      SELECT TO_CHAR(created_at, 'YYYY-MM-DD') as day, COUNT(*)::int as count, category,
              ROUND(AVG(importance)::numeric, 1)::float as avg_importance
       FROM jarvis_memories
       WHERE created_at > NOW() - INTERVAL '1 day' * $1
-      GROUP BY DATE(created_at), category
+      GROUP BY TO_CHAR(created_at, 'YYYY-MM-DD'), category
       ORDER BY day DESC
     `, [days]);
     res.json({ timeline: rows, days });
