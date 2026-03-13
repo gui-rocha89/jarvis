@@ -351,13 +351,22 @@ export async function generateResponse(text, chatId, senderJid, pushName, isGrou
       },
     ];
 
+    // Detectar links de tasks do Asana na mensagem
+    let asanaTaskContext = '';
+    const asanaLinkMatch = text?.match(/app\.asana\.com\/\d+\/\d+\/(\d+)/);
+    if (asanaLinkMatch) {
+      const taskGid = asanaLinkMatch[1];
+      asanaTaskContext = `\n[TASK EXISTENTE DETECTADA - GID: ${taskGid}] O usuário referenciou uma task que JÁ EXISTE no Asana. Se ele pedir pra anexar arquivos, comentar, ou fazer qualquer ação nessa task, use o GID ${taskGid} diretamente. NÃO crie uma task nova.`;
+      console.log(`[BRAIN] Link de task Asana detectado: GID ${taskGid}`);
+    }
+
     // Adicionar mensagem atual (com contexto de mídia se houver)
     let mediaContext = '';
     if (mediaFiles.length > 0) {
       const mediaDesc = mediaFiles.map(f => `📎 ${f.type}: ${f.fileName} (${Math.round(f.size / 1024)}KB) [msg_id: ${f.messageId}]`).join('\n');
       mediaContext = `\n[MÍDIA RECEBIDA - arquivos já baixados e prontos para anexar no Asana via tool "anexar_midia_asana"]\n${mediaDesc}`;
     }
-    const currentMsg = { role: 'user', content: `[${pushName}]: ${text || '[enviou mídia]'}${mediaContext}` };
+    const currentMsg = { role: 'user', content: `[${pushName}]: ${text || '[enviou mídia]'}${asanaTaskContext}${mediaContext}` };
     const lastConsolidated = consolidatedHistory[consolidatedHistory.length - 1];
     if (lastConsolidated && lastConsolidated.role === 'user') {
       lastConsolidated.content += '\n' + currentMsg.content;
@@ -730,7 +739,7 @@ TOM DE VOZ:
 
 TOOLS DISPONÍVEIS:
 - criar_demanda_cliente: para criar tasks no Asana quando identificar uma demanda. OBRIGATÓRIO preencher: urgencia ("24h", "48h", "72h" ou "negociavel") e tipo_demanda ("design", "audiovisual", "marketing", "planejamento", "reuniao", "captacao", "endomarketing", "demanda_extra"). O campo "cliente" é o nome do cliente. Se souber o tier do cliente, preencha também.
-- anexar_midia_asana: para subir fotos/vídeos/docs do WhatsApp na task do Asana. Use SEMPRE que o cliente mandar material junto com demanda. Precisa do task_gid (retornado pelo criar_demanda_cliente) e dos message_ids (indicados no contexto da mensagem)
+- anexar_midia_asana: para subir fotos/vídeos/docs do WhatsApp na task do Asana. Use SEMPRE que o cliente mandar material junto com demanda. Precisa do task_gid (retornado pelo criar_demanda_cliente OU extraído de um link de task existente) e dos message_ids (indicados no contexto da mensagem)
 - enviar_mensagem_grupo: para notificar/perguntar pra equipe internamente (grupo "tarefas") — USE SEMPRE que precisar avisar, perguntar, ou tirar dúvida com a equipe
 - lembrar: para salvar informações importantes sobre o cliente — USE para guardar tudo que aprender (respostas da equipe, preferências do cliente, processos descobertos)
 
