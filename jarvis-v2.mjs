@@ -1285,7 +1285,8 @@ app.post('/dashboard/prompt', auth, async (req, res) => {
 const dashboardChatHistory = [];
 
 // Tools exclusivos do dashboard — acesso a mensagens e memórias
-const DASHBOARD_TOOLS = [
+// Tools exclusivas do dashboard (busca de mensagens, memórias, perfis)
+const DASHBOARD_EXTRA_TOOLS = [
   {
     name: 'buscar_mensagens',
     description: 'Buscar mensagens do WhatsApp por grupo ou contato. Use sempre que perguntarem sobre conversas, mensagens, o que foi dito em algum grupo ou chat.',
@@ -1313,19 +1314,6 @@ const DASHBOARD_TOOLS = [
     },
   },
   {
-    name: 'consultar_tarefas',
-    description: 'Consultar tarefas pendentes, atrasadas ou status de projetos no Asana.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        tipo: { type: 'string', enum: ['atrasadas', 'pendentes', 'todas'], description: 'Tipo de consulta' },
-        projeto: { type: 'string', description: 'Nome do projeto (captacao, audiovisual, design, cabine)' },
-        responsavel: { type: 'string', description: 'Nome do responsavel para filtrar' },
-      },
-      required: ['tipo'],
-    },
-  },
-  {
     name: 'ver_perfil',
     description: 'Ver o perfil sintetizado de um cliente, membro da equipe ou grupo. Contém resumo completo do que o Jarvis sabe sobre a entidade.',
     input_schema: {
@@ -1337,6 +1325,9 @@ const DASHBOARD_TOOLS = [
     },
   },
 ];
+
+// Dashboard tem TODAS as tools: exclusivas + JARVIS_TOOLS (mesmo poder que WhatsApp)
+const DASHBOARD_TOOLS = [...DASHBOARD_EXTRA_TOOLS, ...JARVIS_TOOLS];
 
 async function executeDashboardTool(toolName, input) {
   console.log(`[DASHBOARD-TOOL] Executando: ${toolName}`, JSON.stringify(input));
@@ -1422,15 +1413,14 @@ async function executeDashboardTool(toolName, input) {
     return { total: rows.length, memorias: rows.map(r => ({ conteudo: r.content, categoria: r.category, importancia: r.importance, escopo: r.scope })) };
   }
 
-  if (toolName === 'consultar_tarefas') {
-    const { executeJarvisTool } = await import('./src/skills/loader.mjs');
-    return await executeJarvisTool('consultar_tarefas', input, teamPhones);
-  }
-
   if (toolName === 'ver_perfil') {
     const { listProfiles, getProfile } = await import('./src/profiles.mjs');
     const all = await listProfiles();
-    const match = all.find(p => p.entity_id.toLowerCase().includes(input.nome.toLowerCase()));
+    const nome = (input.nome || '').toLowerCase();
+    const match = all.find(p =>
+      (p.entity_id || '').toLowerCase().includes(nome) ||
+      (p.entity_name || '').toLowerCase().includes(nome)
+    );
     if (match) {
       const profile = await getProfile(match.entity_type, match.entity_id);
       return profile || { resultado: `Perfil de "${input.nome}" encontrado mas sem dados.` };
@@ -1438,7 +1428,10 @@ async function executeDashboardTool(toolName, input) {
     return { resultado: `Nenhum perfil encontrado para "${input.nome}".` };
   }
 
-  return { erro: `Tool "${toolName}" não encontrada` };
+  // Todas as outras tools (JARVIS_TOOLS): delegar para executeJarvisTool
+  // Dashboard = Gui, então passa GUI_JID como contexto (mesmo poder que WhatsApp PV)
+  const { executeJarvisTool } = await import('./src/skills/loader.mjs');
+  return await executeJarvisTool(toolName, input, { senderJid: CONFIG.GUI_JID, chatId: 'dashboard' });
 }
 
 app.post('/dashboard/chat', auth, async (req, res) => {
@@ -1471,11 +1464,18 @@ SUAS CAPACIDADES REAIS — USE SEMPRE:
 - Você tem ferramentas para BUSCAR suas memórias acumuladas — USE buscar_memorias
 - Você pode CONSULTAR tarefas do Asana — USE consultar_tarefas
 - Você pode VER perfis sintetizados de pessoas e clientes — USE ver_perfil
+- Você pode ENVIAR mensagens em qualquer grupo do WhatsApp — USE enviar_mensagem_grupo
+- Você pode CRIAR demandas no Asana (Cabine de Comando) — USE criar_demanda_cliente
+- Você pode AGENDAR captações (Asana + Google Calendar) — USE agendar_captacao
+- Você pode AUTORIZAR operação autônoma em grupos de clientes — USE autorizar_cliente
+- Você pode REVOGAR operação autônoma — USE revogar_cliente
+- Você pode SALVAR informações na memória — USE lembrar
 - Seu estudo do Asana roda 5x por dia (08h/11h/13:30/15h/17h)
 
 REGRA DE OURO: Quando perguntarem sobre mensagens, conversas ou grupos — USE a tool buscar_mensagens PRIMEIRO, depois responda com dados reais.
 Quando perguntarem sobre pessoas, clientes, regras ou processos — USE buscar_memorias.
-NUNCA diga "não tenho acesso" — você TEM. Use as ferramentas.
+Quando mandarem AGIR (autorizar cliente, enviar mensagem, criar task) — USE as tools de ação IMEDIATAMENTE.
+NUNCA diga "não tenho acesso" ou "não consigo fazer isso" — você TEM e PODE. Use as ferramentas.
 ` + memoryCtx;
 
     const response = await anthropic.messages.create({
@@ -1520,6 +1520,7 @@ NUNCA diga "não tenho acesso" — você TEM. Use as ferramentas.
         model: CONFIG.AI_MODEL, max_tokens: 1500,
         system: dashboardSystemPrompt,
         messages: currentMsgs,
+        tools: DASHBOARD_TOOLS,
       });
     }
 
