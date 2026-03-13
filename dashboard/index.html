@@ -627,8 +627,8 @@
         <!-- Timeline Chart -->
         <div class="panel p-5">
           <h3 class="font-orbitron text-sm tracking-wider mb-4" style="color:#00f0ff">EVOLUÇÃO (14 DIAS)</h3>
-          <div id="mem-timeline" class="flex items-end gap-1 h-32">
-            <div class="text-sm text-stark-dim text-center w-full py-8">Carregando...</div>
+          <div id="mem-timeline" style="height:180px;position:relative">
+            <canvas id="mem-timeline-chart"></canvas>
           </div>
         </div>
 
@@ -1459,37 +1459,104 @@
       } catch (e) { console.error('Memory feed error:', e); }
     }
 
+    let timelineChart = null;
     async function loadMemoryTimeline() {
       try {
         const res = await api('/dashboard/memory/timeline?days=14');
         const data = await res.json();
-        const container = document.getElementById('mem-timeline');
+        const canvas = document.getElementById('mem-timeline-chart');
+        if (!canvas) return;
+
         if (!data.timeline || data.timeline.length === 0) {
-          container.innerHTML = '<div class="text-sm text-stark-dim text-center w-full py-8">Sem dados ainda</div>';
+          canvas.parentElement.innerHTML = '<div class="text-sm text-stark-dim text-center w-full py-8">Sem dados ainda</div>';
           return;
         }
+
         // Agregar por dia
         const dayMap = {};
         data.timeline.forEach(r => {
           dayMap[r.day] = (dayMap[r.day] || 0) + r.count;
         });
+
         // Gerar últimos 14 dias
-        const days = [];
+        const labels = [];
+        const counts = [];
         for (let i = 13; i >= 0; i--) {
           const d = new Date(); d.setDate(d.getDate() - i);
           const key = d.toISOString().split('T')[0];
-          days.push({ day: key, count: dayMap[key] || 0, label: d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) });
+          labels.push(d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }));
+          counts.push(dayMap[key] || 0);
         }
-        const max = Math.max(...days.map(d => d.count), 1);
-        container.innerHTML = days.map(d => {
-          const h = Math.max(d.count > 0 ? (d.count / max * 100) : 2, 2);
-          const isToday = d.day === new Date().toISOString().split('T')[0];
-          return `<div class="flex-1 flex flex-col items-center gap-1 group cursor-default">
-            <span class="text-[9px] text-stark-dim opacity-0 group-hover:opacity-100 transition-opacity">${d.count}</span>
-            <div class="w-full rounded-t relative" style="height:${h}%;background:linear-gradient(to top,#00f0ff,#7b61ff);min-height:3px;${isToday ? 'box-shadow:0 0 8px #00f0ff' : ''}"></div>
-            <span class="text-[8px] text-stark-dim ${isToday ? 'text-white font-bold' : ''}">${d.label}</span>
-          </div>`;
-        }).join('');
+
+        // Destruir chart anterior se existir
+        if (timelineChart) { timelineChart.destroy(); timelineChart = null; }
+
+        const ctx = canvas.getContext('2d');
+        // Gradiente para as barras
+        const gradient = ctx.createLinearGradient(0, 0, 0, 180);
+        gradient.addColorStop(0, 'rgba(123, 97, 255, 0.9)');
+        gradient.addColorStop(1, 'rgba(0, 240, 255, 0.9)');
+
+        // Gradiente para o preenchimento da linha
+        const fillGradient = ctx.createLinearGradient(0, 0, 0, 180);
+        fillGradient.addColorStop(0, 'rgba(0, 240, 255, 0.3)');
+        fillGradient.addColorStop(1, 'rgba(0, 240, 255, 0.02)');
+
+        timelineChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels,
+            datasets: [{
+              data: counts,
+              backgroundColor: gradient,
+              borderColor: '#00f0ff',
+              borderWidth: 1,
+              borderRadius: 4,
+              borderSkipped: false,
+            }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                backgroundColor: 'rgba(10, 14, 20, 0.95)',
+                borderColor: '#00f0ff',
+                borderWidth: 1,
+                titleColor: '#00f0ff',
+                bodyColor: '#e0e0e0',
+                titleFont: { family: 'Orbitron', size: 11 },
+                bodyFont: { family: 'Inter', size: 12 },
+                padding: 10,
+                callbacks: {
+                  label: ctx => {
+                    const v = ctx.parsed.y;
+                    return v >= 1000 ? (v / 1000).toFixed(1).replace('.0', '') + 'k memórias' : v + ' memórias';
+                  },
+                },
+              },
+            },
+            scales: {
+              x: {
+                grid: { display: false },
+                ticks: { color: '#555', font: { size: 10 } },
+                border: { display: false },
+              },
+              y: {
+                grid: { color: 'rgba(255,255,255,0.04)', drawBorder: false },
+                border: { display: false },
+                ticks: {
+                  color: '#555',
+                  font: { size: 10 },
+                  callback: v => v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v,
+                },
+                beginAtZero: true,
+              },
+            },
+            animation: { duration: 800, easing: 'easeOutQuart' },
+          },
+        });
       } catch (e) { console.error('Timeline error:', e); }
     }
 
