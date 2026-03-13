@@ -1169,8 +1169,166 @@ app.post('/dashboard/prompt', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- Dashboard Chat ---
+// --- Dashboard Chat (com tools) ---
 const dashboardChatHistory = [];
+
+// Tools exclusivos do dashboard — acesso a mensagens e memórias
+const DASHBOARD_TOOLS = [
+  {
+    name: 'buscar_mensagens',
+    description: 'Buscar mensagens do WhatsApp por grupo ou contato. Use sempre que perguntarem sobre conversas, mensagens, o que foi dito em algum grupo ou chat.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        grupo: { type: 'string', description: 'Nome parcial do grupo (ex: "minner", "stream", "rossato")' },
+        contato: { type: 'string', description: 'Nome parcial do contato (ex: "nicolas", "arthur")' },
+        texto: { type: 'string', description: 'Texto para buscar dentro das mensagens' },
+        limite: { type: 'number', description: 'Quantidade de mensagens (padrão: 20, máx: 50)' },
+      },
+    },
+  },
+  {
+    name: 'buscar_memorias',
+    description: 'Buscar nas memórias do Jarvis (fatos aprendidos sobre pessoas, clientes, projetos, regras, processos). Use para responder sobre conhecimento acumulado.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        busca: { type: 'string', description: 'Termo de busca nas memórias' },
+        categoria: { type: 'string', enum: ['client', 'preference', 'rule', 'deadline', 'decision', 'process', 'team_member', 'client_profile', 'style', 'pattern'], description: 'Filtrar por categoria' },
+        escopo: { type: 'string', enum: ['user', 'chat', 'agent'], description: 'Filtrar por escopo (user=pessoas, chat=conversas, agent=operacional)' },
+        limite: { type: 'number', description: 'Quantidade de resultados (padrão: 20, máx: 50)' },
+      },
+    },
+  },
+  {
+    name: 'consultar_tarefas',
+    description: 'Consultar tarefas pendentes, atrasadas ou status de projetos no Asana.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tipo: { type: 'string', enum: ['atrasadas', 'pendentes', 'todas'], description: 'Tipo de consulta' },
+        projeto: { type: 'string', description: 'Nome do projeto (captacao, audiovisual, design, cabine)' },
+        responsavel: { type: 'string', description: 'Nome do responsavel para filtrar' },
+      },
+      required: ['tipo'],
+    },
+  },
+  {
+    name: 'ver_perfil',
+    description: 'Ver o perfil sintetizado de um cliente, membro da equipe ou grupo. Contém resumo completo do que o Jarvis sabe sobre a entidade.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        nome: { type: 'string', description: 'Nome da pessoa, cliente ou grupo' },
+      },
+      required: ['nome'],
+    },
+  },
+];
+
+async function executeDashboardTool(toolName, input) {
+  console.log(`[DASHBOARD-TOOL] Executando: ${toolName}`, JSON.stringify(input));
+
+  if (toolName === 'buscar_mensagens') {
+    const limit = Math.min(input.limite || 20, 50);
+    let where = [];
+    let params = [];
+    let paramIdx = 1;
+
+    if (input.grupo) {
+      // Buscar JID do grupo pelo nome
+      const { rows: groups } = await pool.query(
+        'SELECT jid FROM jarvis_groups WHERE LOWER(name) LIKE $1 LIMIT 1',
+        [`%${input.grupo.toLowerCase()}%`]
+      );
+      if (groups.length > 0) {
+        where.push(`chat_jid = $${paramIdx++}`);
+        params.push(groups[0].jid);
+      } else {
+        return { resultado: `Nenhum grupo encontrado com "${input.grupo}"` };
+      }
+    }
+    if (input.contato) {
+      where.push(`LOWER(sender_name) LIKE $${paramIdx++}`);
+      params.push(`%${input.contato.toLowerCase()}%`);
+    }
+    if (input.texto) {
+      where.push(`LOWER(text) LIKE $${paramIdx++}`);
+      params.push(`%${input.texto.toLowerCase()}%`);
+    }
+
+    const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const { rows } = await pool.query(
+      `SELECT sender_name, text, created_at, chat_jid FROM jarvis_messages ${whereClause} ORDER BY created_at DESC LIMIT $${paramIdx}`,
+      [...params, limit]
+    );
+
+    if (rows.length === 0) return { resultado: 'Nenhuma mensagem encontrada com esses filtros.' };
+
+    // Buscar nome do grupo se houver
+    let groupName = '';
+    if (rows[0]?.chat_jid?.includes('@g.us')) {
+      const { rows: g } = await pool.query('SELECT name FROM jarvis_groups WHERE jid = $1', [rows[0].chat_jid]);
+      groupName = g[0]?.name || '';
+    }
+
+    return {
+      grupo: groupName || undefined,
+      total: rows.length,
+      mensagens: rows.reverse().map(r => ({
+        de: r.sender_name,
+        texto: r.text?.substring(0, 300),
+        quando: r.created_at,
+      })),
+    };
+  }
+
+  if (toolName === 'buscar_memorias') {
+    const limit = Math.min(input.limite || 20, 50);
+    let where = ['1=1'];
+    let params = [];
+    let paramIdx = 1;
+
+    if (input.busca) {
+      where.push(`LOWER(content) LIKE $${paramIdx++}`);
+      params.push(`%${input.busca.toLowerCase()}%`);
+    }
+    if (input.categoria) {
+      where.push(`category = $${paramIdx++}`);
+      params.push(input.categoria);
+    }
+    if (input.escopo) {
+      where.push(`scope = $${paramIdx++}`);
+      params.push(input.escopo);
+    }
+
+    const { rows } = await pool.query(
+      `SELECT content, category, importance, scope, created_at FROM jarvis_memories WHERE ${where.join(' AND ')} ORDER BY importance DESC, created_at DESC LIMIT $${paramIdx}`,
+      [...params, limit]
+    );
+
+    return { total: rows.length, memorias: rows.map(r => ({ conteudo: r.content, categoria: r.category, importancia: r.importance, escopo: r.scope })) };
+  }
+
+  if (toolName === 'consultar_tarefas') {
+    const { executeJarvisTool } = await import('./src/skills/loader.mjs');
+    return await executeJarvisTool('consultar_tarefas', input, teamPhones);
+  }
+
+  if (toolName === 'ver_perfil') {
+    const { listProfiles, getProfile } = await import('./src/profiles.mjs');
+    const all = await listProfiles();
+    const match = all.find(p => p.entity_id.toLowerCase().includes(input.nome.toLowerCase()));
+    if (match) {
+      const profile = await getProfile(match.entity_type, match.entity_id);
+      return profile || { resultado: `Perfil de "${input.nome}" encontrado mas sem dados.` };
+    }
+    return { resultado: `Nenhum perfil encontrado para "${input.nome}".` };
+  }
+
+  return { erro: `Tool "${toolName}" não encontrada` };
+}
+
 app.post('/dashboard/chat', auth, async (req, res) => {
   try {
     const { message, clearHistory } = req.body;
@@ -1189,32 +1347,57 @@ app.post('/dashboard/chat', auth, async (req, res) => {
     const Anthropic = (await import('@anthropic-ai/sdk')).default;
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 
-    const response = await anthropic.messages.create({
-      model: CONFIG.AI_MODEL, max_tokens: 1500,
-      system: MASTER_SYSTEM_PROMPT + `
+    const dashboardSystemPrompt = MASTER_SYSTEM_PROMPT + `
 
 CONTEXTO DO DASHBOARD:
 Você está falando pelo Dashboard (guardiaolab.com.br) diretamente com o Gui (seu chefe).
 Aqui pode falar de TODOS os projetos, sem sigilo — é conversa privada com o dono.
 
-SUAS CAPACIDADES REAIS (use com orgulho):
-- Você ESTÁ conectado ao WhatsApp da Stream Lab e lê TODAS as mensagens em tempo real (grupos + privadas)
-- Você aprende de cada mensagem automaticamente (aprendizado passivo)
-- Você tem acesso COMPLETO ao Asana da Stream Lab (62 projetos, milhares de tarefas e comentários)
-- Seu estudo do Asana roda automaticamente 5x por dia (08h, 11h, 13:30, 15h, 17h) — você está sempre atualizado
-- Você pode consultar tarefas, ver prazos, verificar quem está atrasado
-- Você pode agendar captações no Google Calendar
-- Você pode enviar mensagens de voz premium
-- Você tem perfis sintetizados de clientes e membros da equipe
+SUAS CAPACIDADES REAIS — USE SEMPRE:
+- Você ESTÁ conectado ao WhatsApp e lê TODAS as mensagens em tempo real
+- Você tem ferramentas para BUSCAR mensagens de qualquer grupo ou contato — USE buscar_mensagens
+- Você tem ferramentas para BUSCAR suas memórias acumuladas — USE buscar_memorias
+- Você pode CONSULTAR tarefas do Asana — USE consultar_tarefas
+- Você pode VER perfis sintetizados de pessoas e clientes — USE ver_perfil
+- Seu estudo do Asana roda 5x por dia (08h/11h/13:30/15h/17h)
 
-NUNCA diga que "não tem acesso" ou "só processa o que me trazem". Isso é FALSO.
-Você TEM acesso a grupos, conversas, Asana e memórias. Use esse conhecimento nas respostas.
-` + memoryCtx,
+REGRA DE OURO: Quando perguntarem sobre mensagens, conversas ou grupos — USE a tool buscar_mensagens PRIMEIRO, depois responda com dados reais.
+Quando perguntarem sobre pessoas, clientes, regras ou processos — USE buscar_memorias.
+NUNCA diga "não tenho acesso" — você TEM. Use as ferramentas.
+` + memoryCtx;
+
+    const response = await anthropic.messages.create({
+      model: CONFIG.AI_MODEL, max_tokens: 1500,
+      system: dashboardSystemPrompt,
       messages: msgs,
+      tools: DASHBOARD_TOOLS,
     });
 
-    const text = response.content[0]?.text || 'Sem resposta.';
-    dashboardChatHistory.push({ role: 'assistant', content: text });
+    // Processar resposta (com suporte a tools)
+    let finalText = '';
+    const toolResults = [];
+
+    for (const block of response.content) {
+      if (block.type === 'text') {
+        finalText += block.text;
+      } else if (block.type === 'tool_use') {
+        const result = await executeDashboardTool(block.name, block.input);
+        toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
+      }
+    }
+
+    // Follow-up se houve tool_use
+    if (toolResults.length > 0 && response.stop_reason === 'tool_use') {
+      const followUp = await anthropic.messages.create({
+        model: CONFIG.AI_MODEL, max_tokens: 1500,
+        system: dashboardSystemPrompt,
+        messages: [...msgs, { role: 'assistant', content: response.content }, { role: 'user', content: toolResults }],
+      });
+      finalText = followUp.content.filter(b => b.type === 'text').map(b => b.text).join('');
+    }
+
+    if (!finalText) finalText = 'Processado, mas sem resposta textual.';
+    dashboardChatHistory.push({ role: 'assistant', content: finalText });
 
     // Auto-salvar instruções como homework
     const lower = message.toLowerCase();
@@ -1225,7 +1408,7 @@ Você TEM acesso a grupos, conversas, Asana e memórias. Use esse conhecimento n
     // Processar memória em background
     processMemory(message, 'Gui', CONFIG.GUI_JID, 'dashboard', false).catch(() => {});
 
-    res.json({ response: text });
+    res.json({ response: finalText });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
