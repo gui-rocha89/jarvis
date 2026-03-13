@@ -263,7 +263,7 @@ export function extractMentionsFromText(text) {
 // ============================================
 // GERAÇÃO DE RESPOSTA (com Agent Teams)
 // ============================================
-export async function generateResponse(text, chatId, senderJid, pushName, isGroup) {
+export async function generateResponse(text, chatId, senderJid, pushName, isGroup, mediaFiles = []) {
   try {
     const recentMessages = await getRecentMessages(chatId, 20);
     const contactInfo = await getContactInfo(senderJid);
@@ -351,8 +351,13 @@ export async function generateResponse(text, chatId, senderJid, pushName, isGrou
       },
     ];
 
-    // Adicionar mensagem atual
-    const currentMsg = { role: 'user', content: `[${pushName}]: ${text}` };
+    // Adicionar mensagem atual (com contexto de mídia se houver)
+    let mediaContext = '';
+    if (mediaFiles.length > 0) {
+      const mediaDesc = mediaFiles.map(f => `📎 ${f.type}: ${f.fileName} (${Math.round(f.size / 1024)}KB) [msg_id: ${f.messageId}]`).join('\n');
+      mediaContext = `\n[MÍDIA RECEBIDA - arquivos já baixados e prontos para anexar no Asana via tool "anexar_midia_asana"]\n${mediaDesc}`;
+    }
+    const currentMsg = { role: 'user', content: `[${pushName}]: ${text || '[enviou mídia]'}${mediaContext}` };
     const lastConsolidated = consolidatedHistory[consolidatedHistory.length - 1];
     if (lastConsolidated && lastConsolidated.role === 'user') {
       lastConsolidated.content += '\n' + currentMsg.content;

@@ -169,10 +169,30 @@ async function handleIncomingMessage(m) {
     }
   }
 
-  // Permitir mensagens de mídia sem texto passarem pelo fluxo proativo
+  // Permitir mensagens de mídia sem texto passarem pelo fluxo
   const hasMedia = getMediaType(m) && !['audio', 'sticker', 'contact', 'location'].includes(getMediaType(m));
   if (!text && !hasMedia) return;
   const pushName = m.pushName || '';
+
+  // Download de mídia (imagens, vídeos, documentos) — QUALQUER contexto (PV, grupo, proativo)
+  const mediaFiles = [];
+  if (hasMedia) {
+    try {
+      const buffer = await downloadMediaMessage(m, 'buffer', {});
+      const mime = m.message?.imageMessage?.mimetype || m.message?.videoMessage?.mimetype || m.message?.documentMessage?.mimetype || '';
+      const extMap = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'video/mp4': 'mp4', 'application/pdf': 'pdf' };
+      const ext = extMap[mime] || mime.split('/')[1] || 'bin';
+      const fileName = m.message?.documentMessage?.fileName || `${m.key.id}.${ext}`;
+      const groupDir = path.join(__dirname, 'media_files', from.split('@')[0]);
+      await mkdir(groupDir, { recursive: true });
+      const filePath = path.join(groupDir, fileName);
+      await writeFile(filePath, buffer);
+      mediaFiles.push({ path: filePath, fileName, type: getMediaType(m), size: buffer.length, messageId: m.key.id });
+      console.log(`[MEDIA] Mídia salva: ${filePath} (${Math.round(buffer.length / 1024)}KB)`);
+    } catch (mediaErr) {
+      console.error('[MEDIA] Erro ao baixar mídia:', mediaErr.message);
+    }
+  }
 
   const logText = text ? text.substring(0, 80) : `[${getMediaType(m) || 'mídia'}]`;
   console.log(`[MSG] ${isGroup ? 'GRUPO' : 'PV'} | ${pushName} (${sender.substring(0, 15)}): ${logText}`);
@@ -292,28 +312,7 @@ async function handleIncomingMessage(m) {
       if (!isTeamMember) {
         console.log(`[PROACTIVE] Mensagem de cliente detectada: ${pushName} em ${managedClient.groupName}`);
 
-        // Download de mídia (imagens, vídeos, documentos) se presente
-        const mediaFiles = [];
-        const mediaType = getMediaType(m);
-        const hasNonAudioMedia = mediaType && mediaType !== 'audio' && mediaType !== 'sticker' && mediaType !== 'contact' && mediaType !== 'location';
-        if (hasNonAudioMedia) {
-          try {
-            const buffer = await downloadMediaMessage(m, 'buffer', {});
-            const mime = m.message?.imageMessage?.mimetype || m.message?.videoMessage?.mimetype || m.message?.documentMessage?.mimetype || '';
-            const extMap = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'video/mp4': 'mp4', 'application/pdf': 'pdf' };
-            const ext = extMap[mime] || mime.split('/')[1] || 'bin';
-            const fileName = m.message?.documentMessage?.fileName || `${m.key.id}.${ext}`;
-            const groupDir = path.join(__dirname, 'media_files', from.split('@')[0]);
-            await mkdir(groupDir, { recursive: true });
-            const filePath = path.join(groupDir, fileName);
-            await writeFile(filePath, buffer);
-            mediaFiles.push({ path: filePath, fileName, type: mediaType, size: buffer.length, messageId: m.key.id });
-            console.log(`[PROACTIVE] Mídia salva: ${filePath} (${Math.round(buffer.length / 1024)}KB)`);
-          } catch (mediaErr) {
-            console.error('[PROACTIVE] Erro ao baixar mídia:', mediaErr.message);
-          }
-        }
-
+        // mediaFiles já foi preenchido no download geral acima
         const result = await handleManagedClientMessage(text, sender, pushName, from, managedClient, sendText, mediaFiles);
         if (result?.text) {
           await sendText(from, result.text);
@@ -345,7 +344,7 @@ async function handleIncomingMessage(m) {
 
   console.log('[JARVIS] Gerando resposta para:', text.substring(0, 60));
 
-  const result = await generateResponse(text, from, sender, pushName, isGroup);
+  const result = await generateResponse(text, from, sender, pushName, isGroup, mediaFiles);
   if (!result?.text) return;
   if (!isValidResponse(result.text)) {
     console.log('[JARVIS] Resposta bloqueada (lixo):', result.text.substring(0, 50));
