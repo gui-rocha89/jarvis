@@ -10,6 +10,7 @@ import { google } from 'googleapis';
 // Callbacks para enviar mensagens (registrados pelo jarvis-v2.mjs após criar o socket)
 let _sendTextFn = null;
 let _sendTextWithMentionsFn = null;
+const _groupMessageDedup = new Map(); // JID → timestamp da última mensagem (dedup 60s)
 export function registerSendFunction(fn) { _sendTextFn = fn; }
 export function registerSendWithMentionsFunction(fn) { _sendTextWithMentionsFn = fn; }
 export function getSendFunction() { return _sendTextFn; }
@@ -353,6 +354,33 @@ export async function executeJarvisTool(toolName, input, context = {}) {
     }
 
     if (!targetJid) return { error: `Grupo "${input.grupo}" nao encontrado` };
+
+    // SALVAGUARDA 1: Anti-vazamento — bloquear conteúdo interno em grupos de clientes
+    const isClientGroup = managedClients.has(targetJid);
+    if (isClientGroup) {
+      const msgLower = (input.mensagem || '').toLowerCase();
+      const internalPatterns = [
+        /\basana\b/i, /\btask\s?(criada|criado|criou)\b/i, /\bcabine\s?de\s?comando\b/i,
+        /tudo\s?executado/i, /resumo\s?do\s?que\s?(foi\s?)feito/i, /✅\s*(task|tarefa|mensagem|bruna|equipe)/i,
+        /avise[i]?\s?(a\s?)?(bruna|equipe|gui)/i, /grupo\s?de\s?tarefas/i,
+        /internamente/i, /processo\s?interno/i, /ferramenta/i,
+      ];
+      const leaked = internalPatterns.some(p => p.test(input.mensagem));
+      if (leaked) {
+        console.warn(`[TOOL] ⚠️ BLOQUEADO: mensagem com conteúdo interno para grupo de cliente ${input.grupo}`);
+        console.warn(`[TOOL] Mensagem bloqueada: ${input.mensagem.substring(0, 120)}`);
+        return { error: 'BLOQUEADO: essa mensagem contém informações internas da agência. Nunca envie detalhes sobre Asana, tasks, ferramentas ou processos internos para o grupo do cliente. Reformule a mensagem com tom 100% profissional.' };
+      }
+    }
+
+    // SALVAGUARDA 2: Dedup — máximo 1 mensagem por grupo a cada 60s
+    const lastSent = _groupMessageDedup.get(targetJid);
+    const now = Date.now();
+    if (lastSent && now - lastSent < 60000) {
+      console.warn(`[TOOL] ⚠️ DEDUP: mensagem duplicada bloqueada para ${input.grupo} (${Math.round((now - lastSent) / 1000)}s desde a última)`);
+      return { error: `Você já enviou uma mensagem para "${input.grupo}" há ${Math.round((now - lastSent) / 1000)}s atrás. Aguarde pelo menos 60s entre mensagens para o mesmo grupo. NÃO envie novamente.` };
+    }
+    _groupMessageDedup.set(targetJid, now);
 
     // Resolver menções (nomes → JIDs reais do WhatsApp)
     const mentionJids = [];
