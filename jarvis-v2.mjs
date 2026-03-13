@@ -1014,8 +1014,9 @@ app.post('/dashboard/asana/study/start', auth, async (req, res) => {
     if (asanaBatchState.running) {
       return res.json({ success: true, message: 'Estudo já em execução', alreadyRunning: true });
     }
-    await startAsanaStudy();
-    res.json({ success: true, message: 'Estudo do Asana iniciado' });
+    const incremental = req.body?.incremental === true;
+    await startAsanaStudy({ incremental });
+    res.json({ success: true, message: `Estudo do Asana iniciado (${incremental ? 'incremental' : 'completo'})` });
   } catch (err) {
     console.error('[ASANA-STUDY] Erro ao iniciar:', err.message);
     res.status(500).json({ error: err.message });
@@ -1190,7 +1191,25 @@ app.post('/dashboard/chat', auth, async (req, res) => {
 
     const response = await anthropic.messages.create({
       model: CONFIG.AI_MODEL, max_tokens: 1500,
-      system: MASTER_SYSTEM_PROMPT + '\n\nCONTEXTO: Dashboard (guardiaolab.com.br). Falando com o Gui. Pode falar de TODOS os projetos.' + memoryCtx,
+      system: MASTER_SYSTEM_PROMPT + `
+
+CONTEXTO DO DASHBOARD:
+Você está falando pelo Dashboard (guardiaolab.com.br) diretamente com o Gui (seu chefe).
+Aqui pode falar de TODOS os projetos, sem sigilo — é conversa privada com o dono.
+
+SUAS CAPACIDADES REAIS (use com orgulho):
+- Você ESTÁ conectado ao WhatsApp da Stream Lab e lê TODAS as mensagens em tempo real (grupos + privadas)
+- Você aprende de cada mensagem automaticamente (aprendizado passivo)
+- Você tem acesso COMPLETO ao Asana da Stream Lab (62 projetos, milhares de tarefas e comentários)
+- Seu estudo do Asana roda automaticamente 5x por dia (08h, 11h, 13:30, 15h, 17h) — você está sempre atualizado
+- Você pode consultar tarefas, ver prazos, verificar quem está atrasado
+- Você pode agendar captações no Google Calendar
+- Você pode enviar mensagens de voz premium
+- Você tem perfis sintetizados de clientes e membros da equipe
+
+NUNCA diga que "não tem acesso" ou "só processa o que me trazem". Isso é FALSO.
+Você TEM acesso a grupos, conversas, Asana e memórias. Use esse conhecimento nas respostas.
+` + memoryCtx,
       messages: msgs,
     });
 
@@ -1275,7 +1294,33 @@ function setupCronJobs() {
     }
   });
 
-  console.log('[CRON] Jobs ativados: syncProfiles a cada 6h');
+  // Estudo incremental do Asana — 5x por dia (horário de Brasília = UTC-3)
+  // 08:00 BRT = 11:00 UTC | 11:00 BRT = 14:00 UTC | 13:30 BRT = 16:30 UTC
+  // 15:00 BRT = 18:00 UTC | 17:00 BRT = 20:00 UTC
+  const asanaStudySchedules = [
+    { cron: '0 11 * * 1-5', label: '08:00' },   // Segunda a sexta
+    { cron: '0 14 * * 1-5', label: '11:00' },
+    { cron: '30 16 * * 1-5', label: '13:30' },
+    { cron: '0 18 * * 1-5', label: '15:00' },
+    { cron: '0 20 * * 1-5', label: '17:00' },
+  ];
+
+  for (const schedule of asanaStudySchedules) {
+    cron.schedule(schedule.cron, async () => {
+      console.log(`[CRON] Estudo Asana incremental (${schedule.label} BRT)...`);
+      try {
+        if (asanaBatchState.running) {
+          console.log('[CRON] Estudo Asana já em execução, pulando...');
+          return;
+        }
+        await startAsanaStudy({ incremental: true });
+      } catch (err) {
+        console.error(`[CRON] Erro no estudo Asana (${schedule.label}):`, err.message);
+      }
+    });
+  }
+
+  console.log('[CRON] Jobs ativados: syncProfiles 6h + estudo Asana 5x/dia (seg-sex 08h/11h/13:30/15h/17h)');
 }
 
 // ============================================

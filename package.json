@@ -6,7 +6,7 @@
   "main": "jarvis-v2.mjs",
   "scripts": {
     "start": "node jarvis-v2.mjs",
-    "test": "node --test tests/"
+    "test": "node --test tests/unit.test.mjs"
   },
   "keywords": [
     "whatsapp",

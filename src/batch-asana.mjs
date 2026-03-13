@@ -97,7 +97,32 @@ async function extractAsanaFacts(text, context) {
 // ============================================
 // ENGINE PRINCIPAL
 // ============================================
-export async function startAsanaStudy() {
+// Busca a data da última execução concluída
+async function getLastStudyDate() {
+  const { rows } = await pool.query(
+    "SELECT value FROM jarvis_config WHERE key = 'asana_study_last_run'"
+  );
+  return rows.length > 0 ? rows[0].value : null;
+}
+
+// Salva a data de conclusão
+async function setLastStudyDate(isoDate) {
+  await pool.query(`
+    INSERT INTO jarvis_config (key, value) VALUES ('asana_study_last_run', $1)
+    ON CONFLICT (key) DO UPDATE SET value = $1
+  `, [isoDate]);
+}
+
+// Marca itens para reprocessamento (tasks/comments modificados)
+async function markForReprocess(entityType, entityGid) {
+  await pool.query(
+    'UPDATE asana_study_log SET processed = false WHERE entity_type = $1 AND entity_gid = $2',
+    [entityType, entityGid]
+  );
+}
+
+export async function startAsanaStudy(options = {}) {
+  const { incremental = false } = options;
   if (asanaBatchState.running) throw new Error('Estudo já em execução');
 
   // Criar tabela se não existe
@@ -114,6 +139,17 @@ export async function startAsanaStudy() {
     )
   `);
 
+  // Buscar data da última execução para modo incremental
+  let modifiedSince = null;
+  if (incremental) {
+    modifiedSince = await getLastStudyDate();
+    if (!modifiedSince) {
+      console.log('[ASANA-STUDY] Sem execução anterior — rodando varredura completa');
+    }
+  }
+
+  const runStart = new Date().toISOString();
+
   // Reset state
   asanaBatchState = {
     running: true,
@@ -123,11 +159,12 @@ export async function startAsanaStudy() {
     comments: { total: 0, processed: 0 },
     facts: 0,
     errors: 0,
-    startedAt: new Date().toISOString(),
+    startedAt: runStart,
     stoppedAt: null,
+    incremental: !!modifiedSince,
   };
 
-  console.log('[ASANA-STUDY] Iniciando estudo exaustivo do Asana...');
+  console.log(`[ASANA-STUDY] Iniciando estudo ${modifiedSince ? 'INCREMENTAL (desde ' + modifiedSince.split('T')[0] + ')' : 'COMPLETO'}...`);
 
   // Rodar em background
   (async () => {
@@ -181,8 +218,9 @@ export async function startAsanaStudy() {
       for (const project of projects) {
         if (!asanaBatchState.running) break;
         try {
+          const modFilter = modifiedSince ? `&modified_since=${modifiedSince}` : '';
           const tasks = await asanaGetAll(
-            `/tasks?project=${project.gid}&opt_fields=name,notes,assignee.name,due_on,completed,completed_at,created_at,memberships.section.name&limit=100`
+            `/tasks?project=${project.gid}&opt_fields=name,notes,assignee.name,due_on,completed,completed_at,created_at,memberships.section.name&limit=100${modFilter}`
           );
           for (const task of tasks) {
             task._projectName = project.name;
@@ -197,7 +235,14 @@ export async function startAsanaStudy() {
       }
 
       asanaBatchState.tasks.total = allTasks.length;
-      console.log(`[ASANA-STUDY] ${allTasks.length} tarefas encontradas no total`);
+      console.log(`[ASANA-STUDY] ${allTasks.length} tarefas ${modifiedSince ? 'modificadas' : 'encontradas'}`);
+
+      // No modo incremental, marcar tasks modificadas para reprocessamento
+      if (modifiedSince) {
+        for (const task of allTasks) {
+          await markForReprocess('task', task.gid);
+        }
+      }
 
       // Processar cada tarefa
       for (const task of allTasks) {
@@ -313,6 +358,7 @@ export async function startAsanaStudy() {
       }
 
       // ========== CONCLUÍDO ==========
+      await setLastStudyDate(runStart);
       finish('Concluído com sucesso');
 
       // Auto-sync de perfis após estudo
