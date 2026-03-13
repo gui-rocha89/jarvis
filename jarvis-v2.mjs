@@ -1373,30 +1373,49 @@ NUNCA diga "não tenho acesso" — você TEM. Use as ferramentas.
       tools: DASHBOARD_TOOLS,
     });
 
-    // Processar resposta (com suporte a tools)
+    // Processar resposta (com suporte a tools — até 3 rounds)
     let finalText = '';
-    const toolResults = [];
+    let currentResponse = response;
+    let currentMsgs = [...msgs];
 
-    for (const block of response.content) {
-      if (block.type === 'text') {
-        finalText += block.text;
-      } else if (block.type === 'tool_use') {
-        const result = await executeDashboardTool(block.name, block.input);
-        toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
+    for (let round = 0; round < 3; round++) {
+      const toolResults = [];
+
+      for (const block of currentResponse.content) {
+        if (block.type === 'text') {
+          finalText += block.text;
+        } else if (block.type === 'tool_use') {
+          console.log(`[DASHBOARD-CHAT] Round ${round + 1} — tool: ${block.name}`);
+          try {
+            const result = await executeDashboardTool(block.name, block.input);
+            console.log(`[DASHBOARD-CHAT] Tool ${block.name} resultado:`, JSON.stringify(result).substring(0, 200));
+            toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
+          } catch (toolErr) {
+            console.error(`[DASHBOARD-CHAT] Tool ${block.name} erro:`, toolErr.message);
+            toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify({ erro: toolErr.message }) });
+          }
+        }
       }
-    }
 
-    // Follow-up se houve tool_use
-    if (toolResults.length > 0 && response.stop_reason === 'tool_use') {
-      const followUp = await anthropic.messages.create({
+      // Se não houve tool_use, terminamos
+      if (toolResults.length === 0 || currentResponse.stop_reason !== 'tool_use') break;
+
+      // Follow-up com resultados das tools
+      currentMsgs = [...currentMsgs, { role: 'assistant', content: currentResponse.content }, { role: 'user', content: toolResults }];
+      finalText = ''; // Reset — a resposta final vem do follow-up
+
+      currentResponse = await anthropic.messages.create({
         model: CONFIG.AI_MODEL, max_tokens: 1500,
         system: dashboardSystemPrompt,
-        messages: [...msgs, { role: 'assistant', content: response.content }, { role: 'user', content: toolResults }],
+        messages: currentMsgs,
       });
-      finalText = followUp.content.filter(b => b.type === 'text').map(b => b.text).join('');
     }
 
-    if (!finalText) finalText = 'Processado, mas sem resposta textual.';
+    // Extrair texto final do último response se ainda não temos
+    if (!finalText) {
+      finalText = currentResponse.content.filter(b => b.type === 'text').map(b => b.text).join('');
+    }
+    if (!finalText) finalText = 'Desculpe, não consegui processar a consulta. Tente reformular a pergunta.';
     dashboardChatHistory.push({ role: 'assistant', content: finalText });
 
     // Auto-salvar instruções como homework
