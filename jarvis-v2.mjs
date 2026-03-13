@@ -673,11 +673,24 @@ app.get('/dashboard/intelligence', auth, async (req, res) => {
     const totalMem = totalMemories.rows[0].cnt;
 
     // ============================================
-    // SISTEMA DE PATENTES - Inspirado nos Vingadores
+    // SISTEMA DE INTELIGÊNCIA - Recalibrado para escala real
     // ============================================
-    // 6 eixos de conhecimento com thresholds progressivos (escala logarítmica)
+    // Score ponderado: quantidade × qualidade (importância média)
+    // Importância vai de 1-10, divisor 5 → imp=5 dá 1x, imp=10 dá 2x, imp=1 dá 0.2x
+    const weightedCount = (categories) => {
+      let total = 0;
+      for (const cat of categories) {
+        const c = catMap[cat];
+        if (!c) continue;
+        const qualityFactor = Math.max(0.2, (c.avgImp || 5) / 5);
+        total += c.count * qualityFactor;
+      }
+      return Math.round(total);
+    };
+
+    // 6 eixos com thresholds calibrados para 127K+ memórias
+    // Cada threshold = [20%, 40%, 60%, 80%, 100%]
     const logScore = (count, thresholds) => {
-      // thresholds: [t1, t2, t3, t4, t5] → 0-20, 20-40, 40-60, 60-80, 80-100
       if (count <= 0) return 0;
       for (let i = 0; i < thresholds.length; i++) {
         if (count <= thresholds[i]) {
@@ -692,28 +705,28 @@ app.get('/dashboard/intelligence', auth, async (req, res) => {
 
     const axes = {
       empresa: logScore(
-        (catMap['general']?.count || 0) + (catMap['rule']?.count || 0) + (catMap['process']?.count || 0),
-        [50, 250, 750, 2000, 5000]
+        weightedCount(['general', 'rule', 'process']),
+        [1000, 5000, 15000, 40000, 100000]
       ),
       equipe: logScore(
-        (catMap['team_member']?.count || 0) + (catMap['style']?.count || 0) + (catMap['pattern']?.count || 0),
-        [50, 200, 600, 1500, 4000]
+        weightedCount(['team_member', 'style', 'pattern']),
+        [500, 3000, 10000, 30000, 80000]
       ),
       clientes: logScore(
-        (catMap['client']?.count || 0) + (catMap['client_profile']?.count || 0),
-        [50, 250, 750, 2000, 5000]
+        weightedCount(['client', 'client_profile']),
+        [500, 3000, 10000, 30000, 80000]
       ),
       projetos: logScore(
-        (catMap['decision']?.count || 0) + (catMap['deadline']?.count || 0) + (gcalCount.rows[0].cnt || 0),
-        [50, 200, 600, 1500, 4000]
+        weightedCount(['decision', 'deadline']) + (gcalCount.rows[0].cnt || 0),
+        [500, 2500, 8000, 25000, 70000]
       ),
       comunicacao: logScore(
-        (catMap['preference']?.count || 0) + (catMap['style']?.count || 0),
-        [25, 125, 400, 1000, 2500]
+        weightedCount(['preference', 'style']),
+        [250, 1500, 5000, 15000, 40000]
       ),
       processos: logScore(
-        (catMap['process']?.count || 0) + (catMap['rule']?.count || 0),
-        [25, 100, 300, 750, 2000]
+        weightedCount(['process', 'rule']),
+        [250, 1500, 5000, 15000, 40000]
       ),
     };
 
@@ -721,18 +734,18 @@ app.get('/dashboard/intelligence', auth, async (req, res) => {
     const overallScore = Math.round(axesValues.reduce((a, b) => a + b, 0) / axesValues.length);
 
     // Patente baseada no TOTAL de memórias (não no score %)
-    // 10 níveis — escala desafiadora, pensada pra longo prazo
+    // 10 níveis — escala realista para crescimento de longo prazo
     const patentes = [
-      { id: 'recruta', nome: 'Recruta', cor: '#8B6914', icon: '🟤', min: 0, max: 499, desc: 'Acabou de chegar, aprendendo o básico' },
-      { id: 'agente', nome: 'Agente', cor: '#00d4ff', icon: '🔵', min: 500, max: 1999, desc: 'Conhece as pessoas e rotinas' },
-      { id: 'especialista', nome: 'Especialista', cor: '#00ff88', icon: '🟢', min: 2000, max: 4999, desc: 'Entende padrões, clientes e processos' },
-      { id: 'capitao', nome: 'Capitão', cor: '#ffd700', icon: '🟡', min: 5000, max: 9999, desc: 'Domina a operação, antecipa necessidades' },
-      { id: 'comandante', nome: 'Comandante', cor: '#ff8a00', icon: '🟠', min: 10000, max: 19999, desc: 'Conhecimento profundo de tudo e todos' },
-      { id: 'vingador', nome: 'Vingador', cor: '#a855f7', icon: '🟣', min: 20000, max: 34999, desc: 'Participa ativamente nas operações' },
-      { id: 'lider', nome: 'Líder dos Vingadores', cor: '#ec4899', icon: '💎', min: 35000, max: 49999, desc: 'Antecipa necessidades antes de surgirem' },
-      { id: 'conselheiro', nome: 'Conselheiro de Asgard', cor: '#06b6d4', icon: '⚡', min: 50000, max: 74999, desc: 'Sabedoria institucional da agência' },
-      { id: 'sentinela', nome: 'Sentinela Cósmico', cor: '#f59e0b', icon: '🌟', min: 75000, max: 99999, desc: 'Inteligência transcendente, visão total' },
-      { id: 'diretor', nome: 'Diretor da S.H.I.E.L.D.', cor: '#ff3b3b', icon: '🔴', min: 100000, max: Infinity, desc: 'Onisciência operacional — sabe tudo' },
+      { id: 'recruta', nome: 'Recruta', cor: '#8B6914', icon: '🟤', min: 0, max: 999, desc: 'Acabou de chegar, aprendendo o básico' },
+      { id: 'agente', nome: 'Agente', cor: '#00d4ff', icon: '🔵', min: 1000, max: 4999, desc: 'Conhece as pessoas e rotinas' },
+      { id: 'especialista', nome: 'Especialista', cor: '#00ff88', icon: '🟢', min: 5000, max: 14999, desc: 'Entende padrões, clientes e processos' },
+      { id: 'capitao', nome: 'Capitão', cor: '#ffd700', icon: '🟡', min: 15000, max: 39999, desc: 'Domina a operação, antecipa necessidades' },
+      { id: 'comandante', nome: 'Comandante', cor: '#ff8a00', icon: '🟠', min: 40000, max: 79999, desc: 'Conhecimento profundo de tudo e todos' },
+      { id: 'vingador', nome: 'Vingador', cor: '#a855f7', icon: '🟣', min: 80000, max: 149999, desc: 'Participa ativamente nas operações' },
+      { id: 'lider', nome: 'Líder dos Vingadores', cor: '#ec4899', icon: '💎', min: 150000, max: 249999, desc: 'Lidera com inteligência e visão estratégica' },
+      { id: 'conselheiro', nome: 'Conselheiro de Asgard', cor: '#06b6d4', icon: '⚡', min: 250000, max: 399999, desc: 'Sabedoria institucional da agência' },
+      { id: 'sentinela', nome: 'Sentinela Cósmico', cor: '#f59e0b', icon: '🌟', min: 400000, max: 699999, desc: 'Inteligência transcendente, visão total' },
+      { id: 'diretor', nome: 'Diretor da S.H.I.E.L.D.', cor: '#ff3b3b', icon: '🔴', min: 700000, max: Infinity, desc: 'Onisciência operacional — sabe tudo' },
     ];
 
     const patente = patentes.find(p => totalMem >= p.min && totalMem <= p.max) || patentes[0];
