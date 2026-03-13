@@ -1242,14 +1242,14 @@ async function executeDashboardTool(toolName, input) {
         [`%${input.grupo.toLowerCase()}%`]
       );
       if (groups.length > 0) {
-        where.push(`chat_jid = $${paramIdx++}`);
+        where.push(`chat_id = $${paramIdx++}`);
         params.push(groups[0].jid);
       } else {
         return { resultado: `Nenhum grupo encontrado com "${input.grupo}"` };
       }
     }
     if (input.contato) {
-      where.push(`LOWER(sender_name) LIKE $${paramIdx++}`);
+      where.push(`LOWER(push_name) LIKE $${paramIdx++}`);
       params.push(`%${input.contato.toLowerCase()}%`);
     }
     if (input.texto) {
@@ -1259,7 +1259,7 @@ async function executeDashboardTool(toolName, input) {
 
     const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
     const { rows } = await pool.query(
-      `SELECT sender_name, text, created_at, chat_jid FROM jarvis_messages ${whereClause} ORDER BY created_at DESC LIMIT $${paramIdx}`,
+      `SELECT push_name, text, created_at, chat_id FROM jarvis_messages ${whereClause} ORDER BY created_at DESC LIMIT $${paramIdx}`,
       [...params, limit]
     );
 
@@ -1267,8 +1267,8 @@ async function executeDashboardTool(toolName, input) {
 
     // Buscar nome do grupo se houver
     let groupName = '';
-    if (rows[0]?.chat_jid?.includes('@g.us')) {
-      const { rows: g } = await pool.query('SELECT name FROM jarvis_groups WHERE jid = $1', [rows[0].chat_jid]);
+    if (rows[0]?.chat_id?.includes('@g.us')) {
+      const { rows: g } = await pool.query('SELECT name FROM jarvis_groups WHERE jid = $1', [rows[0].chat_id]);
       groupName = g[0]?.name || '';
     }
 
@@ -1276,7 +1276,7 @@ async function executeDashboardTool(toolName, input) {
       grupo: groupName || undefined,
       total: rows.length,
       mensagens: rows.reverse().map(r => ({
-        de: r.sender_name,
+        de: r.push_name || 'Desconhecido',
         texto: r.text?.substring(0, 300),
         quando: r.created_at,
       })),
