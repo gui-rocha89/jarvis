@@ -1317,7 +1317,7 @@ const dashboardChatHistory = [];
 const DASHBOARD_EXTRA_TOOLS = [
   {
     name: 'buscar_mensagens',
-    description: 'Buscar mensagens do WhatsApp por grupo ou contato. Use sempre que perguntarem sobre conversas, mensagens, o que foi dito em algum grupo ou chat.',
+    description: 'Buscar mensagens REAIS do WhatsApp por grupo ou contato. OBRIGATÓRIO usar antes de falar sobre qualquer conversa, mensagem ou grupo. Os horários retornados já estão em fuso de Brasília (UTC-3) — NÃO converta. NUNCA invente mensagens ou horários sem usar esta tool primeiro.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1406,11 +1406,20 @@ async function executeDashboardTool(toolName, input) {
     return {
       grupo: groupName || undefined,
       total: rows.length,
-      mensagens: rows.reverse().map(r => ({
-        de: r.push_name || 'Desconhecido',
-        texto: r.text?.substring(0, 300),
-        quando: r.created_at,
-      })),
+      mensagens: rows.reverse().map(r => {
+        // Converter UTC → horário de Brasília (UTC-3) para evitar confusão
+        let quandoBR = r.created_at;
+        try {
+          const dt = new Date(r.created_at);
+          quandoBR = dt.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        } catch {}
+        return {
+          de: r.push_name || 'Desconhecido',
+          texto: r.text?.substring(0, 300),
+          quando: quandoBR,
+          _aviso: 'Horário já em fuso de Brasília (UTC-3). NÃO converta novamente.',
+        };
+      }),
     };
   }
 
