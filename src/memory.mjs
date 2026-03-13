@@ -42,8 +42,17 @@ export async function initMemory() {
   }
 }
 
-export async function extractFacts(text, senderName, chatId, isGroup) {
+export async function extractFacts(text, senderName, chatId, isGroup, groupContext = null) {
   try {
+    // Montar contexto do grupo para o extrator saber quem é cliente vs equipe
+    let groupHint = '';
+    if (isGroup && groupContext) {
+      groupHint = `\n\nCONTEXTO IMPORTANTE:
+- Grupo: "${groupContext.groupName}"
+- Tipo: ${groupContext.isClientGroup ? 'GRUPO DE CLIENTE (empresa externa)' : 'grupo interno da agência'}
+${groupContext.isClientGroup ? `- ${senderName} é CONTATO DO CLIENTE (NÃO é membro da equipe Stream Lab). Use categoria "client_profile" para fatos sobre esta pessoa, NUNCA "team_member".` : `- ${senderName} é da equipe interna Stream Lab.`}`;
+    }
+
     const response = await anthropic.messages.create({
       model: MEMORY_MODEL,
       max_tokens: 800,
@@ -59,11 +68,16 @@ export async function extractFacts(text, senderName, chatId, isGroup) {
 - Processos e fluxos de trabalho (como as coisas funcionam)
 - Padroes comportamentais (frequencia, horarios, preferencias de comunicacao)
 
+REGRA CRITICA DE CLASSIFICACAO:
+- Pessoas que falam em GRUPOS DE CLIENTES (empresas externas) sao CONTATOS DO CLIENTE → use "client_profile", NUNCA "team_member"
+- Apenas pessoas dos grupos internos da Stream Lab (Tarefas Diárias, Galáxias) sao "team_member"
+- Na duvida entre client_profile e team_member, considere o contexto do grupo${groupHint}
+
 Responda APENAS em JSON array. Se nao houver fatos relevantes, responda [].
 Cada fato: {"content": "fato claro e completo", "category": "preference|client|client_profile|decision|deadline|rule|style|team_member|process|pattern", "importance": 1-10}
 NUNCA extraia fatos triviais como cumprimentos, "ok", "bom dia", emojis isolados.
 Priorize fatos que ajudem a entender QUEM sao as pessoas, COMO trabalham, e O QUE preferem.`,
-      messages: [{ role: 'user', content: `Mensagem de ${senderName} no ${isGroup ? 'grupo' : 'privado'}:\n"${text}"` }],
+      messages: [{ role: 'user', content: `Mensagem de ${senderName} no ${isGroup ? `grupo "${groupContext?.groupName || 'desconhecido'}"` : 'privado'}:\n"${text}"` }],
     });
 
     const raw = response.content[0]?.text || '[]';
@@ -182,16 +196,17 @@ export async function getMemoryContext(senderJid, chatId, text) {
       }
     } catch {}
 
-    // Perfil da pessoa que enviou (se existir)
+    // Perfil da pessoa que enviou (se existir — pode ser team_member OU client_contact)
     try {
       const { rows: senderProfiles } = await pool.query(
-        `SELECT entity_name, profile FROM jarvis_profiles WHERE entity_id = $1 AND entity_type = 'team_member'`,
+        `SELECT entity_type, entity_name, profile FROM jarvis_profiles WHERE entity_id = $1 AND entity_type IN ('team_member', 'client_contact')`,
         [senderJid]
       );
       if (senderProfiles.length > 0) {
         const p = senderProfiles[0];
         const prof = typeof p.profile === 'string' ? JSON.parse(p.profile) : p.profile;
-        contexts.push(`\nPERFIL DE ${p.entity_name || 'esta pessoa'}:`);
+        const label = p.entity_type === 'client_contact' ? 'PERFIL DO CLIENTE' : 'PERFIL DE';
+        contexts.push(`\n${label} ${p.entity_name || 'esta pessoa'}:`);
         for (const [key, val] of Object.entries(prof)) {
           if (val && val !== null) contexts.push(`- ${key}: ${Array.isArray(val) ? val.join(', ') : val}`);
         }
@@ -213,11 +228,11 @@ export async function getMemoryContext(senderJid, chatId, text) {
   }
 }
 
-export async function processMemory(text, senderName, senderJid, chatId, isGroup) {
+export async function processMemory(text, senderName, senderJid, chatId, isGroup, groupContext = null) {
   if (!text || text.length < 15) return;
   try {
     console.log(`[MEMORY] Processando: "${text.substring(0, 40)}..." de ${senderName}`);
-    const facts = await extractFacts(text, senderName, chatId, isGroup);
+    const facts = await extractFacts(text, senderName, chatId, isGroup, groupContext);
     if (facts.length === 0) {
       console.log(`[MEMORY] Nenhum fato extraído de: "${text.substring(0, 40)}..."`);
       return;

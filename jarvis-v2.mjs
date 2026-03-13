@@ -187,8 +187,25 @@ async function handleIncomingMessage(m) {
   }
 
   // Aprendizado passivo em tempo real: aprende de TODAS as mensagens (grupos + privadas)
+  // Monta contexto do grupo para o extrator saber se é cliente ou equipe
+  let groupContext = null;
+  if (isGroup) {
+    const managedCheck = isManagedClientGroup(from);
+    const isInternalGroup = from === CONFIG.GROUP_TAREFAS || from === CONFIG.GROUP_GALAXIAS;
+    try {
+      const { rows: gRows } = await pool.query('SELECT name FROM jarvis_groups WHERE jid = $1', [from]);
+      groupContext = {
+        groupName: gRows[0]?.name || 'Desconhecido',
+        isClientGroup: !!managedCheck,
+        isInternalGroup,
+      };
+    } catch {
+      groupContext = { groupName: 'Desconhecido', isClientGroup: !!managedCheck, isInternalGroup };
+    }
+  }
+
   if (text.length >= 20 && !text.startsWith('[')) {
-    processMemory(text, pushName || 'Desconhecido', sender, from, isGroup).catch(err => {
+    processMemory(text, pushName || 'Desconhecido', sender, from, isGroup, groupContext).catch(err => {
       console.error('[MEMORY] Erro aprendizado passivo:', err.message);
     });
   }

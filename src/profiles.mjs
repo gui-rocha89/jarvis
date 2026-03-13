@@ -16,7 +16,17 @@ export async function synthesizeProfile(entityType, entityId, entityName = null)
     // Buscar memórias relacionadas
     let memories = [];
 
-    if (entityType === 'client' || entityType === 'group') {
+    if (entityType === 'client_contact') {
+      // Contato de cliente — buscar memórias da pessoa + memórias do grupo de cliente
+      const { rows } = await pool.query(
+        `SELECT content, category, importance FROM jarvis_memories
+         WHERE (scope = 'user' AND scope_id = $1)
+            OR (content ILIKE '%' || $2 || '%' AND category IN ('client', 'client_profile', 'decision', 'preference', 'style'))
+         ORDER BY importance DESC, updated_at DESC LIMIT 50`,
+        [entityId, entityName || entityId]
+      );
+      memories = rows;
+    } else if (entityType === 'client' || entityType === 'group') {
       // Buscar memórias do escopo chat (grupo do cliente)
       const { rows } = await pool.query(
         `SELECT content, category, importance FROM jarvis_memories
@@ -53,6 +63,19 @@ export async function synthesizeProfile(entityType, entityId, entityName = null)
     const memoriesText = memories.map(m => `[${m.category}] ${m.content}`).join('\n');
 
     const prompts = {
+      client_contact: `Analise as memorias abaixo sobre um CONTATO DE CLIENTE (pessoa de fora que é cliente da agência Stream Lab) e sintetize um perfil JSON:
+{
+  "nome": "nome da pessoa",
+  "empresa": "empresa/marca que representa",
+  "cargo_funcao": "cargo ou funcao na empresa do cliente",
+  "como_se_comunica": "estilo de comunicacao (direto, detalhista, informal, etc)",
+  "demandas_frequentes": ["tipos de pedidos que costuma fazer"],
+  "preferencias": "preferencias de conteudo, formato, tom",
+  "pontos_atencao": "coisas que irritam, exigencias, cuidados",
+  "horario_ativo": "quando costuma mandar mensagens",
+  "observacoes": "outras observacoes importantes"
+}
+IMPORTANTE: Esta pessoa NAO é da equipe Stream Lab. É um CLIENTE externo.`,
       client: `Analise as memorias abaixo sobre um cliente/grupo e sintetize um perfil JSON:
 {
   "nome": "nome do cliente/empresa",
@@ -152,7 +175,54 @@ export async function listProfiles(entityType = null) {
 }
 
 /**
+ * Determina se um JID pertence a um contato de cliente (não da equipe)
+ * Cruza dados: em quais grupos essa pessoa fala? se fala em grupo de cliente → é contato de cliente
+ */
+async function isClientContact(userScopeId) {
+  try {
+    // Buscar mensagens desse usuário e ver em quais grupos ele aparece
+    const { rows } = await pool.query(
+      `SELECT DISTINCT chat_id FROM jarvis_messages
+       WHERE sender = $1 AND chat_id LIKE '%@g.us'
+       LIMIT 20`,
+      [userScopeId]
+    );
+
+    if (rows.length === 0) return false;
+
+    // Verificar se algum desses grupos é de cliente gerenciado
+    const { rows: managed } = await pool.query(
+      `SELECT value FROM jarvis_config WHERE key = 'managed_clients'`
+    );
+
+    if (managed.length === 0) return false;
+
+    const clients = typeof managed[0].value === 'string'
+      ? JSON.parse(managed[0].value) : managed[0].value;
+    const clientJids = new Set(Object.values(clients).filter(c => c.active).map(c => c.groupJid));
+
+    // Também considerar perfis de grupo com tipo "cliente"
+    const { rows: clientGroups } = await pool.query(
+      `SELECT entity_id FROM jarvis_profiles
+       WHERE entity_type = 'group' AND profile::text ILIKE '%"tipo"%client%'`
+    );
+    for (const cg of clientGroups) clientJids.add(cg.entity_id);
+
+    // Se o usuário fala em algum grupo de cliente → é contato de cliente
+    for (const r of rows) {
+      if (clientJids.has(r.chat_id)) return true;
+    }
+
+    return false;
+  } catch (err) {
+    console.error('[PROFILES] Erro em isClientContact:', err.message);
+    return false;
+  }
+}
+
+/**
  * Sincroniza perfis: identifica entidades e gera/atualiza perfis
+ * Cruza dados de Asana, WhatsApp e grupos para classificar corretamente
  */
 export async function syncProfiles() {
   const results = { synced: 0, errors: 0, entities: [] };
@@ -176,7 +246,7 @@ export async function syncProfiles() {
       await new Promise(r => setTimeout(r, 500)); // Rate limit
     }
 
-    // 2. Perfis de usuários (contatos com mais memórias)
+    // 2. Perfis de usuários — CRUZAR com grupos para classificar cliente vs equipe
     const { rows: users } = await pool.query(`
       SELECT scope_id, COUNT(*) as cnt FROM jarvis_memories
       WHERE scope = 'user' AND scope_id IS NOT NULL
@@ -187,8 +257,13 @@ export async function syncProfiles() {
     for (const u of users) {
       const { rows: cInfo } = await pool.query('SELECT push_name FROM jarvis_contacts WHERE jid = $1', [u.scope_id]).catch(() => ({ rows: [] }));
       const name = cInfo[0]?.push_name || u.scope_id;
-      const profile = await synthesizeProfile('team_member', u.scope_id, name);
-      if (profile) { results.synced++; results.entities.push({ type: 'team_member', name }); }
+
+      // CRUZAMENTO: verificar se essa pessoa é contato de cliente ou equipe
+      const isClient = await isClientContact(u.scope_id);
+      const entityType = isClient ? 'client_contact' : 'team_member';
+
+      const profile = await synthesizeProfile(entityType, u.scope_id, name);
+      if (profile) { results.synced++; results.entities.push({ type: entityType, name }); }
       else results.errors++;
       await new Promise(r => setTimeout(r, 500));
     }
