@@ -19,13 +19,16 @@ Jarvis funciona como um **gerente de projetos virtual 24/7** — recebe mensagen
 
 ### Destaques
 
+- **Agente Proativo** — Opera autonomamente em grupos de clientes autorizados: detecta demandas, cria tasks no Asana, notifica a equipe e responde o cliente profissionalmente
 - **4 Agentes Especializados** — Roteamento automático por intenção (Master, Creative, Manager, Researcher)
 - **Memória Persistente** — Extração e consulta de fatos com 3 escopos (pessoas, conversas, operacional)
 - **Aprendizado Passivo** — Aprende de TODA mensagem recebida, mesmo quando não responde
+- **Inteligência Ativa** — Quando não sabe algo, pergunta pra equipe, aprende com a resposta e melhora
 - **Voz Premium** — TTS via ElevenLabs + STT via Whisper, configurável pelo dashboard
 - **Integrações Nativas** — Asana (gestão de projetos) + Google Calendar (captações)
 - **Dashboard Seguro** — SPA com autenticação 2FA via WhatsApp, score de inteligência e gestão de memórias
 - **Estudo Exaustivo** — Ingestão completa do Asana (projetos, tarefas, comentários) para base de conhecimento
+- **Homework via WhatsApp** — Instruções dadas pelo dono via chat são salvas e têm prioridade máxima
 
 ---
 
@@ -98,7 +101,7 @@ src/
 dashboard/
 └── index.html                  # SPA do dashboard (Tailwind, Chart.js)
 tests/
-└── unit.test.mjs               # Suite de testes (25 casos + scan de credenciais)
+└── unit.test.mjs               # Suite de testes (35 casos + scan de credenciais)
 .github/workflows/
 ├── ci.yml                      # CI — lint + testes
 └── deploy.yml                  # CD — rsync + PM2 restart via SSH
@@ -171,6 +174,19 @@ O Jarvis classifica a intenção de cada mensagem e roteia para o agente especia
 | **Creative** | Copy, legendas, roteiros, CTAs | copy, arte, conteúdo, post, legenda... |
 | **Manager** | Gestão de projetos, prazos, Asana | tarefa, prazo, status, cobrança... |
 | **Researcher** | Pesquisa, dados, tendências | pesquisar, dados, benchmark, análise... |
+| **Proativo** | Operação autônoma em grupos de clientes | Ativado por autorização do dono |
+
+### Agente Proativo
+
+Quando autorizado via WhatsApp ("autorizo você a operar no cliente X"), o Jarvis monitora o grupo do cliente e age autonomamente:
+
+- **Detecta demandas** — Cruza dados históricos do Asana para entender o fluxo de cada cliente
+- **Responde profissionalmente** — Tom 100% profissional, confirma recebimento, pergunta prazo
+- **Cria tasks no Asana** — Projeto correto, responsável correto, baseado no que já aprendeu
+- **Notifica a equipe** — Avisa no grupo interno sobre novas demandas
+- **Pergunta quando não sabe** — Em vez de travar, pergunta pra equipe e aprende com a resposta
+- **Consolida mensagens** — Buffer de 15s para clientes que mandam várias msgs rápidas
+- **Rate limit** — 30s entre respostas no mesmo grupo (evita spam)
 
 ---
 
@@ -279,11 +295,13 @@ git push origin master
 npm test
 ```
 
-**25 casos de teste cobrindo:**
+**35 casos de teste cobrindo:**
 - Detecção de tipos de mídia (`getMediaType`)
 - Extração de remetente em DMs e grupos (`extractSender`)
 - Validação de respostas do Jarvis (`isValidResponse`)
 - Roteamento de agentes por intenção (`classifyIntent`)
+- Managed Clients — ativação/desativação de clientes gerenciados (`isManagedClientGroup`)
+- Agente Proativo — exports e callback de envio (`handleManagedClientMessage`, `registerSendFunction`)
 - Documentação do `.env.example`
 - **Scan de credenciais** — varre todos os `.mjs` por chaves/tokens hardcoded
 

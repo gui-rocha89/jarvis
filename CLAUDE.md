@@ -1,7 +1,7 @@
 # CLAUDE.md — Jarvis 2.0 (Stream Lab)
 
 > Documento de referência técnica para desenvolvimento assistido por IA.
-> Última atualização: 2026-03-12
+> Última atualização: 2026-03-13
 
 ---
 
@@ -33,7 +33,7 @@ src/
 dashboard/
 └── index.html                  # SPA do dashboard (Tailwind, Chart.js, auto-refresh)
 tests/
-└── unit.test.mjs               # Suite de testes (25 casos + scan de credenciais)
+└── unit.test.mjs               # Suite de testes (35 casos + scan de credenciais)
 .github/workflows/
 ├── ci.yml                      # CI — Node 20, npm ci, npm test
 └── deploy.yml                  # CD — rsync para VPS via SSH (auto após CI)
@@ -80,17 +80,26 @@ auth_session/                   # Sessão WhatsApp (NÃO VERSIONADO)
 - Conexão WhatsApp via Baileys (multi-device, auto-reconnect)
 - Handler de mensagens (texto, áudio, captions de imagem/vídeo)
 - Aprendizado passivo em tempo real (processMemory em TODAS as mensagens ≥20 chars)
+- **Homework via WhatsApp** — detecta instruções/correções do dono e salva como homework (prioridade máxima)
+- **Autorização de clientes** — detecta "autorizo você a operar no cliente X" via regex, salva no banco
+- **Agente Proativo** — intercepta mensagens de grupos gerenciados antes do fluxo normal, delega para `handleManagedClientMessage()`
+- `registerSendFunction(sendText)` — registra callback após criar o socket para tools proativas
+- `loadManagedClients(pool)` — carrega clientes gerenciados no boot
 - Express API com autenticação dupla (x-api-key + JWT)
-- Cron jobs: syncProfiles a cada 6h
+- Cron jobs: syncProfiles a cada 6h, estudo Asana incremental 5x/dia (seg-sex)
 - Sistema sentByBot para evitar auto-resposta
 - Sistema de patentes (10 níveis: Recruta → Diretor da S.H.I.E.L.D.)
 - Score de inteligência (6 eixos: empresa, equipe, clientes, projetos, comunicação, processos)
 
 ### src/config.mjs
-**Exporta:** `CONFIG`, `TEAM_ASANA`, `ASANA_PROJECTS`, `ASANA_SECTIONS`, `PUBLIC_ASANA_PROJECTS`, `JARVIS_ALLOWED_GROUPS`, `AUDIO_ALLOWED`, `teamPhones`, `teamWhatsApp`
+**Exporta:** `CONFIG`, `TEAM_ASANA`, `ASANA_PROJECTS`, `ASANA_SECTIONS`, `PUBLIC_ASANA_PROJECTS`, `JARVIS_ALLOWED_GROUPS`, `AUDIO_ALLOWED`, `teamPhones`, `teamWhatsApp`, `managedClients`, `loadManagedClients`, `saveManagedClients`, `isManagedClientGroup`
 
 - Todas as configurações centralizadas via `process.env`
 - Parsing de JSON para maps de equipe/projetos/seções do Asana
+- **Managed Clients:** Map persistido no `jarvis_config` (key: `managed_clients`) com clientes autorizados para operação proativa
+  - `loadManagedClients(pool)` — carrega do banco no boot
+  - `saveManagedClients(pool)` — persiste após autorizar/revogar
+  - `isManagedClientGroup(jid)` — retorna objeto do cliente se ativo, senão null
 
 ### src/database.mjs
 **Exporta:** `pool`, `initDB`, `storeMessage`, `getRecentMessages`, `getContactInfo`, `getGroupInfo`, `upsertContact`, `upsertGroup`, `getMessageCount`
@@ -126,13 +135,19 @@ auth_session/                   # Sessão WhatsApp (NÃO VERSIONADO)
 - `processMemory()` — roda em background em TODA mensagem recebida (aprendizado passivo)
 - `getMemoryContext()` — 6 camadas (user, chat, agent, client profile, sender profile, homework)
 
-### src/brain.mjs (Cérebro + Agent Teams)
-**Exporta:** `shouldJarvisRespond`, `isValidResponse`, `generateResponse`, `markConversationActive`, `isConversationActive`, `findTeamJid`, `extractMentionsFromText`, `generateDailyReport`
+### src/brain.mjs (Cérebro + Agent Teams + Agente Proativo)
+**Exporta:** `shouldJarvisRespond`, `isValidResponse`, `generateResponse`, `markConversationActive`, `isConversationActive`, `findTeamJid`, `extractMentionsFromText`, `generateDailyReport`, `handleManagedClientMessage`
 
 - Classifica intenção e roteia para agente especializado (master/creative/manager/researcher)
 - Modo conversa: janela de 3 minutos ativa após resposta
 - Consolidação de mensagens consecutivas do mesmo remetente
 - Detecção de @mentions no texto da resposta
+- **Agente Proativo:** `handleManagedClientMessage()` processa mensagens de grupos de clientes gerenciados
+  - Busca contexto completo: memórias, perfis, homework, histórico do chat
+  - Deixa o Claude decidir autonomamente (sem regras rígidas) usando tools disponíveis
+  - Consolida mensagens rápidas (buffer 15s) + rate limit (30s entre respostas)
+  - Quando não sabe, pergunta pra equipe no grupo interno e aprende com a resposta
+  - Em caso de erro → silêncio (nunca mostra erro para o cliente)
 
 ### src/agents/master.mjs
 **Exporta:** `classifyIntent`, `MASTER_SYSTEM_PROMPT`, `AGENT_PROMPTS`
@@ -173,9 +188,12 @@ auth_session/                   # Sessão WhatsApp (NÃO VERSIONADO)
 - Somente leitura (GET) — ZERO escrita no Asana
 
 ### src/skills/loader.mjs
-**Exporta:** `asanaRequest`, `asanaCreateTask`, `asanaAddToProject`, `asanaAddComment`, `getOverdueTasks`, `getGCalClient`, `createGoogleCalendarEvent`, `JARVIS_TOOLS`, `executeJarvisTool`
+**Exporta:** `asanaRequest`, `asanaCreateTask`, `asanaAddToProject`, `asanaAddComment`, `getOverdueTasks`, `getGCalClient`, `createGoogleCalendarEvent`, `JARVIS_TOOLS`, `executeJarvisTool`, `registerSendFunction`, `getSendFunction`
 
-- Tools disponíveis para o Claude: `agendar_captacao`, `consultar_tarefas`, `lembrar`
+- Tools disponíveis para o Claude: `agendar_captacao`, `consultar_tarefas`, `lembrar`, `criar_demanda_cliente`, `enviar_mensagem_grupo`
+- `criar_demanda_cliente` — cria task no Asana (Cabine de Comando) com prefixo [CLIENTE], atribui responsável
+- `enviar_mensagem_grupo` — envia mensagem no WhatsApp (resolve nome → JID: "tarefas", "galaxias", ou nome do cliente)
+- `registerSendFunction(fn)` — registra callback de envio (o `jarvis-v2.mjs` registra `sendText` após criar o socket)
 - Integração Asana: GET/POST com Bearer token do .env
 - Integração Google Calendar: JWT auth com service account
 
@@ -241,6 +259,20 @@ Mensagem recebida (WhatsApp)
   ├─ Aprendizado Passivo (SEMPRE, antes de decidir se responde):
   │   └─ processMemory() → extractFacts (Haiku) → storeFacts (user + chat)
   │
+  ├─ Homework (se mensagem do Gui com padrão de instrução):
+  │   └─ Salva na tabela homework → carregada como "PRIORIDADE MAXIMA" no contexto
+  │
+  ├─ Autorização de Cliente (se Gui no PV + regex de autorização/revogação):
+  │   └─ Adiciona/remove do managedClients → salva no banco → confirma pro Gui
+  │
+  ├─ AGENTE PROATIVO (se grupo + managedClient + sender não é equipe):
+  │   └─ handleManagedClientMessage():
+  │       1. Consolida mensagens rápidas (buffer 15s)
+  │       2. Busca contexto completo (memórias, perfis, homework)
+  │       3. Claude decide autonomamente com tools disponíveis
+  │       4. Responde ao cliente / cria task / notifica equipe / silêncio
+  │       → return (NÃO continua fluxo normal)
+  │
   ├─ shouldJarvisRespond() — mencionou? reply? modo conversa? grupo permitido?
   │   └─ Se NÃO → para aqui (mas já aprendeu)
   │
@@ -250,7 +282,8 @@ Mensagem recebida (WhatsApp)
       3. getMemoryContext() — 6 camadas de contexto
       4. classifyIntent() → master/creative/manager/researcher
       5. System prompt + contexto + agente especializado
-      6. Claude API com tools (agendar_captacao, consultar_tarefas, lembrar)
+      6. Claude API com tools (agendar_captacao, consultar_tarefas, lembrar,
+         criar_demanda_cliente, enviar_mensagem_grupo)
       7. Se tool_use → executa → follow-up com resultado
       8. extractMentionsFromText()
       → Envia resposta no WhatsApp
@@ -327,11 +360,14 @@ Ambos com health check habilitado e bind apenas em localhost.
 npm test   # Roda suite completa
 ```
 
-**25 casos de teste:**
+**35 casos de teste:**
 - `getMediaType()` — detecção de tipos de mídia (audio, image, video, etc.)
 - `extractSender()` — extração de JID em DMs e grupos
 - `isValidResponse()` — validação de respostas (rejeita vazias, só pontuação, <3 letras)
 - `classifyIntent()` — roteamento para agente correto por keywords
+- `isManagedClientGroup()` — ativação/desativação de clientes gerenciados
+- `handleManagedClientMessage()` — export e existência do agente proativo
+- `registerSendFunction()` — registro e recuperação de callback de envio
 - `.env.example` — valida que todas as variáveis obrigatórias estão documentadas
 - **Scan de credenciais** — varre todos os `.mjs` por padrões de chaves/tokens hardcoded
 
@@ -360,10 +396,12 @@ Consulte `.env.example` para a lista completa. Variáveis críticas:
 
 ## Evolução Futura
 
+- [x] ~~Rotinas proativas~~ — Agente Proativo implementado (opera em grupos de clientes autorizados)
+- [x] ~~Novos tools~~ — `criar_demanda_cliente`, `enviar_mensagem_grupo` implementados
 - [ ] pgvector para busca semântica de memórias
 - [ ] Webhooks Asana para acompanhamento em tempo real
-- [ ] Rotinas proativas (verificar tarefas atrasadas, avisar no WhatsApp)
-- [ ] Novos tools: criar comentários, mover tarefas no Asana
+- [ ] Novos tools: mover tarefas entre seções no Asana
 - [ ] Ingestão de conteúdo do Google Drive (planners antigos)
 - [ ] MCP server para integração com ferramentas externas
 - [ ] Agente de vendas para atendimento automático
+- [ ] Relatório diário automático (cron + envio no grupo)
