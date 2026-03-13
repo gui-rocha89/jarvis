@@ -218,7 +218,7 @@ async function handleIncomingMessage(m) {
   // Auto-detectar instruções/correções do Gui (WhatsApp) e salvar como homework
   if (sender === CONFIG.GUI_JID && text.length >= 15) {
     const lower = text.toLowerCase();
-    if (/a partir de agora|lembr[ea]|regra|nunca mais|sempre que|aprenda|importante|n[aã]o (fa[cç]a|chame|use|mande|envie|fale)|pode me chamar|me chame de|entendeu\??|compreende\??|entendi[ds]?[ot]?/i.test(lower)) {
+    if (/a partir de agora|lembr[ea]|regra|nunca mais|sempre que|aprenda|importante|n[aã]o (fa[cç]a|chame|use|mande|envie|fale)|pode me chamar|me chame de|entendeu\??|compreende\??|entendi[ds]?[ot]?|quero que voc[eê]|preciso que|fa[cç]a isso|resolv[ea]|oper[ea]|autoriz|cuide|monitore|fique de olho|preste aten[cç][aã]o|tom[ea] conta|assuma|gerencie|acompanhe/i.test(lower)) {
       pool.query(
         'INSERT INTO homework (type, content, source) VALUES ($1, $2, $3)',
         ['whatsapp_instruction', text, 'whatsapp_gui']
@@ -1500,68 +1500,80 @@ SUAS CAPACIDADES REAIS — USE SEMPRE:
 - Você pode SALVAR informações na memória — USE lembrar
 - Seu estudo do Asana roda 5x por dia (08h/11h/13:30/15h/17h)
 
-REGRA DE OURO: Quando perguntarem sobre mensagens, conversas ou grupos — USE a tool buscar_mensagens PRIMEIRO, depois responda com dados reais.
-Quando perguntarem sobre pessoas, clientes, regras ou processos — USE buscar_memorias.
-Quando mandarem AGIR (autorizar cliente, enviar mensagem, criar task) — USE as tools de ação IMEDIATAMENTE.
-NUNCA diga "não tenho acesso" ou "não consigo fazer isso" — você TEM e PODE. Use as ferramentas.
+REGRAS ABSOLUTAS DO DASHBOARD:
+1. NUNCA INVENTE informações — se não sabe, USE as tools para buscar dados REAIS
+2. NUNCA fabrique horários, datas ou conteúdo de mensagens — USE buscar_mensagens para ver o que foi realmente dito
+3. Quando perguntarem sobre mensagens, conversas ou grupos — USE buscar_mensagens PRIMEIRO, depois responda com dados reais
+4. Quando perguntarem sobre pessoas, clientes, regras ou processos — USE buscar_memorias PRIMEIRO
+5. Quando mandarem AGIR (autorizar cliente, enviar mensagem, criar task) — USE as tools de ação IMEDIATAMENTE
+6. NUNCA diga "não tenho acesso" ou "não consigo" — você TEM e PODE. Use as ferramentas
+7. Se não encontrar dados nas tools, diga "Não encontrei registros sobre isso" — NUNCA invente uma narrativa
+
+ANTI-ALUCINAÇÃO: Você é PROIBIDO de inventar conteúdo de mensagens, horários ou eventos.
+Se alguém perguntar "o que o Doug mandou no grupo Minner?" — você DEVE usar buscar_mensagens primeiro.
+Se a tool não retornar dados, diga honestamente que não encontrou. NUNCA fabrique uma resposta com dados fictícios.
 ` + memoryCtx;
 
-    const response = await anthropic.messages.create({
-      model: CONFIG.AI_MODEL, max_tokens: 1500,
-      system: dashboardSystemPrompt,
-      messages: msgs,
-      tools: DASHBOARD_TOOLS,
-    });
-
-    // Processar resposta (com suporte a tools — até 3 rounds)
+    // Agent Loop real (mesmo padrão do WhatsApp) — até 10 iterações com Extended Thinking
+    const MAX_DASHBOARD_ITERATIONS = 10;
+    let currentMessages = [...msgs];
     let finalText = '';
-    let currentResponse = response;
-    let currentMsgs = [...msgs];
+    let iterations = 0;
 
-    for (let round = 0; round < 3; round++) {
+    while (iterations < MAX_DASHBOARD_ITERATIONS) {
+      iterations++;
+
+      const apiParams = {
+        model: CONFIG.AI_MODEL,
+        max_tokens: 8000,
+        system: dashboardSystemPrompt,
+        messages: currentMessages,
+        tools: DASHBOARD_TOOLS,
+        thinking: { type: 'enabled', budget_tokens: 4096 },
+      };
+
+      const response = await anthropic.messages.create(apiParams, {
+        headers: { 'anthropic-beta': 'interleaved-thinking-2025-05-14' },
+      });
+
+      let hasToolUse = false;
       const toolResults = [];
+      const assistantContent = [];
 
-      for (const block of currentResponse.content) {
+      for (const block of response.content) {
+        assistantContent.push(block);
         if (block.type === 'text') {
           finalText += block.text;
         } else if (block.type === 'tool_use') {
-          console.log(`[DASHBOARD-CHAT] Round ${round + 1} — tool: ${block.name}`);
+          hasToolUse = true;
+          console.log(`[DASHBOARD-CHAT] Iteração ${iterations} — tool: ${block.name}`, JSON.stringify(block.input).substring(0, 150));
           try {
             const result = await executeDashboardTool(block.name, block.input);
-            console.log(`[DASHBOARD-CHAT] Tool ${block.name} resultado:`, JSON.stringify(result).substring(0, 200));
+            console.log(`[DASHBOARD-CHAT] Tool ${block.name} OK:`, JSON.stringify(result).substring(0, 200));
             toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
           } catch (toolErr) {
             console.error(`[DASHBOARD-CHAT] Tool ${block.name} erro:`, toolErr.message);
-            toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify({ erro: toolErr.message }) });
+            toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify({ erro: toolErr.message }), is_error: true });
           }
         }
       }
 
-      // Se não houve tool_use, terminamos
-      if (toolResults.length === 0 || currentResponse.stop_reason !== 'tool_use') break;
+      // Se não houve tool_use ou stop_reason não é tool_use, terminamos
+      if (!hasToolUse || response.stop_reason !== 'tool_use') break;
 
-      // Follow-up com resultados das tools
-      currentMsgs = [...currentMsgs, { role: 'assistant', content: currentResponse.content }, { role: 'user', content: toolResults }];
-      finalText = ''; // Reset — a resposta final vem do follow-up
-
-      currentResponse = await anthropic.messages.create({
-        model: CONFIG.AI_MODEL, max_tokens: 1500,
-        system: dashboardSystemPrompt,
-        messages: currentMsgs,
-        tools: DASHBOARD_TOOLS,
-      });
+      // Continua o loop com resultados das tools
+      currentMessages = [...currentMessages, { role: 'assistant', content: assistantContent }, { role: 'user', content: toolResults }];
+      finalText = ''; // Reset — a resposta final vem da última iteração
     }
 
-    // Extrair texto final do último response se ainda não temos
-    if (!finalText) {
-      finalText = currentResponse.content.filter(b => b.type === 'text').map(b => b.text).join('');
-    }
+    if (iterations > 1) console.log(`[DASHBOARD-CHAT] Agent Loop concluído em ${iterations} iterações`);
+
     if (!finalText) finalText = 'Desculpe, não consegui processar a consulta. Tente reformular a pergunta.';
     dashboardChatHistory.push({ role: 'assistant', content: finalText });
 
-    // Auto-salvar instruções como homework (regex ampliado)
+    // Auto-salvar instruções como homework (regex ampliado — captura comandos operacionais)
     const lower = message.toLowerCase();
-    if (/a partir de agora|lembr[ea]|regra|nunca mais|sempre que|aprenda|importante|n[aã]o (fa[cç]a|chame|use|mande|envie|fale)|pode me chamar|me chame de|entendeu\??|compreende\??|entendi[ds]?[ot]?/i.test(lower)) {
+    if (/a partir de agora|lembr[ea]|regra|nunca mais|sempre que|aprenda|importante|n[aã]o (fa[cç]a|chame|use|mande|envie|fale)|pode me chamar|me chame de|entendeu\??|compreende\??|entendi[ds]?[ot]?|quero que voc[eê]|preciso que|fa[cç]a isso|resolv[ea]|oper[ea]|autoriz|cuide|monitore|fique de olho|preste aten[cç][aã]o|tom[ea] conta|assuma|gerencie|acompanhe/i.test(lower)) {
       await pool.query('INSERT INTO homework (type, content, source) VALUES ($1, $2, $3)', ['chat_instruction', message, 'dashboard_chat']).catch(() => {});
       console.log(`[HOMEWORK] Instrução do dashboard salva: "${message.substring(0, 60)}..."`);
     }
