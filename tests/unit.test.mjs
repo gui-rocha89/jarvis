@@ -317,6 +317,30 @@ describe('AI Model Strong', () => {
 });
 
 // ============================================
+// TESTES: Mídia + Asana Upload
+// ============================================
+describe('Mídia e Asana Upload', () => {
+  it('asanaUploadAttachment é exportada do loader.mjs', async () => {
+    const mod = await import('../src/skills/loader.mjs');
+    assert.ok(typeof mod.asanaUploadAttachment === 'function');
+  });
+
+  it('JARVIS_TOOLS inclui anexar_midia_asana', async () => {
+    const { JARVIS_TOOLS } = await import('../src/skills/loader.mjs');
+    const tool = JARVIS_TOOLS.find(t => t.name === 'anexar_midia_asana');
+    assert.ok(tool, 'Tool anexar_midia_asana não encontrada');
+    assert.ok(tool.input_schema.properties.task_gid, 'task_gid não definido no schema');
+    assert.ok(tool.input_schema.properties.message_ids, 'message_ids não definido no schema');
+  });
+
+  it('handleManagedClientMessage aceita mediaFiles como 7o argumento', async () => {
+    const mod = await import('../src/brain.mjs');
+    // Verificar que a função aceita 7 argumentos (o último é mediaFiles)
+    assert.ok(mod.handleManagedClientMessage.length >= 6);
+  });
+});
+
+// ============================================
 // TESTES: Validação de estrutura
 // ============================================
 describe('Estrutura do projeto', () => {

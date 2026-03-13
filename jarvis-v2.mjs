@@ -12,7 +12,7 @@ import makeWASocket, {
 import express from 'express';
 import cron from 'node-cron';
 import { randomUUID, randomInt } from 'crypto';
-import { readFile, writeFile } from 'fs/promises';
+import { readFile, writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
@@ -288,7 +288,30 @@ async function handleIncomingMessage(m) {
 
       if (!isTeamMember) {
         console.log(`[PROACTIVE] Mensagem de cliente detectada: ${pushName} em ${managedClient.groupName}`);
-        const result = await handleManagedClientMessage(text, sender, pushName, from, managedClient, sendText);
+
+        // Download de mídia (imagens, vídeos, documentos) se presente
+        const mediaFiles = [];
+        const mediaType = getMediaType(m);
+        const hasNonAudioMedia = mediaType && mediaType !== 'audio' && mediaType !== 'sticker' && mediaType !== 'contact' && mediaType !== 'location';
+        if (hasNonAudioMedia) {
+          try {
+            const buffer = await downloadMediaMessage(m, 'buffer', {});
+            const mime = m.message?.imageMessage?.mimetype || m.message?.videoMessage?.mimetype || m.message?.documentMessage?.mimetype || '';
+            const extMap = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'video/mp4': 'mp4', 'application/pdf': 'pdf' };
+            const ext = extMap[mime] || mime.split('/')[1] || 'bin';
+            const fileName = m.message?.documentMessage?.fileName || `${m.key.id}.${ext}`;
+            const groupDir = path.join(__dirname, 'media_files', from.split('@')[0]);
+            await mkdir(groupDir, { recursive: true });
+            const filePath = path.join(groupDir, fileName);
+            await writeFile(filePath, buffer);
+            mediaFiles.push({ path: filePath, fileName, type: mediaType, size: buffer.length, messageId: m.key.id });
+            console.log(`[PROACTIVE] Mídia salva: ${filePath} (${Math.round(buffer.length / 1024)}KB)`);
+          } catch (mediaErr) {
+            console.error('[PROACTIVE] Erro ao baixar mídia:', mediaErr.message);
+          }
+        }
+
+        const result = await handleManagedClientMessage(text, sender, pushName, from, managedClient, sendText, mediaFiles);
         if (result?.text) {
           await sendText(from, result.text);
           // Salvar resposta do Jarvis

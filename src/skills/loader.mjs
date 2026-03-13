@@ -4,8 +4,11 @@
 // ============================================
 import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, GCAL_KEY_PATH, GCAL_CALENDAR_ID, managedClients, saveManagedClients, teamWhatsApp } from '../config.mjs';
 import { pool } from '../database.mjs';
-import { readFile } from 'fs/promises';
+import { readFile, readdir } from 'fs/promises';
+import { createReadStream } from 'fs';
 import { google } from 'googleapis';
+import FormData from 'form-data';
+import path from 'path';
 
 // Callbacks para enviar mensagens (registrados pelo jarvis-v2.mjs após criar o socket)
 let _sendTextFn = null;
@@ -76,6 +79,34 @@ export async function asanaAddComment(taskGid, text) {
     });
     return response.ok;
   } catch { return false; }
+}
+
+export async function asanaUploadAttachment(taskGid, filePath, fileName) {
+  try {
+    const form = new FormData();
+    form.append('parent', taskGid);
+    form.append('file', createReadStream(filePath), { filename: fileName });
+
+    const resp = await fetch('https://app.asana.com/api/1.0/attachments', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${CONFIG.ASANA_PAT}`,
+        ...form.getHeaders(),
+      },
+      body: form,
+    });
+
+    if (!resp.ok) {
+      const errBody = await resp.text().catch(() => '');
+      throw new Error(`Asana attachment upload failed: ${resp.status} ${errBody.substring(0, 200)}`);
+    }
+    const data = await resp.json();
+    console.log(`[ASANA] Anexo uploaded: ${fileName} → task ${taskGid}`);
+    return { success: true, gid: data.data.gid, name: data.data.name };
+  } catch (err) {
+    console.error('[ASANA] Erro upload attachment:', err.message);
+    return { success: false, error: err.message };
+  }
 }
 
 export async function getOverdueTasks() {
@@ -243,6 +274,22 @@ export const JARVIS_TOOLS = [
         cliente: { type: 'string', description: 'Nome do cliente ou grupo a desativar' },
       },
       required: ['cliente'],
+    },
+  },
+  {
+    name: 'anexar_midia_asana',
+    description: 'Anexar arquivos de midia (imagens, videos, documentos) recebidos do WhatsApp a uma task do Asana. Use SEMPRE que o cliente enviar material (fotos, videos, PDFs) junto com uma demanda e voce criar a task. Os arquivos ja estao baixados — basta informar os message_ids.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        task_gid: { type: 'string', description: 'GID da task no Asana onde anexar os arquivos' },
+        message_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Lista de message_ids do WhatsApp cujas midias devem ser anexadas (vem no contexto da mensagem como [msg_id: xxx])',
+        },
+      },
+      required: ['task_gid', 'message_ids'],
     },
   },
 ];
@@ -475,6 +522,43 @@ export async function executeJarvisTool(toolName, input, context = {}) {
     }
 
     return { error: `Cliente "${input.cliente}" nao encontrado nos gerenciados` };
+  }
+
+  if (toolName === 'anexar_midia_asana') {
+    const taskGid = input.task_gid;
+    const messageIds = input.message_ids || [];
+    if (!taskGid) return { error: 'task_gid é obrigatório' };
+    if (messageIds.length === 0) return { error: 'Nenhum message_id informado' };
+
+    const results = [];
+    const mediaBaseDir = path.join(process.cwd(), 'media_files');
+
+    for (const msgId of messageIds) {
+      // Buscar arquivo em todos os subdiretórios de media_files/
+      let found = false;
+      try {
+        const subdirs = await readdir(mediaBaseDir).catch(() => []);
+        for (const subdir of subdirs) {
+          const dirPath = path.join(mediaBaseDir, subdir);
+          const files = await readdir(dirPath).catch(() => []);
+          const match = files.find(f => f.startsWith(msgId));
+          if (match) {
+            const filePath = path.join(dirPath, match);
+            const uploadResult = await asanaUploadAttachment(taskGid, filePath, match);
+            results.push({ messageId: msgId, fileName: match, ...uploadResult });
+            found = true;
+            break;
+          }
+        }
+      } catch {}
+      if (!found) {
+        results.push({ messageId: msgId, success: false, error: 'Arquivo não encontrado em media_files/' });
+      }
+    }
+
+    const successCount = results.filter(r => r.success).length;
+    console.log(`[TOOL] Anexos uploaded: ${successCount}/${messageIds.length} para task ${taskGid}`);
+    return { success: successCount > 0, total: messageIds.length, uploaded: successCount, results };
   }
 
   return { error: 'Ferramenta desconhecida' };

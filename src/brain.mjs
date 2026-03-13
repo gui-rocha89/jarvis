@@ -402,7 +402,7 @@ const clientGroupBuffer = new Map();   // groupJid → { messages: [], timer }
  * Em vez de regras rígidas, busca todo o contexto (memórias, perfil, histórico)
  * e deixa o Jarvis decidir autonomamente o que fazer — usando as tools disponíveis.
  */
-export async function handleManagedClientMessage(text, senderJid, pushName, chatId, managedClient, sendTextFn) {
+export async function handleManagedClientMessage(text, senderJid, pushName, chatId, managedClient, sendTextFn, mediaFiles = []) {
   try {
     // Rate limit: 30s entre respostas no mesmo grupo
     const lastResponse = clientGroupCooldown.get(chatId);
@@ -453,8 +453,13 @@ export async function handleManagedClientMessage(text, senderJid, pushName, chat
       }
     }
 
-    // Adicionar mensagem atual
-    const currentMsg = { role: 'user', content: `[${consolidated.pushName}]: ${consolidated.text}` };
+    // Adicionar mensagem atual (com indicação de mídia se houver)
+    let mediaContext = '';
+    if (mediaFiles.length > 0) {
+      const mediaDesc = mediaFiles.map(f => `📎 ${f.type}: ${f.fileName} (${Math.round(f.size / 1024)}KB) [msg_id: ${f.messageId}]`).join('\n');
+      mediaContext = `\n[MÍDIA RECEBIDA - arquivos já baixados e prontos para anexar no Asana via tool "anexar_midia_asana"]\n${mediaDesc}`;
+    }
+    const currentMsg = { role: 'user', content: `[${consolidated.pushName}]: ${consolidated.text}${mediaContext}` };
     const lastConsolidated = consolidatedHistory[consolidatedHistory.length - 1];
     if (lastConsolidated && lastConsolidated.role === 'user') {
       lastConsolidated.content += '\n' + currentMsg.content;
@@ -679,8 +684,15 @@ INTELIGÊNCIA ATIVA — NÃO FIQUE PARADO:
 - Quando receber a resposta (em mensagens futuras), APRENDA com ela usando a tool "lembrar" — assim na próxima vez você já sabe
 - Cada interação te torna mais inteligente. Pergunte → Aprenda → Melhore
 
+PROCESSOS DA AGÊNCIA QUE VOCÊ DEVE SEGUIR:
+- O grupo "tarefas" (Tarefas Diárias) serve pra cobranças internas quando alguém não responde no Asana em 2h
+- TODA demanda de cliente DEVE virar task no Asana com prazo — sem exceção
+- Quando criar task e precisar que alguém aja: marque a pessoa na task + avise no grupo "tarefas" com o link
+- Se o cliente mandou material (fotos, vídeos, docs), eles foram baixados automaticamente e estão indicados na mensagem como [MÍDIA RECEBIDA]. Use a tool "anexar_midia_asana" para subir esses arquivos na task do Asana — NUNCA ignore material do cliente
+
 QUANDO AGIR:
-- Cliente mandou demanda de trabalho → responda confirmando, pergunte o que faltar (prazo, referências), crie a task no Asana, avise a equipe
+- Cliente mandou demanda de trabalho → responda confirmando, pergunte o que faltar (prazo, referências), crie a task no Asana, ANEXE material se houver, avise a equipe
+- Cliente mandou material (fotos, vídeos, documentos) → crie a task + use anexar_midia_asana com os message_ids indicados + avise equipe
 - Cliente tem dúvida sobre andamento → responda com o que você sabe. Se não sabe, pergunte internamente e avise o cliente que está verificando
 - Cliente mandou aprovação/feedback → notifique a equipe internamente
 - Conversa casual, cumprimento ou mensagem irrelevante → [SILENCIO] (NÃO responda)
@@ -703,6 +715,7 @@ TOM DE VOZ:
 
 TOOLS DISPONÍVEIS:
 - criar_demanda_cliente: para criar tasks no Asana quando identificar uma demanda
+- anexar_midia_asana: para subir fotos/vídeos/docs do WhatsApp na task do Asana. Use SEMPRE que o cliente mandar material junto com demanda. Precisa do task_gid (retornado pelo criar_demanda_cliente) e dos message_ids (indicados no contexto da mensagem)
 - enviar_mensagem_grupo: para notificar/perguntar pra equipe internamente (grupo "tarefas") — USE SEMPRE que precisar avisar, perguntar, ou tirar dúvida com a equipe
 - lembrar: para salvar informações importantes sobre o cliente — USE para guardar tudo que aprender (respostas da equipe, preferências do cliente, processos descobertos)
 

@@ -7,3 +7,4 @@ auth_info/
 *.log
 google-calendar-key.json
 audio_files/
+media_files/
