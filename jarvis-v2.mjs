@@ -26,7 +26,7 @@ import { initMemory, processMemory, getMemoryContext, getMemoryStats, searchMemo
 import { shouldJarvisRespond, isValidResponse, generateResponse, markConversationActive, isConversationActive, findTeamJid, extractMentionsFromText, generateDailyReport, handleManagedClientMessage } from './src/brain.mjs';
 import { voiceConfig, loadVoiceConfig, saveVoiceConfig, transcribeAudio, generateAudio } from './src/audio.mjs';
 import { synthesizeProfile, getProfile, listProfiles, syncProfiles } from './src/profiles.mjs';
-import { asanaRequest, getOverdueTasks, getGCalClient, JARVIS_TOOLS, registerSendFunction } from './src/skills/loader.mjs';
+import { asanaRequest, getOverdueTasks, getGCalClient, JARVIS_TOOLS, registerSendFunction, registerSendWithMentionsFunction } from './src/skills/loader.mjs';
 import { getMediaType, extractSender } from './src/helpers.mjs';
 import { startAsanaStudy, stopAsanaStudy, asanaBatchState } from './src/batch-asana.mjs';
 
@@ -1802,7 +1802,8 @@ async function startWhatsApp() {
       console.log(`[JARVIS] Conectado ao WhatsApp! (bot: ${CONFIG.BOT_NUMBER})`);
       // Registrar função de envio para o loader.mjs (proativo)
       registerSendFunction(sendText);
-      console.log('[PROACTIVE] sendText registrada para tools proativas');
+      registerSendWithMentionsFunction(sendTextWithMentions);
+      console.log('[PROACTIVE] sendText + sendTextWithMentions registradas para tools proativas');
       setTimeout(async () => {
         try {
           realTeamJids.clear();

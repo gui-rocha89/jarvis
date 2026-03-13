@@ -2,14 +2,16 @@
 // JARVIS 3.0 - Skills Loader (Modular)
 // Carrega e gerencia skills dinâmicamente
 // ============================================
-import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, GCAL_KEY_PATH, GCAL_CALENDAR_ID, managedClients, saveManagedClients } from '../config.mjs';
+import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, GCAL_KEY_PATH, GCAL_CALENDAR_ID, managedClients, saveManagedClients, teamWhatsApp } from '../config.mjs';
 import { pool } from '../database.mjs';
 import { readFile } from 'fs/promises';
 import { google } from 'googleapis';
 
-// Callback para enviar mensagens (registrado pelo jarvis-v2.mjs após criar o socket)
+// Callbacks para enviar mensagens (registrados pelo jarvis-v2.mjs após criar o socket)
 let _sendTextFn = null;
+let _sendTextWithMentionsFn = null;
 export function registerSendFunction(fn) { _sendTextFn = fn; }
+export function registerSendWithMentionsFunction(fn) { _sendTextWithMentionsFn = fn; }
 export function getSendFunction() { return _sendTextFn; }
 
 // ============================================
@@ -204,12 +206,17 @@ export const JARVIS_TOOLS = [
   },
   {
     name: 'enviar_mensagem_grupo',
-    description: 'Enviar uma mensagem em um grupo do WhatsApp (interno ou de cliente autorizado).',
+    description: 'Enviar uma mensagem em um grupo do WhatsApp (interno ou de cliente autorizado). Para MARCAR pessoas no grupo, use o campo "mencoes" com os nomes — a menção real do WhatsApp será feita automaticamente (a pessoa recebe notificação).',
     input_schema: {
       type: 'object',
       properties: {
         grupo: { type: 'string', description: 'Nome do grupo: "tarefas", "galaxias", ou nome do cliente (ex: "minner")' },
-        mensagem: { type: 'string', description: 'Texto da mensagem a enviar' },
+        mensagem: { type: 'string', description: 'Texto da mensagem. Use @Nome no texto para marcar pessoas (ex: "@Douglas, tudo bem?")' },
+        mencoes: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Lista de nomes de pessoas para marcar/mencionar na mensagem (ex: ["douglas", "bruna"]). A menção real do WhatsApp será resolvida automaticamente.',
+        },
       },
       required: ['grupo', 'mensagem'],
     },
@@ -346,9 +353,41 @@ export async function executeJarvisTool(toolName, input, context = {}) {
     }
 
     if (!targetJid) return { error: `Grupo "${input.grupo}" nao encontrado` };
-    await _sendTextFn(targetJid, input.mensagem);
-    console.log(`[TOOL] Mensagem enviada para ${input.grupo}: ${input.mensagem.substring(0, 60)}...`);
-    return { success: true, grupo: input.grupo };
+
+    // Resolver menções (nomes → JIDs reais do WhatsApp)
+    const mentionJids = [];
+    if (input.mencoes && Array.isArray(input.mencoes) && input.mencoes.length > 0 && _sendTextWithMentionsFn) {
+      for (const nome of input.mencoes) {
+        const nomeLower = nome.toLowerCase().trim();
+        // 1. Buscar no map teamWhatsApp (equipe já mapeada)
+        const jidFromTeam = teamWhatsApp.get(nomeLower);
+        if (jidFromTeam) {
+          mentionJids.push(jidFromTeam);
+          continue;
+        }
+        // 2. Buscar na tabela jarvis_contacts por push_name
+        try {
+          const { rows } = await pool.query(
+            `SELECT jid FROM jarvis_contacts WHERE LOWER(push_name) LIKE $1 AND jid LIKE '%@s.whatsapp.net' LIMIT 1`,
+            [`%${nomeLower}%`]
+          );
+          if (rows.length > 0) {
+            mentionJids.push(rows[0].jid);
+          }
+        } catch {}
+      }
+    }
+
+    // Enviar com ou sem menções reais
+    if (mentionJids.length > 0 && _sendTextWithMentionsFn) {
+      const mentions = mentionJids.map(jid => ({ jid }));
+      await _sendTextWithMentionsFn(targetJid, input.mensagem, mentions);
+      console.log(`[TOOL] Mensagem enviada para ${input.grupo} com ${mentionJids.length} menções: ${input.mensagem.substring(0, 60)}...`);
+    } else {
+      await _sendTextFn(targetJid, input.mensagem);
+      console.log(`[TOOL] Mensagem enviada para ${input.grupo}: ${input.mensagem.substring(0, 60)}...`);
+    }
+    return { success: true, grupo: input.grupo, mencoes_resolvidas: mentionJids.length };
   }
 
   if (toolName === 'autorizar_cliente') {
