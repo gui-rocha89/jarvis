@@ -69,6 +69,7 @@ auth_session/                   # Sessão WhatsApp (NÃO VERSIONADO)
 - `node_modules/`
 - `google-calendar-key.json`
 - `audio_files/` — arquivos de áudio temporários
+- `media_files/` — mídias baixadas do WhatsApp (imagens, vídeos, docs)
 
 ---
 
@@ -92,7 +93,7 @@ auth_session/                   # Sessão WhatsApp (NÃO VERSIONADO)
 - Score de inteligência (6 eixos: empresa, equipe, clientes, projetos, comunicação, processos)
 
 ### src/config.mjs
-**Exporta:** `CONFIG`, `TEAM_ASANA`, `ASANA_PROJECTS`, `ASANA_SECTIONS`, `PUBLIC_ASANA_PROJECTS`, `JARVIS_ALLOWED_GROUPS`, `AUDIO_ALLOWED`, `teamPhones`, `teamWhatsApp`, `managedClients`, `loadManagedClients`, `saveManagedClients`, `isManagedClientGroup`
+**Exporta:** `CONFIG`, `TEAM_ASANA`, `ASANA_PROJECTS`, `ASANA_SECTIONS`, `ASANA_CUSTOM_FIELDS`, `ASANA_CLIENTE_MAP`, `ASANA_URGENCIA_MAP`, `ASANA_TIER_MAP`, `ASANA_TIPO_DEMANDA_MAP`, `PUBLIC_ASANA_PROJECTS`, `JARVIS_ALLOWED_GROUPS`, `AUDIO_ALLOWED`, `teamPhones`, `teamWhatsApp`, `managedClients`, `loadManagedClients`, `saveManagedClients`, `isManagedClientGroup`
 
 - Todas as configurações centralizadas via `process.env`
 - Parsing de JSON para maps de equipe/projetos/seções do Asana
@@ -194,11 +195,12 @@ auth_session/                   # Sessão WhatsApp (NÃO VERSIONADO)
 - Somente leitura (GET) — ZERO escrita no Asana
 
 ### src/skills/loader.mjs
-**Exporta:** `asanaRequest`, `asanaCreateTask`, `asanaAddToProject`, `asanaAddComment`, `getOverdueTasks`, `getGCalClient`, `createGoogleCalendarEvent`, `JARVIS_TOOLS`, `executeJarvisTool`, `registerSendFunction`, `getSendFunction`
+**Exporta:** `asanaRequest`, `asanaCreateTask`, `asanaAddToProject`, `asanaAddComment`, `asanaUploadAttachment`, `getOverdueTasks`, `getGCalClient`, `createGoogleCalendarEvent`, `JARVIS_TOOLS`, `executeJarvisTool`, `registerSendFunction`, `registerSendWithMentionsFunction`, `getSendFunction`
 
-- Tools disponíveis para o Claude: `agendar_captacao`, `consultar_tarefas`, `lembrar`, `criar_demanda_cliente`, `enviar_mensagem_grupo`
-- `criar_demanda_cliente` — cria task no Asana (Cabine de Comando) com prefixo [CLIENTE], atribui responsável
-- `enviar_mensagem_grupo` — envia mensagem no WhatsApp (resolve nome → JID: "tarefas", "galaxias", ou nome do cliente)
+- Tools disponíveis para o Claude: `agendar_captacao`, `consultar_tarefas`, `lembrar`, `criar_demanda_cliente`, `enviar_mensagem_grupo`, `anexar_midia_asana`
+- `criar_demanda_cliente` — cria task no Asana (Cabine de Comando) com prefixo [CLIENTE], atribui responsável, e preenche custom fields automaticamente (Cliente, Urgência, Tier, Tipo de demanda)
+- `anexar_midia_asana` — faz upload de mídias do WhatsApp (imagens, vídeos, docs) como anexos em tasks do Asana
+- `enviar_mensagem_grupo` — envia mensagem no WhatsApp (resolve nome → JID: "tarefas", "galaxias", ou nome do cliente). Suporta menções reais via campo `mencoes`. Tem filtro anti-vazamento (bloqueia conteúdo interno em grupos de clientes) e dedup 60s
 - `registerSendFunction(fn)` — registra callback de envio (o `jarvis-v2.mjs` registra `sendText` após criar o socket)
 - Integração Asana: GET/POST com Bearer token do .env
 - Integração Google Calendar: JWT auth com service account
@@ -369,7 +371,7 @@ Ambos com health check habilitado e bind apenas em localhost.
 npm test   # Roda suite completa
 ```
 
-**37 casos de teste:**
+**46 casos de teste:**
 - `getMediaType()` — detecção de tipos de mídia (audio, image, video, etc.)
 - `extractSender()` — extração de JID em DMs e grupos
 - `isValidResponse()` — validação de respostas (rejeita vazias, só pontuação, <3 letras)
@@ -401,6 +403,11 @@ Consulte `.env.example` para a lista completa. Variáveis críticas:
 | `MEMORY_MODEL` | Modelo para extração de fatos (ex: claude-3-haiku-20240307) |
 | `AI_MODEL` | Modelo principal para respostas (ex: claude-sonnet-4-6) |
 | `AI_MODEL_STRONG` | Modelo forte para queries complexas (ex: claude-opus-4-0-20250514) |
+| `ASANA_CUSTOM_FIELDS` | JSON com GIDs dos custom fields (CLIENTE_FIELD, URGENCIA_FIELD, TIER_FIELD, TIPO_DEMANDA_FIELD) |
+| `ASANA_CLIENTE_MAP` | JSON mapeando nome do cliente → GID do enum option |
+| `ASANA_URGENCIA_MAP` | JSON mapeando nível de urgência → GID |
+| `ASANA_TIER_MAP` | JSON mapeando tier do cliente → GID |
+| `ASANA_TIPO_DEMANDA_MAP` | JSON mapeando tipo de demanda → GID |
 
 ---
 

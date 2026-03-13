@@ -29,6 +29,13 @@ export const ASANA_PROJECTS = parseJsonEnv('ASANA_PROJECTS');
 
 export const ASANA_SECTIONS = parseJsonEnv('ASANA_SECTIONS');
 
+// Custom Fields do Asana (Cabine de Comando)
+export const ASANA_CUSTOM_FIELDS = parseJsonEnv('ASANA_CUSTOM_FIELDS');
+export const ASANA_CLIENTE_MAP = parseJsonEnv('ASANA_CLIENTE_MAP');
+export const ASANA_URGENCIA_MAP = parseJsonEnv('ASANA_URGENCIA_MAP');
+export const ASANA_TIER_MAP = parseJsonEnv('ASANA_TIER_MAP');
+export const ASANA_TIPO_DEMANDA_MAP = parseJsonEnv('ASANA_TIPO_DEMANDA_MAP');
+
 export const PUBLIC_ASANA_PROJECTS = new Set(
   (process.env.PUBLIC_ASANA_PROJECTS || '').split(',').filter(Boolean)
 );

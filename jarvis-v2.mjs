@@ -169,10 +169,13 @@ async function handleIncomingMessage(m) {
     }
   }
 
-  if (!text) return;
+  // Permitir mensagens de mídia sem texto passarem pelo fluxo proativo
+  const hasMedia = getMediaType(m) && !['audio', 'sticker', 'contact', 'location'].includes(getMediaType(m));
+  if (!text && !hasMedia) return;
   const pushName = m.pushName || '';
 
-  console.log(`[MSG] ${isGroup ? 'GRUPO' : 'PV'} | ${pushName} (${sender.substring(0, 15)}): ${text.substring(0, 80)}`);
+  const logText = text ? text.substring(0, 80) : `[${getMediaType(m) || 'mídia'}]`;
+  console.log(`[MSG] ${isGroup ? 'GRUPO' : 'PV'} | ${pushName} (${sender.substring(0, 15)}): ${logText}`);
 
   // Salvar na memória (inclui message_key para reply futuro)
   await storeMessage({

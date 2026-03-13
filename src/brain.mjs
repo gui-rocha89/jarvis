@@ -412,10 +412,14 @@ export async function handleManagedClientMessage(text, senderJid, pushName, chat
     }
 
     // Consolidação: se cliente manda várias msgs rápidas, espera e processa junto
-    const consolidated = await consolidateMessages(chatId, text, pushName);
+    // mediaFiles são acumulados no buffer — pega todos quando consolida
+    const consolidated = await consolidateMessages(chatId, text, pushName, mediaFiles);
     if (!consolidated) return null; // Ainda esperando mais mensagens
 
-    console.log(`[PROACTIVE] Processando mensagem de ${pushName} no grupo ${managedClient.groupName}`);
+    // Usar mediaFiles acumulados da consolidação (inclui mídia de TODAS as mensagens do buffer)
+    const allMediaFiles = consolidated.mediaFiles || mediaFiles;
+
+    console.log(`[PROACTIVE] Processando mensagem de ${pushName} no grupo ${managedClient.groupName}${allMediaFiles.length > 0 ? ` (${allMediaFiles.length} mídia(s))` : ''}`);
 
     // Buscar todo o contexto disponível sobre este cliente
     const [recentMessages, memoryContext, clientProfile, groupProfile] = await Promise.all([
@@ -455,8 +459,8 @@ export async function handleManagedClientMessage(text, senderJid, pushName, chat
 
     // Adicionar mensagem atual (com indicação de mídia se houver)
     let mediaContext = '';
-    if (mediaFiles.length > 0) {
-      const mediaDesc = mediaFiles.map(f => `📎 ${f.type}: ${f.fileName} (${Math.round(f.size / 1024)}KB) [msg_id: ${f.messageId}]`).join('\n');
+    if (allMediaFiles.length > 0) {
+      const mediaDesc = allMediaFiles.map(f => `📎 ${f.type}: ${f.fileName} (${Math.round(f.size / 1024)}KB) [msg_id: ${f.messageId}]`).join('\n');
       mediaContext = `\n[MÍDIA RECEBIDA - arquivos já baixados e prontos para anexar no Asana via tool "anexar_midia_asana"]\n${mediaDesc}`;
     }
     const currentMsg = { role: 'user', content: `[${consolidated.pushName}]: ${consolidated.text}${mediaContext}` };
@@ -526,15 +530,19 @@ export async function handleManagedClientMessage(text, senderJid, pushName, chat
 /**
  * Consolida mensagens rápidas do mesmo grupo (15s de buffer)
  */
-function consolidateMessages(chatId, text, pushName) {
+function consolidateMessages(chatId, text, pushName, mediaFiles = []) {
   return new Promise((resolve) => {
     let buffer = clientGroupBuffer.get(chatId);
     if (!buffer) {
-      buffer = { messages: [], timer: null, resolve: null };
+      buffer = { messages: [], mediaFiles: [], timer: null, resolve: null };
       clientGroupBuffer.set(chatId, buffer);
     }
 
     buffer.messages.push({ text, pushName });
+    // Acumular mídia de todas as mensagens consolidadas
+    if (mediaFiles.length > 0) {
+      buffer.mediaFiles.push(...mediaFiles);
+    }
 
     // Cancelar timer anterior
     if (buffer.timer) clearTimeout(buffer.timer);
@@ -545,14 +553,15 @@ function consolidateMessages(chatId, text, pushName) {
     // Esperar 15s após última mensagem
     buffer.timer = setTimeout(() => {
       const msgs = buffer.messages;
+      const allMedia = buffer.mediaFiles;
       clientGroupBuffer.delete(chatId);
 
       if (msgs.length === 1) {
-        resolve({ text: msgs[0].text, pushName: msgs[0].pushName });
+        resolve({ text: msgs[0].text, pushName: msgs[0].pushName, mediaFiles: allMedia });
       } else {
-        // Consolidar múltiplas mensagens
-        const consolidated = msgs.map(m => `[${m.pushName}]: ${m.text}`).join('\n');
-        resolve({ text: consolidated, pushName: msgs[msgs.length - 1].pushName });
+        // Consolidar múltiplas mensagens (filtra vazias)
+        const consolidated = msgs.filter(m => m.text).map(m => `[${m.pushName}]: ${m.text}`).join('\n');
+        resolve({ text: consolidated || `[${msgs[msgs.length - 1].pushName} enviou mídia]`, pushName: msgs[msgs.length - 1].pushName, mediaFiles: allMedia });
       }
     }, 15000);
   });
@@ -689,6 +698,7 @@ PROCESSOS DA AGÊNCIA QUE VOCÊ DEVE SEGUIR:
 - TODA demanda de cliente DEVE virar task no Asana com prazo — sem exceção
 - Quando criar task e precisar que alguém aja: marque a pessoa na task + avise no grupo "tarefas" com o link
 - Se o cliente mandou material (fotos, vídeos, docs), eles foram baixados automaticamente e estão indicados na mensagem como [MÍDIA RECEBIDA]. Use a tool "anexar_midia_asana" para subir esses arquivos na task do Asana — NUNCA ignore material do cliente
+- TODA task OBRIGATORIAMENTE precisa ter os campos: urgência e tipo_demanda. Se o cliente não especificou prazo, use urgência "negociavel". Classifique o tipo_demanda com base no conteúdo da demanda (design, audiovisual, marketing, planejamento, etc.)
 
 QUANDO AGIR:
 - Cliente mandou demanda de trabalho → responda confirmando, pergunte o que faltar (prazo, referências), crie a task no Asana, ANEXE material se houver, avise a equipe
@@ -714,7 +724,7 @@ TOM DE VOZ:
 - SEMPRE TERMINE SUA RESPOSTA COM UMA PERGUNTA — isso força o cliente a responder e mantém o diálogo ativo (ex: "Podemos seguir assim?", "Tem algum prazo em mente?", "Ficou claro?")
 
 TOOLS DISPONÍVEIS:
-- criar_demanda_cliente: para criar tasks no Asana quando identificar uma demanda
+- criar_demanda_cliente: para criar tasks no Asana quando identificar uma demanda. OBRIGATÓRIO preencher: urgencia ("24h", "48h", "72h" ou "negociavel") e tipo_demanda ("design", "audiovisual", "marketing", "planejamento", "reuniao", "captacao", "endomarketing", "demanda_extra"). O campo "cliente" é o nome do cliente. Se souber o tier do cliente, preencha também.
 - anexar_midia_asana: para subir fotos/vídeos/docs do WhatsApp na task do Asana. Use SEMPRE que o cliente mandar material junto com demanda. Precisa do task_gid (retornado pelo criar_demanda_cliente) e dos message_ids (indicados no contexto da mensagem)
 - enviar_mensagem_grupo: para notificar/perguntar pra equipe internamente (grupo "tarefas") — USE SEMPRE que precisar avisar, perguntar, ou tirar dúvida com a equipe
 - lembrar: para salvar informações importantes sobre o cliente — USE para guardar tudo que aprender (respostas da equipe, preferências do cliente, processos descobertos)

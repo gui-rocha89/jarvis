@@ -2,7 +2,7 @@
 // JARVIS 3.0 - Skills Loader (Modular)
 // Carrega e gerencia skills dinâmicamente
 // ============================================
-import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, GCAL_KEY_PATH, GCAL_CALENDAR_ID, managedClients, saveManagedClients, teamWhatsApp } from '../config.mjs';
+import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, ASANA_CUSTOM_FIELDS, ASANA_CLIENTE_MAP, ASANA_URGENCIA_MAP, ASANA_TIER_MAP, ASANA_TIPO_DEMANDA_MAP, GCAL_KEY_PATH, GCAL_CALENDAR_ID, managedClients, saveManagedClients, teamWhatsApp } from '../config.mjs';
 import { pool } from '../database.mjs';
 import { readFile, readdir } from 'fs/promises';
 import { createReadStream } from 'fs';
@@ -50,8 +50,9 @@ export async function asanaCreateTask(taskData) {
     });
     const result = await response.json();
     if (!response.ok) return { error: result.errors?.[0]?.message || 'Erro desconhecido' };
+    const projectGid = taskData.projects?.[0] || ASANA_PROJECTS.CAPTACAO;
     console.log('[ASANA] Task criada:', result.data.gid, '-', result.data.name);
-    return { success: true, gid: result.data.gid, name: result.data.name, url: `https://app.asana.com/0/${ASANA_PROJECTS.CAPTACAO}/${result.data.gid}` };
+    return { success: true, gid: result.data.gid, name: result.data.name, url: `https://app.asana.com/0/${projectGid}/${result.data.gid}` };
   } catch (err) {
     return { error: err.message };
   }
@@ -176,6 +177,72 @@ export async function createGoogleCalendarEvent({ summary, date, time, location,
 }
 
 // ============================================
+// RESOLVER CUSTOM FIELDS DO ASANA (Cabine de Comando)
+// ============================================
+
+/**
+ * Resolve os custom fields da Cabine de Comando a partir dos nomes amigáveis.
+ * Retorna objeto { "field_gid": "option_gid" } pronto para a API do Asana.
+ */
+function resolveCustomFields({ cliente, urgencia, tier, tipo_demanda }) {
+  const fields = {};
+
+  // Cliente (multi_enum — aceita array de GIDs)
+  if (cliente && ASANA_CUSTOM_FIELDS.CLIENTE_FIELD) {
+    const clienteLower = cliente.toLowerCase().trim();
+    // Buscar por match parcial (ex: "minner" encontra "minner")
+    let clienteGid = null;
+    for (const [key, gid] of Object.entries(ASANA_CLIENTE_MAP)) {
+      if (clienteLower.includes(key) || key.includes(clienteLower)) {
+        clienteGid = gid;
+        break;
+      }
+    }
+    if (clienteGid) {
+      fields[ASANA_CUSTOM_FIELDS.CLIENTE_FIELD] = [clienteGid]; // multi_enum = array
+    }
+  }
+
+  // Urgência (enum)
+  if (urgencia && ASANA_CUSTOM_FIELDS.URGENCIA_FIELD) {
+    const urgLower = urgencia.toLowerCase().trim();
+    const urgMap = {
+      '24h': ASANA_URGENCIA_MAP['24h'], '24': ASANA_URGENCIA_MAP['24h'],
+      '48h': ASANA_URGENCIA_MAP['48h'], '48': ASANA_URGENCIA_MAP['48h'],
+      '72h': ASANA_URGENCIA_MAP['72h'], '72': ASANA_URGENCIA_MAP['72h'],
+      'negociavel': ASANA_URGENCIA_MAP['negociavel'], 'negociável': ASANA_URGENCIA_MAP['negociavel'],
+    };
+    const urgGid = urgMap[urgLower] || ASANA_URGENCIA_MAP['negociavel'];
+    if (urgGid) fields[ASANA_CUSTOM_FIELDS.URGENCIA_FIELD] = urgGid;
+  }
+
+  // Tier (enum)
+  if (tier && ASANA_CUSTOM_FIELDS.TIER_FIELD) {
+    const tierLower = tier.toLowerCase().trim();
+    const tierGid = ASANA_TIER_MAP[tierLower];
+    if (tierGid) fields[ASANA_CUSTOM_FIELDS.TIER_FIELD] = tierGid;
+  }
+
+  // Tipo de demanda (enum)
+  if (tipo_demanda && ASANA_CUSTOM_FIELDS.TIPO_DEMANDA_FIELD) {
+    const tipoLower = tipo_demanda.toLowerCase().trim().replace(/\s+/g, '_').replace('ã', 'a').replace('ç', 'c');
+    let tipoGid = ASANA_TIPO_DEMANDA_MAP[tipoLower];
+    // Fallback: busca parcial
+    if (!tipoGid) {
+      for (const [key, gid] of Object.entries(ASANA_TIPO_DEMANDA_MAP)) {
+        if (tipoLower.includes(key) || key.includes(tipoLower)) {
+          tipoGid = gid;
+          break;
+        }
+      }
+    }
+    if (tipoGid) fields[ASANA_CUSTOM_FIELDS.TIPO_DEMANDA_FIELD] = tipoGid;
+  }
+
+  return Object.keys(fields).length > 0 ? fields : null;
+}
+
+// ============================================
 // TOOLS DO JARVIS (Claude tool_use)
 // ============================================
 export const JARVIS_TOOLS = [
@@ -223,17 +290,32 @@ export const JARVIS_TOOLS = [
   },
   {
     name: 'criar_demanda_cliente',
-    description: 'Criar uma nova demanda/task de cliente no projeto Cabine de Comando do Asana. Use quando identificar que um cliente mandou um pedido de trabalho novo.',
+    description: 'Criar uma nova demanda/task de cliente no projeto Cabine de Comando do Asana. Use quando identificar que um cliente mandou um pedido de trabalho novo. OBRIGATÓRIO preencher urgencia e tipo_demanda em TODA task.',
     input_schema: {
       type: 'object',
       properties: {
         nome_task: { type: 'string', description: 'Nome da task (ex: "Arte para post de lancamento")' },
-        cliente: { type: 'string', description: 'Nome do cliente (ex: "Minner")' },
+        cliente: { type: 'string', description: 'Nome do cliente (ex: "Minner", "Pippi", "Digal", "Callegaro")' },
         detalhes: { type: 'string', description: 'Descricao completa da demanda (briefing, contexto)' },
         prazo: { type: 'string', description: 'Prazo em formato YYYY-MM-DD (se mencionado pelo cliente)' },
         responsavel: { type: 'string', description: 'Primeiro nome do responsavel (padrao: bruna)' },
+        urgencia: {
+          type: 'string',
+          enum: ['24h', '48h', '72h', 'negociavel'],
+          description: 'Nivel de urgencia: "24h", "48h", "72h" ou "negociavel" (padrao: negociavel). Se o cliente nao especificou prazo, use "negociavel".',
+        },
+        tipo_demanda: {
+          type: 'string',
+          enum: ['design', 'audiovisual', 'endomarketing', 'marketing', 'reuniao', 'planejamento', 'demanda_extra', 'captacao'],
+          description: 'Tipo da demanda: "design" (artes, posts), "audiovisual" (videos, reels), "marketing" (estrategia), "planejamento" (planner), "reuniao", "captacao" (fotos/filmagem), "endomarketing", "demanda_extra" (outros)',
+        },
+        tier: {
+          type: 'string',
+          enum: ['s', 'a', 'b', 'c', 'm'],
+          description: 'Tier do cliente (s=premium, a=alto, b=medio, c=baixo, m=micro). Use apenas se souber o tier do cliente.',
+        },
       },
-      required: ['nome_task', 'cliente', 'detalhes'],
+      required: ['nome_task', 'cliente', 'detalhes', 'urgencia', 'tipo_demanda'],
     },
   },
   {
@@ -360,12 +442,25 @@ export async function executeJarvisTool(toolName, input, context = {}) {
     if (assigneeGid) taskData.assignee = assigneeGid;
     if (input.prazo) taskData.due_on = input.prazo;
 
+    // Resolver custom fields (Cliente, Urgência, Tier, Tipo de demanda)
+    const customFields = resolveCustomFields({
+      cliente: clienteName,
+      urgencia: input.urgencia || 'negociavel',
+      tier: input.tier || null,
+      tipo_demanda: input.tipo_demanda || null,
+    });
+    if (customFields) {
+      taskData.custom_fields = customFields;
+      console.log(`[ASANA] Custom fields resolvidos:`, JSON.stringify(customFields));
+    }
+
     const result = await asanaCreateTask(taskData);
     if (result.success) {
       result.url = `https://app.asana.com/0/${cabineGid}/${result.gid}`;
       result.cliente = clienteName;
       result.responsavel = input.responsavel || 'bruna';
-      console.log(`[PROACTIVE] Task criada: ${taskName} → ${result.url}`);
+      result.custom_fields_applied = !!customFields;
+      console.log(`[PROACTIVE] Task criada: ${taskName} → ${result.url} (custom_fields: ${!!customFields})`);
     }
     return result;
   }
