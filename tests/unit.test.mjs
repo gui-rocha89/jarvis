@@ -249,6 +249,47 @@ describe('Proactive Agent', () => {
 });
 
 // ============================================
+// TESTES: Anti-Alucinação (brain.mjs)
+// ============================================
+describe('Anti-Alucinação', () => {
+  let antiHallucinationCheck;
+
+  it('carrega a função', async () => {
+    const mod = await import('../src/brain.mjs');
+    antiHallucinationCheck = mod.antiHallucinationCheck;
+    assert.ok(typeof antiHallucinationCheck === 'function');
+  });
+
+  it('permite resposta quando usou tools de busca', async () => {
+    const mod = await import('../src/brain.mjs');
+    antiHallucinationCheck = mod.antiHallucinationCheck;
+    const result = antiHallucinationCheck('O Doug mandou às 14:07 pedindo material', new Set(['buscar_mensagens']));
+    assert.equal(result.safe, true);
+  });
+
+  it('bloqueia resposta com horários sem ter usado tools', async () => {
+    const mod = await import('../src/brain.mjs');
+    antiHallucinationCheck = mod.antiHallucinationCheck;
+    const result = antiHallucinationCheck('O Doug mandou às 14:07 pedindo material novo', new Set());
+    assert.equal(result.safe, false);
+  });
+
+  it('permite resposta genérica sem dados específicos', async () => {
+    const mod = await import('../src/brain.mjs');
+    antiHallucinationCheck = mod.antiHallucinationCheck;
+    const result = antiHallucinationCheck('Posso verificar o grupo do Minner pra você. Quer que eu busque as mensagens?', new Set());
+    assert.equal(result.safe, true);
+  });
+
+  it('bloqueia citações fabricadas sem tools', async () => {
+    const mod = await import('../src/brain.mjs');
+    antiHallucinationCheck = mod.antiHallucinationCheck;
+    const result = antiHallucinationCheck('Ele respondeu ontem falou que precisa do material urgente', new Set());
+    assert.equal(result.safe, false);
+  });
+});
+
+// ============================================
 // TESTES: AI_MODEL_STRONG (config.mjs)
 // ============================================
 describe('AI Model Strong', () => {

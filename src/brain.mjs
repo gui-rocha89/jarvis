@@ -59,6 +59,7 @@ async function agentLoop(model, systemPrompt, messages, tools, context = {}) {
   let currentMessages = [...messages];
   let finalText = '';
   const allMentions = [];
+  const toolsUsed = new Set(); // Rastrear tools usadas (anti-alucinação)
   let iterations = 0;
 
   // Configurar thinking baseado no modelo
@@ -97,6 +98,7 @@ async function agentLoop(model, systemPrompt, messages, tools, context = {}) {
         finalText += block.text;
       } else if (block.type === 'tool_use') {
         hasToolUse = true;
+        toolsUsed.add(block.name); // Rastrear tool usada
         console.log(`[AGENT-LOOP] Iteração ${iterations}: tool_use → ${block.name}(${JSON.stringify(block.input).substring(0, 100)})`);
         try {
           const result = await executeJarvisTool(block.name, block.input, context);
@@ -114,7 +116,7 @@ async function agentLoop(model, systemPrompt, messages, tools, context = {}) {
 
     // Se não houve tool_use, temos a resposta final
     if (!hasToolUse || response.stop_reason !== 'tool_use') {
-      console.log(`[AGENT-LOOP] Concluído em ${iterations} iteração(ões)`);
+      console.log(`[AGENT-LOOP] Concluído em ${iterations} iteração(ões). Tools usadas: [${[...toolsUsed].join(', ')}]`);
       break;
     }
 
@@ -133,7 +135,39 @@ async function agentLoop(model, systemPrompt, messages, tools, context = {}) {
     console.warn(`[AGENT-LOOP] Atingiu limite de ${MAX_AGENT_ITERATIONS} iterações`);
   }
 
-  return { text: finalText, mentions: allMentions };
+  return { text: finalText, mentions: allMentions, toolsUsed };
+}
+
+// ============================================
+// SALVAGUARDA ANTI-ALUCINAÇÃO
+// Detecta respostas que mencionam dados específicos (horários, mensagens, eventos)
+// sem ter usado tools para buscar esses dados.
+// ============================================
+export function antiHallucinationCheck(finalText, toolsUsed) {
+  // Se usou tools de busca, a resposta é baseada em dados reais
+  if (toolsUsed.has('buscar_mensagens') || toolsUsed.has('consultar_tarefas') || toolsUsed.has('buscar_memorias')) {
+    return { safe: true };
+  }
+
+  // Padrões que indicam dados específicos que só viriam de tools
+  const specificDataPatterns = [
+    /\b\d{1,2}[h:]\d{2}\b/,                           // Horários: "14:07", "16h03"
+    /\b(mandou|enviou|disse|falou|respondeu|escreveu).{0,30}(às|as|em|no dia)\s*\d/i,  // "mandou às 14h"
+    /\b(ontem|hoje|anteontem).{0,20}(mandou|enviou|disse|falou)/i,                      // "hoje mandou"
+    /"[^"]{10,}"/,                                      // Citações longas entre aspas (simulando mensagens)
+  ];
+
+  const hasSuspiciousData = specificDataPatterns.some(p => p.test(finalText));
+
+  if (hasSuspiciousData) {
+    console.warn('[ANTI-HALLUCINATION] ⚠️ Resposta contém dados específicos sem uso de tools — possível alucinação');
+    return {
+      safe: false,
+      reason: 'Dados específicos sem consulta prévia via tools',
+    };
+  }
+
+  return { safe: true };
 }
 
 // Modo conversa: Jarvis fica escutando 3 min após responder
@@ -437,7 +471,7 @@ export async function handleManagedClientMessage(text, senderJid, pushName, chat
     ];
 
     // Agent Loop: executa tools em loop até resposta final
-    const { text: finalText } = await agentLoop(
+    const { text: finalText, toolsUsed } = await agentLoop(
       CONFIG.AI_MODEL, systemPrompt, consolidatedHistory, JARVIS_TOOLS, { senderJid, chatId }
     );
 
@@ -450,6 +484,14 @@ export async function handleManagedClientMessage(text, senderJid, pushName, chat
     if (!isValidResponse(finalText)) {
       console.log('[PROACTIVE] Resposta inválida, ignorando');
       return null;
+    }
+
+    // SALVAGUARDA ANTI-ALUCINAÇÃO: no grupo do cliente é CRÍTICO não inventar dados
+    const hallucinationCheck = antiHallucinationCheck(finalText, toolsUsed || new Set());
+    if (!hallucinationCheck.safe) {
+      console.warn(`[PROACTIVE] ⚠️ ALUCINAÇÃO BLOQUEADA para ${managedClient.groupName}: ${hallucinationCheck.reason}`);
+      console.warn(`[PROACTIVE] Texto bloqueado: ${finalText.substring(0, 200)}`);
+      return null; // Silêncio é melhor que mentir pro cliente
     }
 
     // Marcar cooldown

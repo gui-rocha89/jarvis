@@ -1519,6 +1519,7 @@ Se a tool não retornar dados, diga honestamente que não encontrou. NUNCA fabri
     let currentMessages = [...msgs];
     let finalText = '';
     let iterations = 0;
+    const toolsUsed = new Set(); // Rastrear quais tools foram usadas (anti-alucinação)
 
     while (iterations < MAX_DASHBOARD_ITERATIONS) {
       iterations++;
@@ -1546,6 +1547,7 @@ Se a tool não retornar dados, diga honestamente que não encontrou. NUNCA fabri
           finalText += block.text;
         } else if (block.type === 'tool_use') {
           hasToolUse = true;
+          toolsUsed.add(block.name); // Rastrear tool usada
           console.log(`[DASHBOARD-CHAT] Iteração ${iterations} — tool: ${block.name}`, JSON.stringify(block.input).substring(0, 150));
           try {
             const result = await executeDashboardTool(block.name, block.input);
@@ -1569,6 +1571,16 @@ Se a tool não retornar dados, diga honestamente que não encontrou. NUNCA fabri
     if (iterations > 1) console.log(`[DASHBOARD-CHAT] Agent Loop concluído em ${iterations} iterações`);
 
     if (!finalText) finalText = 'Desculpe, não consegui processar a consulta. Tente reformular a pergunta.';
+
+    // SALVAGUARDA ANTI-ALUCINAÇÃO: verificar se a resposta contém dados específicos sem ter usado tools
+    const { antiHallucinationCheck } = await import('./src/brain.mjs');
+    const hallucinationCheck = antiHallucinationCheck(finalText, toolsUsed);
+    if (!hallucinationCheck.safe) {
+      console.warn(`[ANTI-HALLUCINATION] Resposta bloqueada! Tools usadas: [${[...toolsUsed].join(', ')}]. Razão: ${hallucinationCheck.reason}`);
+      console.warn(`[ANTI-HALLUCINATION] Texto original: ${finalText.substring(0, 200)}`);
+      finalText = '⚠️ Detectei que ia te dar uma resposta com dados que não verifiquei nas minhas ferramentas. Deixa eu buscar os dados reais primeiro.\n\nPode repetir o que precisa? Dessa vez vou consultar as mensagens/tarefas antes de responder.';
+    }
+
     dashboardChatHistory.push({ role: 'assistant', content: finalText });
 
     // Auto-salvar instruções como homework (regex ampliado — captura comandos operacionais)
