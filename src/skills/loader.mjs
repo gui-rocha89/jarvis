@@ -4,10 +4,9 @@
 // ============================================
 import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, ASANA_CUSTOM_FIELDS, ASANA_CLIENTE_MAP, ASANA_URGENCIA_MAP, ASANA_TIER_MAP, ASANA_TIPO_DEMANDA_MAP, GCAL_KEY_PATH, GCAL_CALENDAR_ID, managedClients, saveManagedClients, teamWhatsApp } from '../config.mjs';
 import { pool } from '../database.mjs';
-import { readFile, readdir } from 'fs/promises';
-import { createReadStream } from 'fs';
+import { readFile, readdir, stat } from 'fs/promises';
+import { readFileSync } from 'fs';
 import { google } from 'googleapis';
-import FormData from 'form-data';
 import path from 'path';
 
 // Callbacks para enviar mensagens (registrados pelo jarvis-v2.mjs após criar o socket)
@@ -84,15 +83,21 @@ export async function asanaAddComment(taskGid, text) {
 
 export async function asanaUploadAttachment(taskGid, filePath, fileName) {
   try {
+    // Usa FormData nativo do Node 20 (compatível com fetch nativo)
+    const fileBuffer = readFileSync(filePath);
+    const mimeMap = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', mp4: 'video/mp4', pdf: 'application/pdf' };
+    const ext = fileName.split('.').pop().toLowerCase();
+    const mime = mimeMap[ext] || 'application/octet-stream';
+
+    const blob = new Blob([fileBuffer], { type: mime });
     const form = new FormData();
     form.append('parent', taskGid);
-    form.append('file', createReadStream(filePath), { filename: fileName });
+    form.append('file', blob, fileName);
 
     const resp = await fetch('https://app.asana.com/api/1.0/attachments', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${CONFIG.ASANA_PAT}`,
-        ...form.getHeaders(),
       },
       body: form,
     });
