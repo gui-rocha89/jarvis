@@ -95,6 +95,28 @@ async function sendAudio(jid, text) {
 }
 
 // ============================================
+// CARREGAR CONTATOS DO BANCO (para @mentions)
+// ============================================
+async function loadTeamContacts() {
+  try {
+    const { rows } = await pool.query(
+      "SELECT jid, push_name FROM jarvis_contacts WHERE push_name IS NOT NULL AND push_name != ''"
+    );
+    let loaded = 0;
+    for (const row of rows) {
+      const firstName = row.push_name.split(' ')[0].toLowerCase();
+      if (!teamWhatsApp.has(firstName)) {
+        teamWhatsApp.set(firstName, row.jid);
+        loaded++;
+      }
+    }
+    console.log(`[TEAM] ${loaded} contatos carregados do banco para @mentions`);
+  } catch (err) {
+    console.error('[TEAM] Erro ao carregar contatos:', err.message);
+  }
+}
+
+// ============================================
 // HANDLER DE MENSAGENS
 // ============================================
 async function handleIncomingMessage(m) {
@@ -140,11 +162,12 @@ async function handleIncomingMessage(m) {
 
   console.log(`[MSG] ${isGroup ? 'GRUPO' : 'PV'} | ${pushName} (${sender.substring(0, 15)}): ${text.substring(0, 80)}`);
 
-  // Salvar na memória
+  // Salvar na memória (inclui message_key para reply futuro)
   await storeMessage({
     messageId: m.key.id, chatId: from, sender, pushName, text, isGroup, isAudio,
     mediaType: getMediaType(m), transcription: isAudio ? text : null,
     timestamp: (typeof m.messageTimestamp === 'object' && m.messageTimestamp?.low !== undefined) ? m.messageTimestamp.low : (Number(m.messageTimestamp) || Math.floor(Date.now() / 1000)),
+    messageKey: JSON.stringify(m.key),
   });
 
   await upsertContact(sender, pushName);
@@ -1667,6 +1690,7 @@ console.log('============================================');
 
 initDB().then(async () => {
   await initMemory();
+  await loadTeamContacts();
   startWhatsApp();
   setupCronJobs();
   console.log('[JARVIS] Todos os sistemas 2.0 inicializados.');

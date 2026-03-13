@@ -30,6 +30,7 @@ export async function initDB() {
         timestamp BIGINT DEFAULT 0,
         media_type TEXT,
         transcription TEXT,
+        message_key JSONB,
         created_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
@@ -159,6 +160,11 @@ export async function initDB() {
       )
     `);
 
+    // Migração: adicionar coluna message_key se não existe
+    await pool.query(`
+      ALTER TABLE jarvis_messages ADD COLUMN IF NOT EXISTS message_key JSONB
+    `).catch(() => {});
+
     console.log('[DB] Tabelas verificadas/criadas');
   } catch (err) {
     console.error('[DB] Erro ao conectar:', err.message);
@@ -175,8 +181,8 @@ export async function storeMessage(data) {
   }
   try {
     await pool.query(
-      `INSERT INTO jarvis_messages (message_id, chat_id, sender, push_name, text, is_group, is_audio, timestamp, media_type, transcription)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `INSERT INTO jarvis_messages (message_id, chat_id, sender, push_name, text, is_group, is_audio, timestamp, media_type, transcription, message_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        ON CONFLICT (message_id) DO UPDATE SET
          transcription = COALESCE(EXCLUDED.transcription, jarvis_messages.transcription),
          media_type = COALESCE(EXCLUDED.media_type, jarvis_messages.media_type),
@@ -186,7 +192,7 @@ export async function storeMessage(data) {
          push_name = CASE
            WHEN EXCLUDED.push_name IS NOT NULL AND EXCLUDED.push_name != '' AND (jarvis_messages.push_name IS NULL OR jarvis_messages.push_name = '')
            THEN EXCLUDED.push_name ELSE jarvis_messages.push_name END`,
-      [data.messageId, data.chatId, data.sender, data.pushName, data.text, data.isGroup, data.isAudio, data.timestamp, data.mediaType || null, data.transcription || null]
+      [data.messageId, data.chatId, data.sender, data.pushName, data.text, data.isGroup, data.isAudio, data.timestamp, data.mediaType || null, data.transcription || null, data.messageKey || null]
     );
   } catch (err) {
     console.error('[DB] Erro ao salvar mensagem:', err.message);
@@ -196,7 +202,7 @@ export async function storeMessage(data) {
 export async function getRecentMessages(chatId, limit = 30) {
   try {
     const result = await pool.query(
-      `SELECT push_name, text, is_audio, timestamp FROM jarvis_messages
+      `SELECT message_id, push_name, text, is_audio, timestamp, message_key FROM jarvis_messages
        WHERE chat_id = $1 AND text IS NOT NULL AND text != ''
        ORDER BY timestamp DESC LIMIT $2`,
       [chatId, limit]

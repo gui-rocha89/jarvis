@@ -580,9 +580,11 @@
 
           <!-- Chat Input -->
           <div class="flex gap-2">
-            <input id="chat-input" type="text" placeholder="Fale com o Jarvis..."
-              class="flex-1 bg-stark-bg border border-stark-border rounded-lg px-4 py-3 text-sm text-white focus:border-stark-blue focus:outline-none transition-colors font-rajdhani"
-              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}">
+            <textarea id="chat-input" placeholder="Fale com o Jarvis..." rows="1"
+              class="flex-1 bg-stark-bg border border-stark-border rounded-lg px-4 py-3 text-sm text-white focus:border-stark-blue focus:outline-none transition-colors font-rajdhani resize-none overflow-hidden leading-relaxed"
+              style="min-height:44px;max-height:160px"
+              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"
+              oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,160)+'px'"></textarea>
             <button onclick="sendChat()" id="chat-send-btn" class="bg-stark-blue/20 border border-stark-blue text-stark-blue px-5 rounded-lg hover:bg-stark-blue/30 transition-colors">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
             </button>
@@ -1331,6 +1333,7 @@
       if (!msg) return;
 
       input.value = '';
+      input.style.height = 'auto';
       appendChat('user', msg);
 
       const btn = document.getElementById('chat-send-btn');
