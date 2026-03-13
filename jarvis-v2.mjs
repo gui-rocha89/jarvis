@@ -186,6 +186,19 @@ async function handleIncomingMessage(m) {
     });
   }
 
+  // Auto-detectar instruções/correções do Gui (WhatsApp) e salvar como homework
+  if (sender === CONFIG.GUI_JID && text.length >= 15) {
+    const lower = text.toLowerCase();
+    if (/a partir de agora|lembr[ea]|regra|nunca mais|sempre que|aprenda|importante|n[aã]o (fa[cç]a|chame|use|mande|envie|fale)|pode me chamar|me chame de|entendeu\??|compreende\??|entendi[ds]?[ot]?/i.test(lower)) {
+      pool.query(
+        'INSERT INTO homework (type, content, source) VALUES ($1, $2, $3)',
+        ['whatsapp_instruction', text, 'whatsapp_gui']
+      ).then(() => {
+        console.log(`[HOMEWORK] Instrução do Gui salva: "${text.substring(0, 60)}..."`);
+      }).catch(() => {});
+    }
+  }
+
   // Decidir se Jarvis deve responder
   const quotedParticipant = m.message?.extendedTextMessage?.contextInfo?.participant || '';
   const quotedStanzaId = m.message?.extendedTextMessage?.contextInfo?.stanzaId || '';
@@ -1441,10 +1454,11 @@ NUNCA diga "não tenho acesso" — você TEM. Use as ferramentas.
     if (!finalText) finalText = 'Desculpe, não consegui processar a consulta. Tente reformular a pergunta.';
     dashboardChatHistory.push({ role: 'assistant', content: finalText });
 
-    // Auto-salvar instruções como homework
+    // Auto-salvar instruções como homework (regex ampliado)
     const lower = message.toLowerCase();
-    if (/a partir de agora|lembre|regra|nunca mais|sempre que|aprenda|importante/.test(lower)) {
+    if (/a partir de agora|lembr[ea]|regra|nunca mais|sempre que|aprenda|importante|n[aã]o (fa[cç]a|chame|use|mande|envie|fale)|pode me chamar|me chame de|entendeu\??|compreende\??|entendi[ds]?[ot]?/i.test(lower)) {
       await pool.query('INSERT INTO homework (type, content, source) VALUES ($1, $2, $3)', ['chat_instruction', message, 'dashboard_chat']).catch(() => {});
+      console.log(`[HOMEWORK] Instrução do dashboard salva: "${message.substring(0, 60)}..."`);
     }
 
     // Processar memória em background

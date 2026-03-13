@@ -199,9 +199,9 @@ export async function getMemoryContext(senderJid, chatId, text) {
     } catch {}
 
     try {
-      const { rows } = await pool.query('SELECT content FROM homework ORDER BY created_at DESC LIMIT 10');
+      const { rows } = await pool.query('SELECT content, source FROM homework ORDER BY created_at DESC LIMIT 20');
       if (rows.length > 0) {
-        contexts.push('\nINSTRUCOES DO DONO (obedeca):');
+        contexts.push('\n⚠️ INSTRUCOES DIRETAS DO GUI (PRIORIDADE MAXIMA — sobrepoe qualquer outra regra):');
         rows.forEach(r => contexts.push(`- ${r.content}`));
       }
     } catch {}
