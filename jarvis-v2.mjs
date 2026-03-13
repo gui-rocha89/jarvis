@@ -38,6 +38,10 @@ let connectionStatus = 'disconnected';
 let jarvisPaused = false; // Modo pausa: recebe mensagens mas NAO responde
 const sentByBot = new Set();
 
+// JIDs da equipe REAL (participantes dos grupos internos Tarefas/Galáxias)
+// NÃO inclui clientes — usado exclusivamente pelo agente proativo
+const realTeamJids = new Set();
+
 // ============================================
 // WHATSAPP - Envio de mensagens
 // ============================================
@@ -97,6 +101,9 @@ async function sendAudio(jid, text) {
 // ============================================
 // CARREGAR CONTATOS DO BANCO (para @mentions)
 // ============================================
+// Mapeamento de TODOS os contatos (para @mentions — NÃO é filtro de equipe)
+const allContacts = new Map(); // firstName → jid (usado apenas para @mentions)
+
 async function loadTeamContacts() {
   try {
     const { rows } = await pool.query(
@@ -105,8 +112,8 @@ async function loadTeamContacts() {
     let loaded = 0;
     for (const row of rows) {
       const firstName = row.push_name.split(' ')[0].toLowerCase();
-      if (!teamWhatsApp.has(firstName)) {
-        teamWhatsApp.set(firstName, row.jid);
+      if (!allContacts.has(firstName)) {
+        allContacts.set(firstName, row.jid);
         loaded++;
       }
     }
@@ -253,10 +260,9 @@ async function handleIncomingMessage(m) {
   if (isGroup) {
     const managedClient = isManagedClientGroup(from);
     if (managedClient) {
-      // Verificar se o sender NÃO é da equipe (equipe não gera demanda)
-      const isTeamMember = teamPhones.has(pushName?.split(' ')[0]?.toLowerCase()) ||
-                           teamWhatsApp.has(pushName?.split(' ')[0]?.toLowerCase()) ||
-                           sender === CONFIG.GUI_JID;
+      // Verificar se o sender NÃO é da equipe Stream Lab
+      // Usa realTeamJids (participantes dos grupos internos Tarefas/Galáxias)
+      const isTeamMember = realTeamJids.has(sender);
 
       if (!isTeamMember) {
         console.log(`[PROACTIVE] Mensagem de cliente detectada: ${pushName} em ${managedClient.groupName}`);
@@ -1740,9 +1746,13 @@ async function startWhatsApp() {
       console.log('[PROACTIVE] sendText registrada para tools proativas');
       setTimeout(async () => {
         try {
+          realTeamJids.clear();
+          realTeamJids.add(CONFIG.GUI_JID);
           for (const gid of [CONFIG.GROUP_TAREFAS, CONFIG.GROUP_GALAXIAS]) {
+            if (!gid) continue;
             const meta = await sock.groupMetadata(gid);
             for (const p of meta.participants) {
+              realTeamJids.add(p.id); // JID real do participante
               const contact = await getContactInfo(p.id);
               if (contact?.push_name) {
                 const firstName = contact.push_name.split(' ')[0].toLowerCase();
@@ -1753,6 +1763,7 @@ async function startWhatsApp() {
               }
             }
           }
+          console.log(`[TEAM] ${realTeamJids.size} membros da equipe real identificados`);
           console.log('[TEAM] Mapeamento:', JSON.stringify(Object.fromEntries(teamWhatsApp)));
         } catch (err) { console.error('[TEAM] Erro:', err.message); }
       }, 5000);
