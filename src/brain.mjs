@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 2.0 - Cérebro (AI Brain + Agent Teams)
+// JARVIS 3.0 - Cérebro (Agent Loop + Extended Thinking + Prompt Caching)
 // ============================================
 import Anthropic from '@anthropic-ai/sdk';
 import { CONFIG, JARVIS_ALLOWED_GROUPS, teamPhones, teamWhatsApp } from './config.mjs';
@@ -680,7 +680,7 @@ export async function generateDailyReport() {
         report += `- *${t.name}*\n  ${t.project} | ${t.assignee} | ${daysLate} dia(s) de atraso\n\n`;
       }
     }
-    report += '\n_Jarvis 2.0, seu gerente de projetos incansavel._';
+    report += '\n_Jarvis 3.0, seu gerente de projetos incansavel._';
     return report;
   } catch (err) {
     console.error('[REPORT] Erro:', err.message);

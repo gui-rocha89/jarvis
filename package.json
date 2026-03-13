@@ -1,8 +1,8 @@
 {
   "name": "jarvis",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "type": "module",
-  "description": "Jarvis 2.0 - Assistente de IA autonomo no WhatsApp",
+  "description": "Jarvis 3.0 - Agente de IA autonomo no WhatsApp (Agent Loop + Extended Thinking)",
   "main": "jarvis-v2.mjs",
   "scripts": {
     "start": "node jarvis-v2.mjs",

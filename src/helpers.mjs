@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 2.0 - Helpers (funções puras testáveis)
+// JARVIS 3.0 - Helpers (funções puras testáveis)
 // ============================================
 
 export function getMediaType(m) {

@@ -1,4 +1,4 @@
-# Jarvis 2.0
+# Jarvis 3.0
 
 **Agente de IA autônomo no WhatsApp** para a [Stream Lab](https://streamlab.com.br) — agência de marketing digital.
 
@@ -17,8 +17,13 @@ Personalidade inspirada no J.A.R.V.I.S. do Tony Stark: elegante, eficiente, com 
 
 Jarvis funciona como um **gerente de projetos virtual 24/7** — recebe mensagens no WhatsApp, entende contexto, responde com inteligência e executa ações em ferramentas externas (Asana, Google Calendar).
 
-### Destaques
+### Destaques v3.0
 
+- **Agent Loop Real** — Executa tools em loop `while(tool_use)` até completar a tarefa (máx 10 iterações), igual à Claude Code
+- **Extended Thinking** — Raciocina profundamente antes de responder (4K-8K tokens de thinking)
+- **Interleaved Thinking** — Pensa entre cada tool call, não apenas no início
+- **Prompt Caching** — System prompts estáticos são cacheados para economia e velocidade
+- **Model Routing** — Seleciona automaticamente Opus (complexo) ou Sonnet (simples) por query
 - **Agente Proativo** — Opera autonomamente em grupos de clientes autorizados: detecta demandas, cria tasks no Asana, notifica a equipe e responde o cliente profissionalmente
 - **4 Agentes Especializados** — Roteamento automático por intenção (Master, Creative, Manager, Researcher)
 - **Memória Persistente** — Extração e consulta de fatos com 3 escopos (pessoas, conversas, operacional)
@@ -48,7 +53,7 @@ Jarvis funciona como um **gerente de projetos virtual 24/7** — recebe mensagen
               ▼              ▼    ▼    ▼              ▼
           ┌───────┐    ┌────┐┌───┐┌───┐       ┌──────────┐
           │ Brain │    │Mem ││STT││ DB│       │  Skills  │
-          │       │    │    ││TTS││   │       │ (Tools)  │
+          │(Loop) │    │    ││TTS││   │       │ (Tools)  │
           └───┬───┘    └────┘└───┘└───┘       └──────────┘
               │              │                      │
      ┌────────┼────────┐     │         ┌────────────┼────────────┐
@@ -66,7 +71,7 @@ Jarvis funciona como um **gerente de projetos virtual 24/7** — recebe mensagen
 |--------|-----------|--------|
 | Runtime | Node.js (ESM) | 20+ |
 | WhatsApp | Baileys | v7 |
-| IA Principal | Claude API (Anthropic) | Sonnet |
+| IA Principal | Claude API (Anthropic) | Sonnet + Opus |
 | IA Extração | Claude Haiku | - |
 | TTS | ElevenLabs | v3 |
 | STT | Whisper (OpenAI) | v1 |
@@ -89,7 +94,7 @@ src/
 ├── config.mjs                  # Configurações centrais (100% via .env)
 ├── database.mjs                # PostgreSQL — pool, initDB, CRUD
 ├── memory.mjs                  # Sistema de memória (Mem0-inspired)
-├── brain.mjs                   # Cérebro IA + roteamento de agentes
+├── brain.mjs                   # Cérebro IA — Agent Loop + Extended Thinking
 ├── audio.mjs                   # TTS (ElevenLabs/OpenAI) + STT (Whisper)
 ├── profiles.mjs                # Síntese de perfis (clientes, equipe)
 ├── batch-asana.mjs             # Estudo exaustivo do Asana
@@ -101,7 +106,7 @@ src/
 dashboard/
 └── index.html                  # SPA do dashboard (Tailwind, Chart.js)
 tests/
-└── unit.test.mjs               # Suite de testes (35 casos + scan de credenciais)
+└── unit.test.mjs               # Suite de testes (37 casos + scan de credenciais)
 .github/workflows/
 ├── ci.yml                      # CI — lint + testes
 └── deploy.yml                  # CD — rsync + PM2 restart via SSH
@@ -157,7 +162,8 @@ Copie `.env.example` e configure todas as variáveis. As principais:
 | `REDIS_PASSWORD` | Senha do Redis | ✅ |
 | `JWT_SECRET` | Secret para tokens JWT do dashboard | ✅ |
 | `API_KEY` | Chave interna da API REST | ✅ |
-| `AI_MODEL` | Modelo principal (ex: `claude-sonnet-4-20250514`) | ✅ |
+| `AI_MODEL` | Modelo principal (ex: `claude-sonnet-4-6`) | ✅ |
+| `AI_MODEL_STRONG` | Modelo forte para queries complexas (ex: `claude-opus-4-0-20250514`) | ✅ |
 | `MEMORY_MODEL` | Modelo de extração (ex: `claude-3-haiku-20240307`) | ✅ |
 
 > Consulte `.env.example` para a lista completa com valores de exemplo.
@@ -273,7 +279,7 @@ git push origin master
   │
   ├─ CI (ci.yml)
   │   ├─ Node 20 + npm ci
-  │   └─ npm test (25 testes + scan de credenciais)
+  │   └─ npm test (37 testes + scan de credenciais)
   │
   └─ Deploy (deploy.yml) — executa apenas se CI passou
       ├─ SSH via chave Ed25519 (GitHub Secrets)
@@ -295,13 +301,14 @@ git push origin master
 npm test
 ```
 
-**35 casos de teste cobrindo:**
+**37 casos de teste cobrindo:**
 - Detecção de tipos de mídia (`getMediaType`)
 - Extração de remetente em DMs e grupos (`extractSender`)
 - Validação de respostas do Jarvis (`isValidResponse`)
 - Roteamento de agentes por intenção (`classifyIntent`)
 - Managed Clients — ativação/desativação de clientes gerenciados (`isManagedClientGroup`)
 - Agente Proativo — exports e callback de envio (`handleManagedClientMessage`, `registerSendFunction`)
+- Model Routing — `AI_MODEL_STRONG` existe e é configurável
 - Documentação do `.env.example`
 - **Scan de credenciais** — varre todos os `.mjs` por chaves/tokens hardcoded
 

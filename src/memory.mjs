@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 2.0 - Sistema de Memória Inteligente
+// JARVIS 3.0 - Sistema de Memória Inteligente
 // Inspirado no Mem0 (3 escopos + extração de fatos)
 // ============================================
 import Anthropic from '@anthropic-ai/sdk';

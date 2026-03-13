@@ -1,4 +1,4 @@
-# CLAUDE.md — Jarvis 2.0 (Stream Lab)
+# CLAUDE.md — Jarvis 3.0 (Stream Lab)
 
 > Documento de referência técnica para desenvolvimento assistido por IA.
 > Última atualização: 2026-03-13
@@ -7,7 +7,7 @@
 
 ## Visão Geral
 
-Jarvis 2.0 é um agente de IA autônomo no WhatsApp para a **Stream Lab** (agência de marketing digital). Arquitetura modular inspirada em Mem0 (memória), CrewAI (agentes) e NanoClaw (skills).
+Jarvis 3.0 é um agente de IA autônomo no WhatsApp para a **Stream Lab** (agência de marketing digital). Arquitetura inspirada na Claude Code: Agent Loop real, Extended Thinking, Prompt Caching, Model Routing (Sonnet/Opus).
 
 **Stack principal:** Node.js (ESM) · Baileys v7 · Claude API (Anthropic) · PostgreSQL 16 · Redis 7 · ElevenLabs · Google Calendar
 
@@ -33,7 +33,7 @@ src/
 dashboard/
 └── index.html                  # SPA do dashboard (Tailwind, Chart.js, auto-refresh)
 tests/
-└── unit.test.mjs               # Suite de testes (35 casos + scan de credenciais)
+└── unit.test.mjs               # Suite de testes (37 casos + scan de credenciais)
 .github/workflows/
 ├── ci.yml                      # CI — Node 20, npm ci, npm test
 └── deploy.yml                  # CD — rsync para VPS via SSH (auto após CI)
@@ -369,7 +369,7 @@ Ambos com health check habilitado e bind apenas em localhost.
 npm test   # Roda suite completa
 ```
 
-**35 casos de teste:**
+**37 casos de teste:**
 - `getMediaType()` — detecção de tipos de mídia (audio, image, video, etc.)
 - `extractSender()` — extração de JID em DMs e grupos
 - `isValidResponse()` — validação de respostas (rejeita vazias, só pontuação, <3 letras)

@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 2.0 - Testes Unitários
+// JARVIS 3.0 - Testes Unitários
 // Node.js test runner nativo (sem dependências)
 // ============================================
 import { describe, it } from 'node:test';

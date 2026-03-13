@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 2.0 - Síntese de Perfis de Entidades
+// JARVIS 3.0 - Síntese de Perfis de Entidades
 // Gera perfis estruturados a partir de memórias
 // ============================================
 import Anthropic from '@anthropic-ai/sdk';

@@ -1,6 +1,6 @@
 // ============================================
-// JARVIS 2.0 - Stream Lab AI Bot
-// Arquitetura modular com Agent Teams + Memória
+// JARVIS 3.0 - Stream Lab AI Bot
+// Agent Loop + Extended Thinking + Prompt Caching + Model Routing
 // ============================================
 import 'dotenv/config';
 import makeWASocket, {
@@ -19,7 +19,7 @@ import { fileURLToPath } from 'url';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 
-// Módulos do Jarvis 2.0
+// Módulos do Jarvis 3.0
 import { CONFIG, AUDIO_ALLOWED, teamPhones, teamWhatsApp, managedClients, loadManagedClients, saveManagedClients, isManagedClientGroup } from './src/config.mjs';
 import { pool, initDB, storeMessage, getRecentMessages, getContactInfo, getGroupInfo, upsertContact, upsertGroup, getMessageCount } from './src/database.mjs';
 import { initMemory, processMemory, getMemoryContext, getMemoryStats, searchMemories, storeFacts, extractFacts } from './src/memory.mjs';
@@ -778,7 +778,7 @@ app.get('/status', auth, async (req, res) => {
   res.json({
     status: connectionStatus, version: CONFIG.JARVIS_VERSION,
     messages_stored: msgCount, memories_stored: memStats.total,
-    ai_model: CONFIG.AI_MODEL, architecture: 'Jarvis 2.0 - Modular + Agent Teams + Mem0',
+    ai_model: CONFIG.AI_MODEL, architecture: 'Jarvis 3.0 - Agent Loop + Extended Thinking + Prompt Caching',
   });
 });
 
@@ -874,7 +874,7 @@ app.get('/dashboard/config', auth, async (req, res) => {
     res.json({
       api: { port: CONFIG.API_PORT }, ai: { model: CONFIG.AI_MODEL },
       asana: { workspace: CONFIG.ASANA_WORKSPACE }, whatsapp: { groupTarefas: CONFIG.GROUP_TAREFAS },
-      architecture: 'Jarvis 2.0 - Modular',
+      architecture: 'Jarvis 3.0 - Agent Loop',
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1813,7 +1813,7 @@ async function startWhatsApp() {
 // STARTUP
 // ============================================
 console.log('============================================');
-console.log('  JARVIS v2.0 - Stream Lab AI Bot');
+console.log('  JARVIS v3.0 - Stream Lab AI Bot');
 console.log('  Arquitetura: Modular + Agent Teams + Mem0');
 console.log('  AI: Claude Sonnet 4.6 (Anthropic)');
 console.log('  Audio: Whisper (STT) + ElevenLabs (TTS)');
@@ -1825,5 +1825,5 @@ initDB().then(async () => {
   await loadManagedClients(pool);
   startWhatsApp();
   setupCronJobs();
-  console.log('[JARVIS] Todos os sistemas 2.0 inicializados.');
+  console.log('[JARVIS] Todos os sistemas 3.0 inicializados.');
 });

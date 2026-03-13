@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 2.0 - Estudo Exaustivo do Asana
+// JARVIS 3.0 - Estudo Exaustivo do Asana
 // Ingere projetos, tarefas e comentários
 // Extrai conhecimento via extractFacts (Haiku)
 // ============================================

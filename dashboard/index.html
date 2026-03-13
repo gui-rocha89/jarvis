@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JARVIS 2.0 | Guardiao Lab</title>
+  <title>JARVIS 3.0 | Guardiao Lab</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
@@ -220,7 +220,7 @@
           <div class="w-3 h-3 rounded-full bg-stark-blue pulse-dot"></div>
         </div>
         <h1 class="font-orbitron text-stark-blue text-lg tracking-widest glow-blue">JARVIS</h1>
-        <span class="text-xs text-stark-dim font-mono">v2.0</span>
+        <span class="text-xs text-stark-dim font-mono">v3.0</span>
       </div>
 
       <!-- Nav Tabs -->
@@ -1244,7 +1244,7 @@
         // API retorna data.ai.model
         const model = data.ai?.model || '--';
         document.getElementById('stat-model').textContent = model.replace('claude-', '').replace('-20250514', '');
-        document.getElementById('stat-version').textContent = 'Jarvis 2.0';
+        document.getElementById('stat-version').textContent = 'Jarvis 3.0';
         // Contar chaves configuradas
         const keyCount = [data.ai?.model, data.asana?.workspace, data.whatsapp?.groupTarefas].filter(Boolean).length;
         document.getElementById('api-keys-status').textContent = `${keyCount} servicos`;

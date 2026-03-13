@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 2.0 - Banco de Dados (PostgreSQL)
+// JARVIS 3.0 - Banco de Dados (PostgreSQL)
 // ============================================
 import pg from 'pg';
 
@@ -16,7 +16,7 @@ export async function initDB() {
     await pool.query('SELECT 1');
     console.log('[DB] Conectado ao PostgreSQL');
 
-    // Criar tabelas do Jarvis 2.0 se não existirem
+    // Criar tabelas do Jarvis se não existirem
     await pool.query(`
       CREATE TABLE IF NOT EXISTS jarvis_messages (
         id SERIAL PRIMARY KEY,
