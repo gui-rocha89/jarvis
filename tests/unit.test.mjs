@@ -263,15 +263,30 @@ describe('Anti-Alucinação', () => {
   it('permite resposta quando usou tools de busca', async () => {
     const mod = await import('../src/brain.mjs');
     antiHallucinationCheck = mod.antiHallucinationCheck;
-    const result = antiHallucinationCheck('O Doug mandou às 14:07 pedindo material', new Set(['buscar_mensagens']));
+    const result = antiHallucinationCheck('O Doug mandou às 14:07 pedindo material, depois às 16:03 mandou mais, e às 16:05 finalizou', new Set(['buscar_mensagens']));
     assert.equal(result.safe, true);
   });
 
-  it('bloqueia resposta com horários sem ter usado tools', async () => {
+  it('bloqueia narrativa fabricada com múltiplos horários sem tools', async () => {
     const mod = await import('../src/brain.mjs');
     antiHallucinationCheck = mod.antiHallucinationCheck;
-    const result = antiHallucinationCheck('O Doug mandou às 14:07 pedindo material novo', new Set());
+    const narrativaFabricada = 'O Doug mandou às 10:52 o briefing completo. Depois às 12:54 mandou as fotos. O Jarvis respondeu às 14:07 agradecendo. Às 16:03 o Doug ignorou as perguntas e mandou novos conteúdos. Às 16:05 finalizou pedindo pra verificar o material.';
+    const result = antiHallucinationCheck(narrativaFabricada, new Set());
     assert.equal(result.safe, false);
+  });
+
+  it('permite resposta curta de confirmação sem tools', async () => {
+    const mod = await import('../src/brain.mjs');
+    antiHallucinationCheck = mod.antiHallucinationCheck;
+    const result = antiHallucinationCheck('Entendido, Gui! Vou gravar isso e aprender. Posso executar agora?', new Set());
+    assert.equal(result.safe, true);
+  });
+
+  it('permite resposta quando usou tools de ação', async () => {
+    const mod = await import('../src/brain.mjs');
+    antiHallucinationCheck = mod.antiHallucinationCheck;
+    const result = antiHallucinationCheck('Gravei na memória: Stream Lab é um laboratório de fluxo criativo, não uma agência. Sempre usar o termo lab ou laboratório.', new Set(['lembrar']));
+    assert.equal(result.safe, true);
   });
 
   it('permite resposta genérica sem dados específicos', async () => {
@@ -279,13 +294,6 @@ describe('Anti-Alucinação', () => {
     antiHallucinationCheck = mod.antiHallucinationCheck;
     const result = antiHallucinationCheck('Posso verificar o grupo do Minner pra você. Quer que eu busque as mensagens?', new Set());
     assert.equal(result.safe, true);
-  });
-
-  it('bloqueia citações fabricadas sem tools', async () => {
-    const mod = await import('../src/brain.mjs');
-    antiHallucinationCheck = mod.antiHallucinationCheck;
-    const result = antiHallucinationCheck('Ele respondeu ontem falou que precisa do material urgente', new Set());
-    assert.equal(result.safe, false);
   });
 });
 

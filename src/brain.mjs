@@ -140,31 +140,44 @@ async function agentLoop(model, systemPrompt, messages, tools, context = {}) {
 
 // ============================================
 // SALVAGUARDA ANTI-ALUCINAÇÃO
-// Detecta respostas que mencionam dados específicos (horários, mensagens, eventos)
+// Detecta respostas que INVENTAM dados factuais (horários, conteúdo de mensagens)
 // sem ter usado tools para buscar esses dados.
+// NÃO bloqueia: confirmações, instruções, ações, planos.
 // ============================================
 export function antiHallucinationCheck(finalText, toolsUsed) {
-  // Se usou tools de busca, a resposta é baseada em dados reais
+  // Se usou tools de busca nesta iteração, a resposta é baseada em dados reais
   if (toolsUsed.has('buscar_mensagens') || toolsUsed.has('consultar_tarefas') || toolsUsed.has('buscar_memorias')) {
     return { safe: true };
   }
 
-  // Padrões que indicam dados específicos que só viriam de tools
-  const specificDataPatterns = [
-    /\b\d{1,2}[h:]\d{2}\b/,                           // Horários: "14:07", "16h03"
-    /\b(mandou|enviou|disse|falou|respondeu|escreveu).{0,30}(às|as|em|no dia)\s*\d/i,  // "mandou às 14h"
-    /\b(ontem|hoje|anteontem).{0,20}(mandou|enviou|disse|falou)/i,                      // "hoje mandou"
-    /"[^"]{10,}"/,                                      // Citações longas entre aspas (simulando mensagens)
+  // Se usou tools de ação (lembrar, criar_demanda, enviar_mensagem), tá agindo — não bloquear
+  if (toolsUsed.has('lembrar') || toolsUsed.has('criar_demanda_cliente') || toolsUsed.has('enviar_mensagem_grupo') || toolsUsed.has('autorizar_cliente') || toolsUsed.has('revogar_cliente')) {
+    return { safe: true };
+  }
+
+  // Se a resposta é curta (< 200 chars), provavelmente é confirmação/ação — não bloquear
+  if (finalText.length < 200) {
+    return { safe: true };
+  }
+
+  // Padrões que indicam NARRATIVA FABRICADA com dados específicos
+  // (o Jarvis está contando uma história detalhada com horários e citações sem ter consultado nada)
+  const fabricatedNarrativePatterns = [
+    // Narrativa com múltiplos horários específicos (ex: "às 14:07... às 16:03... às 16:05")
+    { pattern: /\b\d{1,2}[h:]\d{2}\b/g, minMatches: 3 },
+    // Atribuição de falas com horários (ex: "Doug mandou às 14h", "Jarvis respondeu às 11h")
+    { pattern: /\b(mandou|enviou|disse|falou|respondeu|escreveu)\s+(às|as)\s*\d{1,2}[h:]\d{2}/gi, minMatches: 2 },
   ];
 
-  const hasSuspiciousData = specificDataPatterns.some(p => p.test(finalText));
-
-  if (hasSuspiciousData) {
-    console.warn('[ANTI-HALLUCINATION] ⚠️ Resposta contém dados específicos sem uso de tools — possível alucinação');
-    return {
-      safe: false,
-      reason: 'Dados específicos sem consulta prévia via tools',
-    };
+  for (const { pattern, minMatches } of fabricatedNarrativePatterns) {
+    const matches = finalText.match(pattern);
+    if (matches && matches.length >= minMatches) {
+      console.warn(`[ANTI-HALLUCINATION] ⚠️ Narrativa fabricada detectada: ${matches.length} ocorrências de "${pattern.source}"`);
+      return {
+        safe: false,
+        reason: `Narrativa com ${matches.length} dados específicos sem consulta via tools`,
+      };
+    }
   }
 
   return { safe: true };
