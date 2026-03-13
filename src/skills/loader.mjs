@@ -2,10 +2,15 @@
 // JARVIS 2.0 - Skills Loader (Modular)
 // Carrega e gerencia skills dinâmicamente
 // ============================================
-import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, GCAL_KEY_PATH, GCAL_CALENDAR_ID } from '../config.mjs';
+import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, GCAL_KEY_PATH, GCAL_CALENDAR_ID, managedClients } from '../config.mjs';
 import { pool } from '../database.mjs';
 import { readFile } from 'fs/promises';
 import { google } from 'googleapis';
+
+// Callback para enviar mensagens (registrado pelo jarvis-v2.mjs após criar o socket)
+let _sendTextFn = null;
+export function registerSendFunction(fn) { _sendTextFn = fn; }
+export function getSendFunction() { return _sendTextFn; }
 
 // ============================================
 // SKILL: ASANA
@@ -182,6 +187,33 @@ export const JARVIS_TOOLS = [
       required: ['fato'],
     },
   },
+  {
+    name: 'criar_demanda_cliente',
+    description: 'Criar uma nova demanda/task de cliente no projeto Cabine de Comando do Asana. Use quando identificar que um cliente mandou um pedido de trabalho novo.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        nome_task: { type: 'string', description: 'Nome da task (ex: "Arte para post de lancamento")' },
+        cliente: { type: 'string', description: 'Nome do cliente (ex: "Minner")' },
+        detalhes: { type: 'string', description: 'Descricao completa da demanda (briefing, contexto)' },
+        prazo: { type: 'string', description: 'Prazo em formato YYYY-MM-DD (se mencionado pelo cliente)' },
+        responsavel: { type: 'string', description: 'Primeiro nome do responsavel (padrao: bruna)' },
+      },
+      required: ['nome_task', 'cliente', 'detalhes'],
+    },
+  },
+  {
+    name: 'enviar_mensagem_grupo',
+    description: 'Enviar uma mensagem em um grupo do WhatsApp (interno ou de cliente autorizado).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        grupo: { type: 'string', description: 'Nome do grupo: "tarefas", "galaxias", ou nome do cliente (ex: "minner")' },
+        mensagem: { type: 'string', description: 'Texto da mensagem a enviar' },
+      },
+      required: ['grupo', 'mensagem'],
+    },
+  },
 ];
 
 export async function executeJarvisTool(toolName, input, teamPhones) {
@@ -232,6 +264,56 @@ export async function executeJarvisTool(toolName, input, teamPhones) {
     const { storeFacts } = await import('../memory.mjs');
     await storeFacts([{ content: input.fato, category: input.categoria || 'general', importance: input.importancia || 7 }], 'agent', null);
     return { success: true, message: 'Informacao armazenada na memoria' };
+  }
+
+  if (toolName === 'criar_demanda_cliente') {
+    const clienteName = input.cliente || 'Cliente';
+    const taskName = `[${clienteName}] ${input.nome_task}`;
+    const assigneeGid = TEAM_ASANA[(input.responsavel || 'bruna').toLowerCase()];
+    const cabineGid = ASANA_PROJECTS.CABINE;
+    if (!cabineGid) return { error: 'Projeto Cabine de Comando nao configurado' };
+
+    const now = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+    const taskData = {
+      name: taskName,
+      projects: [cabineGid],
+      notes: `Demanda recebida via WhatsApp em ${now}\n\n${input.detalhes}`,
+    };
+    if (assigneeGid) taskData.assignee = assigneeGid;
+    if (input.prazo) taskData.due_on = input.prazo;
+
+    const result = await asanaCreateTask(taskData);
+    if (result.success) {
+      result.url = `https://app.asana.com/0/${cabineGid}/${result.gid}`;
+      result.cliente = clienteName;
+      result.responsavel = input.responsavel || 'bruna';
+      console.log(`[PROACTIVE] Task criada: ${taskName} → ${result.url}`);
+    }
+    return result;
+  }
+
+  if (toolName === 'enviar_mensagem_grupo') {
+    if (!_sendTextFn) return { error: 'WhatsApp nao conectado' };
+    const grupoLower = (input.grupo || '').toLowerCase();
+    let targetJid = null;
+
+    // Resolver nome → JID
+    if (grupoLower === 'tarefas') targetJid = CONFIG.GROUP_TAREFAS;
+    else if (grupoLower === 'galaxias') targetJid = CONFIG.GROUP_GALAXIAS;
+    else {
+      // Buscar nos clientes gerenciados
+      for (const [jid, client] of managedClients) {
+        if (client.groupName?.toLowerCase().includes(grupoLower) || client.slug?.includes(grupoLower)) {
+          targetJid = jid;
+          break;
+        }
+      }
+    }
+
+    if (!targetJid) return { error: `Grupo "${input.grupo}" nao encontrado` };
+    await _sendTextFn(targetJid, input.mensagem);
+    console.log(`[PROACTIVE] Mensagem enviada para ${input.grupo}: ${input.mensagem.substring(0, 60)}...`);
+    return { success: true, grupo: input.grupo };
   }
 
   return { error: 'Ferramenta desconhecida' };

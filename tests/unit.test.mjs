@@ -196,6 +196,59 @@ describe('classifyIntent', () => {
 });
 
 // ============================================
+// TESTES: Managed Clients (config.mjs)
+// ============================================
+describe('Managed Clients', () => {
+  it('isManagedClientGroup retorna null para grupo não gerenciado', async () => {
+    const { isManagedClientGroup } = await import('../src/config.mjs');
+    const result = isManagedClientGroup('grupo_qualquer@g.us');
+    assert.equal(result, null);
+  });
+
+  it('isManagedClientGroup retorna null para cliente inativo', async () => {
+    const { managedClients, isManagedClientGroup } = await import('../src/config.mjs');
+    managedClients.set('test_inactive@g.us', { groupName: 'Test', active: false });
+    const result = isManagedClientGroup('test_inactive@g.us');
+    assert.equal(result, null);
+    managedClients.delete('test_inactive@g.us');
+  });
+
+  it('isManagedClientGroup retorna objeto para cliente ativo', async () => {
+    const { managedClients, isManagedClientGroup } = await import('../src/config.mjs');
+    managedClients.set('test_active@g.us', { groupName: 'Minner🔛StreamLab', active: true, defaultAssignee: 'bruna' });
+    const result = isManagedClientGroup('test_active@g.us');
+    assert.ok(result);
+    assert.equal(result.groupName, 'Minner🔛StreamLab');
+    assert.equal(result.active, true);
+    managedClients.delete('test_active@g.us');
+  });
+});
+
+// ============================================
+// TESTES: handleManagedClientMessage existe e é função
+// ============================================
+describe('Proactive Agent', () => {
+  it('handleManagedClientMessage é exportada do brain.mjs', async () => {
+    const mod = await import('../src/brain.mjs');
+    assert.ok(typeof mod.handleManagedClientMessage === 'function');
+  });
+
+  it('registerSendFunction é exportada do loader.mjs', async () => {
+    const mod = await import('../src/skills/loader.mjs');
+    assert.ok(typeof mod.registerSendFunction === 'function');
+    assert.ok(typeof mod.getSendFunction === 'function');
+  });
+
+  it('registerSendFunction registra e recupera callback', async () => {
+    const { registerSendFunction, getSendFunction } = await import('../src/skills/loader.mjs');
+    const mockFn = () => {};
+    registerSendFunction(mockFn);
+    assert.equal(getSendFunction(), mockFn);
+    registerSendFunction(null); // limpar
+  });
+});
+
+// ============================================
 // TESTES: Validação de estrutura
 // ============================================
 describe('Estrutura do projeto', () => {

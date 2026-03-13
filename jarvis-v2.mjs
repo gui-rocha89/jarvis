@@ -20,13 +20,13 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 
 // Módulos do Jarvis 2.0
-import { CONFIG, AUDIO_ALLOWED, teamPhones, teamWhatsApp } from './src/config.mjs';
+import { CONFIG, AUDIO_ALLOWED, teamPhones, teamWhatsApp, managedClients, loadManagedClients, saveManagedClients, isManagedClientGroup } from './src/config.mjs';
 import { pool, initDB, storeMessage, getRecentMessages, getContactInfo, getGroupInfo, upsertContact, upsertGroup, getMessageCount } from './src/database.mjs';
 import { initMemory, processMemory, getMemoryContext, getMemoryStats, searchMemories, storeFacts, extractFacts } from './src/memory.mjs';
-import { shouldJarvisRespond, isValidResponse, generateResponse, markConversationActive, isConversationActive, findTeamJid, extractMentionsFromText, generateDailyReport } from './src/brain.mjs';
+import { shouldJarvisRespond, isValidResponse, generateResponse, markConversationActive, isConversationActive, findTeamJid, extractMentionsFromText, generateDailyReport, handleManagedClientMessage } from './src/brain.mjs';
 import { voiceConfig, loadVoiceConfig, saveVoiceConfig, transcribeAudio, generateAudio } from './src/audio.mjs';
 import { synthesizeProfile, getProfile, listProfiles, syncProfiles } from './src/profiles.mjs';
-import { asanaRequest, getOverdueTasks, getGCalClient, JARVIS_TOOLS } from './src/skills/loader.mjs';
+import { asanaRequest, getOverdueTasks, getGCalClient, JARVIS_TOOLS, registerSendFunction } from './src/skills/loader.mjs';
 import { getMediaType, extractSender } from './src/helpers.mjs';
 import { startAsanaStudy, stopAsanaStudy, asanaBatchState } from './src/batch-asana.mjs';
 
@@ -196,6 +196,82 @@ async function handleIncomingMessage(m) {
       ).then(() => {
         console.log(`[HOMEWORK] Instrução do Gui salva: "${text.substring(0, 60)}..."`);
       }).catch(() => {});
+    }
+
+    // Detecção de autorização/revogação de clientes gerenciados
+    const authMatch = lower.match(/autoriz[oe]\s+(?:voc[eê]\s+a\s+)?(?:operar|trabalhar|atuar|gerenciar|monitorar)\s+(?:no|na|no\s+cliente|o\s+cliente)?\s*(.+)/i);
+    const revokeMatch = lower.match(/(?:pare|para|revog|desativ|deslig)\s+(?:de\s+)?(?:operar|trabalhar|atuar|gerenciar|monitorar)\s+(?:no|na|no\s+cliente|o\s+cliente)?\s*(.+)/i);
+
+    if (authMatch && !isGroup) {
+      const clientName = authMatch[1].replace(/[.,!?]+$/, '').trim();
+      try {
+        const { rows } = await pool.query(
+          `SELECT jid, name FROM jarvis_groups WHERE LOWER(name) LIKE $1 LIMIT 1`,
+          [`%${clientName.toLowerCase()}%`]
+        );
+        if (rows.length > 0) {
+          const groupJid = rows[0].jid;
+          const groupName = rows[0].name;
+          managedClients.set(groupJid, {
+            groupName, active: true,
+            defaultAssignee: 'bruna',
+            authorizedAt: new Date().toISOString(),
+          });
+          await saveManagedClients(pool);
+          await sendText(from, `✅ Autorizado! Agora estou operando no grupo *${groupName}*.\n\nVou monitorar as mensagens do cliente, identificar demandas, criar tasks e notificar a equipe — tudo baseado no que já aprendi estudando o Asana.`);
+          console.log(`[PROACTIVE] Cliente autorizado: ${groupName} (${groupJid})`);
+        } else {
+          await sendText(from, `Não encontrei nenhum grupo com o nome "${clientName}". Verifique o nome exato do grupo.`);
+        }
+      } catch (err) {
+        console.error('[PROACTIVE] Erro ao autorizar cliente:', err.message);
+      }
+      return;
+    }
+
+    if (revokeMatch && !isGroup) {
+      const clientName = revokeMatch[1].replace(/[.,!?]+$/, '').trim();
+      let revoked = false;
+      for (const [jid, client] of managedClients) {
+        if (client.groupName?.toLowerCase().includes(clientName.toLowerCase()) || client.slug?.includes(clientName.toLowerCase())) {
+          client.active = false;
+          await saveManagedClients(pool);
+          await sendText(from, `🔴 Operação no grupo *${client.groupName}* desativada. Não vou mais responder lá.`);
+          console.log(`[PROACTIVE] Cliente revogado: ${client.groupName}`);
+          revoked = true;
+          break;
+        }
+      }
+      if (!revoked) {
+        await sendText(from, `Não encontrei cliente "${clientName}" nos gerenciados.`);
+      }
+      return;
+    }
+  }
+
+  // AGENTE PROATIVO: Interceptar mensagens de grupos de clientes gerenciados
+  if (isGroup) {
+    const managedClient = isManagedClientGroup(from);
+    if (managedClient) {
+      // Verificar se o sender NÃO é da equipe (equipe não gera demanda)
+      const isTeamMember = teamPhones.has(pushName?.split(' ')[0]?.toLowerCase()) ||
+                           teamWhatsApp.has(pushName?.split(' ')[0]?.toLowerCase()) ||
+                           sender === CONFIG.GUI_JID;
+
+      if (!isTeamMember) {
+        console.log(`[PROACTIVE] Mensagem de cliente detectada: ${pushName} em ${managedClient.groupName}`);
+        const result = await handleManagedClientMessage(text, sender, pushName, from, managedClient, sendText);
+        if (result?.text) {
+          await sendText(from, result.text);
+          // Salvar resposta do Jarvis
+          await storeMessage({
+            messageId: 'jarvis_proactive_' + randomUUID(), chatId: from, sender: CONFIG.GUI_JID,
+            pushName: 'Jarvis', text: result.text, isGroup, isAudio: false,
+            timestamp: Math.floor(Date.now() / 1000),
+          });
+        }
+        return; // Não continua o fluxo normal
+      }
     }
   }
 
@@ -1658,6 +1734,9 @@ async function startWhatsApp() {
     if (connection === 'open') {
       connectionStatus = 'connected';
       console.log('[JARVIS] Conectado ao WhatsApp!');
+      // Registrar função de envio para o loader.mjs (proativo)
+      registerSendFunction(sendText);
+      console.log('[PROACTIVE] sendText registrada para tools proativas');
       setTimeout(async () => {
         try {
           for (const gid of [CONFIG.GROUP_TAREFAS, CONFIG.GROUP_GALAXIAS]) {
@@ -1705,6 +1784,7 @@ console.log('============================================');
 initDB().then(async () => {
   await initMemory();
   await loadTeamContacts();
+  await loadManagedClients(pool);
   startWhatsApp();
   setupCronJobs();
   console.log('[JARVIS] Todos os sistemas 2.0 inicializados.');

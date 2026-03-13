@@ -48,3 +48,41 @@ export const AUDIO_ALLOWED = new Set(
 // Mapeamento dinâmico de equipe (telefones e LIDs)
 export const teamPhones = new Map();
 export const teamWhatsApp = new Map();
+
+// ============================================
+// CLIENTES GERENCIADOS (Jarvis Proativo)
+// ============================================
+export const managedClients = new Map(); // groupJid → { groupName, active, defaultAssignee, ... }
+
+export async function loadManagedClients(pool) {
+  try {
+    const { rows } = await pool.query("SELECT value FROM jarvis_config WHERE key = 'managed_clients'");
+    if (rows.length > 0) {
+      const data = typeof rows[0].value === 'string' ? JSON.parse(rows[0].value) : rows[0].value;
+      for (const [key, client] of Object.entries(data)) {
+        if (client.groupJid) managedClients.set(client.groupJid, { ...client, slug: key });
+      }
+      console.log(`[PROACTIVE] ${managedClients.size} clientes gerenciados carregados`);
+    }
+  } catch (err) {
+    console.error('[PROACTIVE] Erro ao carregar clientes gerenciados:', err.message);
+  }
+}
+
+export async function saveManagedClients(pool) {
+  const data = {};
+  for (const [jid, client] of managedClients) {
+    const slug = client.slug || client.groupName?.split('🔛')[0]?.trim().toLowerCase().replace(/\s+/g, '_') || jid;
+    data[slug] = { ...client, groupJid: jid };
+    delete data[slug].slug;
+  }
+  await pool.query(
+    "INSERT INTO jarvis_config (key, value) VALUES ('managed_clients', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
+    [JSON.stringify(data)]
+  );
+}
+
+export function isManagedClientGroup(groupJid) {
+  const client = managedClients.get(groupJid);
+  return (client && client.active) ? client : null;
+}
