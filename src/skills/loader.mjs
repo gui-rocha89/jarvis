@@ -2,7 +2,7 @@
 // JARVIS 2.0 - Skills Loader (Modular)
 // Carrega e gerencia skills dinâmicamente
 // ============================================
-import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, GCAL_KEY_PATH, GCAL_CALENDAR_ID, managedClients } from '../config.mjs';
+import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, GCAL_KEY_PATH, GCAL_CALENDAR_ID, managedClients, saveManagedClients } from '../config.mjs';
 import { pool } from '../database.mjs';
 import { readFile } from 'fs/promises';
 import { google } from 'googleapis';
@@ -214,9 +214,32 @@ export const JARVIS_TOOLS = [
       required: ['grupo', 'mensagem'],
     },
   },
+  {
+    name: 'autorizar_cliente',
+    description: 'Ativar operacao autonoma do Jarvis em um grupo de cliente. Quando o Gui autorizar voce a operar/atuar/trabalhar em um grupo de cliente, use esta tool. SOMENTE funciona quando chamada pelo Gui.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        cliente: { type: 'string', description: 'Nome do cliente ou grupo (ex: "minner", "acme")' },
+        responsavel: { type: 'string', description: 'Primeiro nome do responsavel padrao para tasks (default: bruna)' },
+      },
+      required: ['cliente'],
+    },
+  },
+  {
+    name: 'revogar_cliente',
+    description: 'Desativar operacao autonoma do Jarvis em um grupo de cliente. Quando o Gui pedir para parar de operar em um cliente, use esta tool.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        cliente: { type: 'string', description: 'Nome do cliente ou grupo a desativar' },
+      },
+      required: ['cliente'],
+    },
+  },
 ];
 
-export async function executeJarvisTool(toolName, input, teamPhones) {
+export async function executeJarvisTool(toolName, input, context = {}) {
   console.log(`[TOOL] Executando: ${toolName}`, JSON.stringify(input));
 
   if (toolName === 'agendar_captacao') {
@@ -293,15 +316,16 @@ export async function executeJarvisTool(toolName, input, teamPhones) {
   }
 
   if (toolName === 'enviar_mensagem_grupo') {
-    if (!_sendTextFn) return { error: 'WhatsApp nao conectado' };
+    if (!_sendTextFn) return { error: 'WhatsApp nao conectado — aguarde a reconexao' };
     const grupoLower = (input.grupo || '').toLowerCase();
     let targetJid = null;
 
-    // Resolver nome → JID
+    // 1. Resolver nomes fixos
     if (grupoLower === 'tarefas') targetJid = CONFIG.GROUP_TAREFAS;
     else if (grupoLower === 'galaxias') targetJid = CONFIG.GROUP_GALAXIAS;
-    else {
-      // Buscar nos clientes gerenciados
+
+    // 2. Buscar nos clientes gerenciados
+    if (!targetJid) {
       for (const [jid, client] of managedClients) {
         if (client.groupName?.toLowerCase().includes(grupoLower) || client.slug?.includes(grupoLower)) {
           targetJid = jid;
@@ -310,10 +334,80 @@ export async function executeJarvisTool(toolName, input, teamPhones) {
       }
     }
 
+    // 3. Fallback: buscar na tabela jarvis_groups (todos os grupos conhecidos)
+    if (!targetJid) {
+      try {
+        const { rows } = await pool.query(
+          `SELECT jid, name FROM jarvis_groups WHERE LOWER(name) LIKE $1 LIMIT 1`,
+          [`%${grupoLower}%`]
+        );
+        if (rows.length > 0) targetJid = rows[0].jid;
+      } catch {}
+    }
+
     if (!targetJid) return { error: `Grupo "${input.grupo}" nao encontrado` };
     await _sendTextFn(targetJid, input.mensagem);
-    console.log(`[PROACTIVE] Mensagem enviada para ${input.grupo}: ${input.mensagem.substring(0, 60)}...`);
+    console.log(`[TOOL] Mensagem enviada para ${input.grupo}: ${input.mensagem.substring(0, 60)}...`);
     return { success: true, grupo: input.grupo };
+  }
+
+  if (toolName === 'autorizar_cliente') {
+    // Somente o Gui pode autorizar
+    const senderJid = context.senderJid || '';
+    if (senderJid !== CONFIG.GUI_JID) {
+      return { error: 'Somente o Gui pode autorizar clientes' };
+    }
+
+    const clienteName = (input.cliente || '').trim();
+    if (!clienteName) return { error: 'Nome do cliente nao informado' };
+
+    try {
+      const { rows } = await pool.query(
+        `SELECT jid, name FROM jarvis_groups WHERE LOWER(name) LIKE $1 LIMIT 1`,
+        [`%${clienteName.toLowerCase()}%`]
+      );
+
+      if (rows.length === 0) {
+        return { error: `Grupo "${clienteName}" nao encontrado. Verifique o nome exato do grupo no WhatsApp.` };
+      }
+
+      const groupJid = rows[0].jid;
+      const groupName = rows[0].name;
+
+      managedClients.set(groupJid, {
+        groupName,
+        active: true,
+        defaultAssignee: (input.responsavel || 'bruna').toLowerCase(),
+        authorizedAt: new Date().toISOString(),
+      });
+      await saveManagedClients(pool);
+
+      console.log(`[PROACTIVE] Cliente autorizado via tool: ${groupName} (${groupJid})`);
+      return { success: true, groupName, groupJid, message: `Operacao ativada no grupo ${groupName}` };
+    } catch (err) {
+      return { error: `Erro ao autorizar: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'revogar_cliente') {
+    const senderJid = context.senderJid || '';
+    if (senderJid !== CONFIG.GUI_JID) {
+      return { error: 'Somente o Gui pode revogar clientes' };
+    }
+
+    const clienteName = (input.cliente || '').toLowerCase().trim();
+    let revoked = false;
+
+    for (const [jid, client] of managedClients) {
+      if (client.groupName?.toLowerCase().includes(clienteName) || client.slug?.includes(clienteName)) {
+        client.active = false;
+        await saveManagedClients(pool);
+        console.log(`[PROACTIVE] Cliente revogado via tool: ${client.groupName}`);
+        return { success: true, groupName: client.groupName, message: `Operacao desativada no grupo ${client.groupName}` };
+      }
+    }
+
+    return { error: `Cliente "${input.cliente}" nao encontrado nos gerenciados` };
   }
 
   return { error: 'Ferramenta desconhecida' };

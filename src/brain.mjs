@@ -187,7 +187,7 @@ export async function generateResponse(text, chatId, senderJid, pushName, isGrou
       if (block.type === 'text') {
         finalText += block.text;
       } else if (block.type === 'tool_use') {
-        const result = await executeJarvisTool(block.name, block.input, teamPhones);
+        const result = await executeJarvisTool(block.name, block.input, { senderJid, chatId });
         toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
         if (result.mention_jid) {
           mentions.push({ name: result.mention_name, jid: result.mention_jid });
@@ -318,7 +318,7 @@ export async function handleManagedClientMessage(text, senderJid, pushName, chat
       if (block.type === 'text') {
         finalText += block.text;
       } else if (block.type === 'tool_use') {
-        const result = await executeJarvisTool(block.name, block.input);
+        const result = await executeJarvisTool(block.name, block.input, { senderJid, chatId });
         toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
       }
     }
