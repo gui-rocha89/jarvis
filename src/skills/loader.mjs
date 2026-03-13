@@ -365,7 +365,7 @@ export const JARVIS_TOOLS = [
   },
   {
     name: 'anexar_midia_asana',
-    description: 'Anexar arquivos de midia (imagens, videos, documentos) recebidos do WhatsApp a uma task do Asana. Use SEMPRE que o cliente enviar material (fotos, videos, PDFs) junto com uma demanda e voce criar a task. Os arquivos ja estao baixados — basta informar os message_ids.',
+    description: 'Anexar arquivos de midia (imagens, videos, documentos) recebidos do WhatsApp a uma task do Asana. Use SEMPRE que o cliente enviar material (fotos, videos, PDFs). Pode usar message_ids especificos OU chat_id pra pegar todos os arquivos recentes daquele chat. Se nao tiver os IDs exatos, use chat_id com upload_all_recent=true.',
     input_schema: {
       type: 'object',
       properties: {
@@ -373,10 +373,18 @@ export const JARVIS_TOOLS = [
         message_ids: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Lista de message_ids do WhatsApp cujas midias devem ser anexadas (vem no contexto da mensagem como [msg_id: xxx])',
+          description: 'Lista de message_ids do WhatsApp cujas midias devem ser anexadas (vem no contexto da mensagem como [msg_id: xxx]). Se nao tiver os IDs exatos, use chat_id com upload_all_recent.',
+        },
+        chat_id: {
+          type: 'string',
+          description: 'ID do chat (numero do WhatsApp, ex: 555599154868). Quando informado com upload_all_recent=true, anexa TODOS os arquivos recentes desse chat.',
+        },
+        upload_all_recent: {
+          type: 'boolean',
+          description: 'Se true, ignora message_ids e anexa TODOS os arquivos de midia do chat (do chat_id informado ou de todos os chats). Use quando nao tiver os message_ids exatos.',
         },
       },
-      required: ['task_gid', 'message_ids'],
+      required: ['task_gid'],
     },
   },
 ];
@@ -627,38 +635,122 @@ export async function executeJarvisTool(toolName, input, context = {}) {
   if (toolName === 'anexar_midia_asana') {
     const taskGid = input.task_gid;
     const messageIds = input.message_ids || [];
+    const chatId = input.chat_id || '';
+    const uploadAllRecent = input.upload_all_recent || false;
     if (!taskGid) return { error: 'task_gid é obrigatório' };
-    if (messageIds.length === 0) return { error: 'Nenhum message_id informado' };
 
     const results = [];
     const mediaBaseDir = path.join(process.cwd(), 'media_files');
 
-    for (const msgId of messageIds) {
-      // Buscar arquivo em todos os subdiretórios de media_files/
-      let found = false;
+    // Coletar todos os arquivos a enviar
+    let filesToUpload = [];
+
+    if (uploadAllRecent || messageIds.length === 0) {
+      // Modo: upload de TODOS os arquivos recentes
       try {
         const subdirs = await readdir(mediaBaseDir).catch(() => []);
-        for (const subdir of subdirs) {
+        // Se chatId informado, filtrar pelo diretório do chat
+        const targetDirs = chatId ? subdirs.filter(d => d.includes(chatId.split('@')[0])) : subdirs;
+        for (const subdir of (targetDirs.length > 0 ? targetDirs : subdirs)) {
           const dirPath = path.join(mediaBaseDir, subdir);
           const files = await readdir(dirPath).catch(() => []);
-          const match = files.find(f => f.startsWith(msgId));
-          if (match) {
-            const filePath = path.join(dirPath, match);
-            const uploadResult = await asanaUploadAttachment(taskGid, filePath, match);
-            results.push({ messageId: msgId, fileName: match, ...uploadResult });
-            found = true;
-            break;
+          for (const file of files) {
+            const filePath = path.join(dirPath, file);
+            const fileStat = await stat(filePath).catch(() => null);
+            if (fileStat && fileStat.isFile()) {
+              // Somente arquivos das últimas 24h
+              const ageHours = (Date.now() - fileStat.mtimeMs) / (1000 * 60 * 60);
+              if (ageHours <= 24) {
+                filesToUpload.push({ path: filePath, fileName: file, messageId: file.split('.')[0] });
+              }
+            }
           }
         }
-      } catch {}
-      if (!found) {
-        results.push({ messageId: msgId, success: false, error: 'Arquivo não encontrado em media_files/' });
+        // Deduplicar por tamanho (evita reenviar a mesma foto encaminhada)
+        const seen = new Map();
+        const deduped = [];
+        for (const f of filesToUpload) {
+          const fileStat = await stat(f.path).catch(() => null);
+          const key = fileStat ? fileStat.size : f.fileName;
+          if (!seen.has(key)) {
+            seen.set(key, true);
+            deduped.push(f);
+          }
+        }
+        filesToUpload = deduped;
+        console.log(`[TOOL] upload_all_recent: ${filesToUpload.length} arquivos encontrados (${chatId || 'todos os chats'})`);
+      } catch (e) {
+        console.error('[TOOL] Erro listando media_files:', e.message);
+      }
+    } else {
+      // Modo: buscar por message_ids específicos
+      for (const msgId of messageIds) {
+        let found = false;
+        try {
+          const subdirs = await readdir(mediaBaseDir).catch(() => []);
+          for (const subdir of subdirs) {
+            const dirPath = path.join(mediaBaseDir, subdir);
+            const files = await readdir(dirPath).catch(() => []);
+            const match = files.find(f => f.startsWith(msgId));
+            if (match) {
+              filesToUpload.push({ path: path.join(dirPath, match), fileName: match, messageId: msgId });
+              found = true;
+              break;
+            }
+          }
+        } catch {}
+        if (!found) {
+          // Fallback: se nenhum message_id bate, tenta upload_all_recent
+          console.log(`[TOOL] message_id ${msgId} não encontrado, tentando fallback...`);
+          results.push({ messageId: msgId, success: false, error: 'ID não encontrado' });
+        }
+      }
+      // Se NENHUM message_id foi encontrado, fallback pra todos os recentes
+      if (filesToUpload.length === 0 && results.length > 0) {
+        console.log('[TOOL] Nenhum message_id válido, fallback para upload_all_recent');
+        try {
+          const subdirs = await readdir(mediaBaseDir).catch(() => []);
+          const targetDirs = chatId ? subdirs.filter(d => d.includes(chatId.split('@')[0])) : subdirs;
+          for (const subdir of (targetDirs.length > 0 ? targetDirs : subdirs)) {
+            const dirPath = path.join(mediaBaseDir, subdir);
+            const files = await readdir(dirPath).catch(() => []);
+            for (const file of files) {
+              const filePath = path.join(dirPath, file);
+              const fileStat = await stat(filePath).catch(() => null);
+              if (fileStat && fileStat.isFile()) {
+                const ageHours = (Date.now() - fileStat.mtimeMs) / (1000 * 60 * 60);
+                if (ageHours <= 24) {
+                  filesToUpload.push({ path: filePath, fileName: file, messageId: file.split('.')[0] });
+                }
+              }
+            }
+          }
+          // Deduplicar
+          const seen = new Map();
+          const deduped = [];
+          for (const f of filesToUpload) {
+            const fileStat = await stat(f.path).catch(() => null);
+            const key = fileStat ? fileStat.size : f.fileName;
+            if (!seen.has(key)) { seen.set(key, true); deduped.push(f); }
+          }
+          filesToUpload = deduped;
+          results.length = 0; // Limpar erros dos IDs falhos
+          console.log(`[TOOL] Fallback: ${filesToUpload.length} arquivos recentes encontrados`);
+        } catch (e) {
+          console.error('[TOOL] Erro no fallback:', e.message);
+        }
       }
     }
 
+    // Upload de cada arquivo
+    for (const file of filesToUpload) {
+      const uploadResult = await asanaUploadAttachment(taskGid, file.path, file.fileName);
+      results.push({ messageId: file.messageId, fileName: file.fileName, ...uploadResult });
+    }
+
     const successCount = results.filter(r => r.success).length;
-    console.log(`[TOOL] Anexos uploaded: ${successCount}/${messageIds.length} para task ${taskGid}`);
-    return { success: successCount > 0, total: messageIds.length, uploaded: successCount, results };
+    console.log(`[TOOL] Anexos uploaded: ${successCount}/${filesToUpload.length || messageIds.length} para task ${taskGid}`);
+    return { success: successCount > 0, total: filesToUpload.length || messageIds.length, uploaded: successCount, results };
   }
 
   return { error: 'Ferramenta desconhecida' };
