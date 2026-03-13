@@ -11,6 +11,131 @@ import { JARVIS_TOOLS, executeJarvisTool } from './skills/loader.mjs';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 
+// Máximo de iterações no agent loop (evita loops infinitos)
+const MAX_AGENT_ITERATIONS = 10;
+
+/**
+ * Decide qual modelo usar baseado na complexidade da mensagem.
+ * Queries complexas (multi-step, análise profunda, estratégia) → Opus
+ * Queries simples (cumprimento, pergunta direta, status) → Sonnet
+ */
+function chooseModel(text, intent) {
+  const strong = CONFIG.AI_MODEL_STRONG;
+  if (!strong || strong === CONFIG.AI_MODEL) return CONFIG.AI_MODEL;
+
+  // Indicadores de complexidade que justificam Opus
+  const complexPatterns = [
+    /\b(analise|analis[ae]r|estrateg|planejar|planejamento|comparar|avaliar)\b/i,
+    /\b(relat[oó]rio|diagn[oó]stico|revis[aã]o|auditoria)\b/i,
+    /\b(como (funciona|posso|fazer|melhorar|resolver))\b/i,
+    /\b(por que|qual (a |o )?melhor|prós e contras)\b/i,
+    /\b(crie|monte|elabore|desenvolva|proponha)\b/i,
+  ];
+
+  // Texto longo + complexidade = Opus
+  const isComplex = text.length > 100 && complexPatterns.some(p => p.test(text));
+  // Agente gestor com query longa = Opus
+  const isManagerComplex = intent?.agent === 'manager' && text.length > 80;
+  // Agente criativo com briefing = Opus
+  const isCreativeComplex = intent?.agent === 'creative' && text.length > 120;
+
+  if (isComplex || isManagerComplex || isCreativeComplex) {
+    console.log(`[AI] Modelo forte selecionado: ${strong} (complexidade detectada)`);
+    return strong;
+  }
+
+  return CONFIG.AI_MODEL;
+}
+
+/**
+ * Executa o Agent Loop completo:
+ * 1. Chama Claude com tools
+ * 2. Se retornou tool_use → executa tools → alimenta resultados → repete
+ * 3. Continua até receber texto final ou atingir MAX_AGENT_ITERATIONS
+ *
+ * Retorna { text, mentions, toolResults }
+ */
+async function agentLoop(model, systemPrompt, messages, tools, context = {}) {
+  let currentMessages = [...messages];
+  let finalText = '';
+  const allMentions = [];
+  let iterations = 0;
+
+  // Configurar thinking baseado no modelo
+  const useThinking = true;
+  const thinkingConfig = model.includes('opus')
+    ? { type: 'enabled', budget_tokens: 8192 }
+    : { type: 'enabled', budget_tokens: 4096 };
+
+  while (iterations < MAX_AGENT_ITERATIONS) {
+    iterations++;
+
+    const apiParams = {
+      model,
+      max_tokens: useThinking ? 12000 : 2048,
+      system: systemPrompt,
+      messages: currentMessages,
+      tools: tools || undefined,
+      thinking: thinkingConfig,
+    };
+
+    // Interleaved thinking para ver raciocínio entre tool calls
+    const response = await anthropic.messages.create(apiParams, {
+      headers: { 'anthropic-beta': 'interleaved-thinking-2025-05-14' },
+    });
+
+    // Processar blocos da resposta
+    let hasToolUse = false;
+    const toolResults = [];
+    const assistantContent = [];
+
+    for (const block of response.content) {
+      // Preservar todos os blocos (incluindo thinking) para o histórico
+      assistantContent.push(block);
+
+      if (block.type === 'text') {
+        finalText += block.text;
+      } else if (block.type === 'tool_use') {
+        hasToolUse = true;
+        console.log(`[AGENT-LOOP] Iteração ${iterations}: tool_use → ${block.name}(${JSON.stringify(block.input).substring(0, 100)})`);
+        try {
+          const result = await executeJarvisTool(block.name, block.input, context);
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
+          if (result.mention_jid) {
+            allMentions.push({ name: result.mention_name, jid: result.mention_jid });
+          }
+        } catch (err) {
+          console.error(`[AGENT-LOOP] Erro na tool ${block.name}:`, err.message);
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify({ error: err.message }), is_error: true });
+        }
+      }
+      // thinking blocks são preservados no assistantContent mas não geram ação
+    }
+
+    // Se não houve tool_use, temos a resposta final
+    if (!hasToolUse || response.stop_reason !== 'tool_use') {
+      console.log(`[AGENT-LOOP] Concluído em ${iterations} iteração(ões)`);
+      break;
+    }
+
+    // Preparar próxima iteração: adicionar assistant content + tool results
+    currentMessages = [
+      ...currentMessages,
+      { role: 'assistant', content: assistantContent },
+      { role: 'user', content: toolResults },
+    ];
+
+    // Reset finalText para pegar apenas o texto da última iteração
+    finalText = '';
+  }
+
+  if (iterations >= MAX_AGENT_ITERATIONS) {
+    console.warn(`[AGENT-LOOP] Atingiu limite de ${MAX_AGENT_ITERATIONS} iterações`);
+  }
+
+  return { text: finalText, mentions: allMentions };
+}
+
 // Modo conversa: Jarvis fica escutando 3 min após responder
 const activeConversations = new Map();
 
@@ -155,14 +280,29 @@ export async function generateResponse(text, chatId, senderJid, pushName, isGrou
     contextNote += memoryContext;
 
     // Escolher prompt baseado no agente classificado
-    let systemPrompt = MASTER_SYSTEM_PROMPT;
+    let agentSection = '';
     if (intent.agent !== 'master' && intent.confidence >= 0.8) {
       const agentPrompt = AGENT_PROMPTS[intent.agent];
       if (agentPrompt) {
-        systemPrompt = MASTER_SYSTEM_PROMPT + '\n\n--- MODO ESPECIALISTA ---\n' + agentPrompt;
+        agentSection = '\n\n--- MODO ESPECIALISTA ---\n' + agentPrompt;
         console.log(`[AGENT] Agente ${intent.agent} ativado (confianca ${(intent.confidence * 100).toFixed(0)}%)`);
       }
     }
+
+    // Prompt Caching: system prompt como array com cache_control
+    // Bloco estático (MASTER_SYSTEM_PROMPT) = cacheável (muda raramente)
+    // Bloco dinâmico (contextNote) = NÃO cacheável (muda a cada request)
+    const systemPrompt = [
+      {
+        type: 'text',
+        text: MASTER_SYSTEM_PROMPT + agentSection,
+        cache_control: { type: 'ephemeral' },
+      },
+      {
+        type: 'text',
+        text: contextNote,
+      },
+    ];
 
     // Adicionar mensagem atual
     const currentMsg = { role: 'user', content: `[${pushName}]: ${text}` };
@@ -177,43 +317,15 @@ export async function generateResponse(text, chatId, senderJid, pushName, isGrou
       consolidatedHistory.shift();
     }
 
-    const response = await anthropic.messages.create({
-      model: CONFIG.AI_MODEL,
-      max_tokens: 1024,
-      system: systemPrompt + contextNote,
-      messages: consolidatedHistory,
-      tools: JARVIS_TOOLS,
-    });
+    // Escolher modelo (Sonnet para simples, Opus para complexo)
+    const model = chooseModel(text, intent);
 
-    // Processar resposta
-    let finalText = '';
-    const mentions = [];
-    const toolResults = [];
+    // Agent Loop: executa tools em loop até resposta final
+    const { text: finalText, mentions } = await agentLoop(
+      model, systemPrompt, consolidatedHistory, JARVIS_TOOLS, { senderJid, chatId }
+    );
 
-    for (const block of response.content) {
-      if (block.type === 'text') {
-        finalText += block.text;
-      } else if (block.type === 'tool_use') {
-        const result = await executeJarvisTool(block.name, block.input, { senderJid, chatId });
-        toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
-        if (result.mention_jid) {
-          mentions.push({ name: result.mention_name, jid: result.mention_jid });
-        }
-      }
-    }
-
-    // Follow-up se houve tool_use
-    if (toolResults.length > 0 && response.stop_reason === 'tool_use') {
-      const followUp = await anthropic.messages.create({
-        model: CONFIG.AI_MODEL,
-        max_tokens: 500,
-        system: systemPrompt + contextNote,
-        messages: [...consolidatedHistory, { role: 'assistant', content: response.content }, { role: 'user', content: toolResults }],
-      });
-      finalText = followUp.content.filter(b => b.type === 'text').map(b => b.text).join('');
-    }
-
-    // Auto-detectar @mentions
+    // Auto-detectar @mentions adicionais no texto
     const textMentions = extractMentionsFromText(finalText);
     for (const tm of textMentions) {
       if (!mentions.some(m => m.jid === tm.jid)) mentions.push(tm);
@@ -313,40 +425,21 @@ export async function handleManagedClientMessage(text, senderJid, pushName, chat
     const dateStr = brDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
     const timeStr = brDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
-    const systemPrompt = buildClientAgentPrompt(managedClient, memoryContext, dateStr, timeStr, dayOfWeek);
+    const clientPromptText = buildClientAgentPrompt(managedClient, memoryContext, dateStr, timeStr, dayOfWeek);
 
-    // Chamar Claude com tools — ele decide sozinho o que fazer
-    const response = await anthropic.messages.create({
-      model: CONFIG.AI_MODEL,
-      max_tokens: 1024,
-      system: systemPrompt,
-      messages: consolidatedHistory,
-      tools: JARVIS_TOOLS,
-    });
+    // Prompt Caching: separar parte estática (prompt do agente) da dinâmica (contexto)
+    const systemPrompt = [
+      {
+        type: 'text',
+        text: clientPromptText,
+        cache_control: { type: 'ephemeral' },
+      },
+    ];
 
-    // Processar resposta
-    let finalText = '';
-    const toolResults = [];
-
-    for (const block of response.content) {
-      if (block.type === 'text') {
-        finalText += block.text;
-      } else if (block.type === 'tool_use') {
-        const result = await executeJarvisTool(block.name, block.input, { senderJid, chatId });
-        toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
-      }
-    }
-
-    // Follow-up se houve tool_use
-    if (toolResults.length > 0 && response.stop_reason === 'tool_use') {
-      const followUp = await anthropic.messages.create({
-        model: CONFIG.AI_MODEL,
-        max_tokens: 500,
-        system: systemPrompt,
-        messages: [...consolidatedHistory, { role: 'assistant', content: response.content }, { role: 'user', content: toolResults }],
-      });
-      finalText = followUp.content.filter(b => b.type === 'text').map(b => b.text).join('');
-    }
+    // Agent Loop: executa tools em loop até resposta final
+    const { text: finalText } = await agentLoop(
+      CONFIG.AI_MODEL, systemPrompt, consolidatedHistory, JARVIS_TOOLS, { senderJid, chatId }
+    );
 
     // Decisão do modelo: se retornou texto vazio ou [SILENCIO], não responde
     if (!finalText || finalText.trim() === '' || finalText.includes('[SILENCIO]')) {
@@ -363,7 +456,7 @@ export async function handleManagedClientMessage(text, senderJid, pushName, chat
     clientGroupCooldown.set(chatId, Date.now());
 
     console.log(`[PROACTIVE] Resposta para ${managedClient.groupName}: ${finalText.substring(0, 80)}`);
-    return { text: finalText, toolResults };
+    return { text: finalText };
   } catch (err) {
     console.error(`[PROACTIVE] Erro ao processar mensagem de cliente:`, err.message);
     return null; // Silêncio em caso de erro — NUNCA erro para o cliente

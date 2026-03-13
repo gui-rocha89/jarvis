@@ -10,6 +10,7 @@ export const CONFIG = {
   GROUP_GALAXIAS: process.env.GROUP_GALAXIAS || '',
   GUI_JID: process.env.GUI_JID || '',
   AI_MODEL: process.env.AI_MODEL || 'claude-sonnet-4-6',
+  AI_MODEL_STRONG: process.env.AI_MODEL_STRONG || 'claude-opus-4-0-20250514',
   MAX_CONTEXT_MESSAGES: 30,
   ASANA_PAT: process.env.ASANA_PAT || '',
   ASANA_WORKSPACE: process.env.ASANA_WORKSPACE || '',

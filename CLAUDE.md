@@ -138,6 +138,12 @@ auth_session/                   # Sessão WhatsApp (NÃO VERSIONADO)
 ### src/brain.mjs (Cérebro + Agent Teams + Agente Proativo)
 **Exporta:** `shouldJarvisRespond`, `isValidResponse`, `generateResponse`, `markConversationActive`, `isConversationActive`, `findTeamJid`, `extractMentionsFromText`, `generateDailyReport`, `handleManagedClientMessage`
 
+- **Arquitetura inspirada na Claude Code:**
+  - **Agent Loop real** — `agentLoop()` executa tools em loop `while(stop_reason === 'tool_use')` até resposta final (máx 10 iterações). Substitui o antigo follow-up único.
+  - **Extended Thinking** — `thinking: { type: "enabled", budget_tokens: N }` em todas as chamadas. Opus: 8192 tokens de thinking, Sonnet: 4096.
+  - **Interleaved Thinking** — Header beta `interleaved-thinking-2025-05-14` para raciocínio entre tool calls.
+  - **Prompt Caching** — System prompt como array com `cache_control: { type: "ephemeral" }` nos blocos estáticos (MASTER_SYSTEM_PROMPT). Contexto dinâmico NÃO é cacheado.
+  - **Roteamento de Modelo** — `chooseModel()` seleciona Opus (`AI_MODEL_STRONG`) para queries complexas (análise, estratégia, briefings longos) e Sonnet (`AI_MODEL`) para o resto.
 - Classifica intenção e roteia para agente especializado (master/creative/manager/researcher)
 - Modo conversa: janela de 3 minutos ativa após resposta
 - Consolidação de mensagens consecutivas do mesmo remetente
@@ -281,10 +287,13 @@ Mensagem recebida (WhatsApp)
       2. Consolida mensagens consecutivas do mesmo role
       3. getMemoryContext() — 6 camadas de contexto
       4. classifyIntent() → master/creative/manager/researcher
-      5. System prompt + contexto + agente especializado
-      6. Claude API com tools (agendar_captacao, consultar_tarefas, lembrar,
-         criar_demanda_cliente, enviar_mensagem_grupo)
-      7. Se tool_use → executa → follow-up com resultado
+      5. System prompt (com cache_control) + contexto + agente especializado
+      6. chooseModel() → Sonnet (simples) ou Opus (complexo)
+      7. agentLoop() com Extended Thinking + Interleaved Thinking:
+         - Claude API com tools (agendar_captacao, consultar_tarefas, lembrar,
+           criar_demanda_cliente, enviar_mensagem_grupo)
+         - while(tool_use) → executa tools → alimenta resultados → repete
+         - Máx 10 iterações, erro em tool → continua com is_error
       8. extractMentionsFromText()
       → Envia resposta no WhatsApp
       → markConversationActive() (janela de 3 min)
@@ -390,7 +399,8 @@ Consulte `.env.example` para a lista completa. Variáveis críticas:
 | `API_KEY` | Chave interna da API (header x-api-key) |
 | `API_PORT` | Porta do Express (default: 3100) |
 | `MEMORY_MODEL` | Modelo para extração de fatos (ex: claude-3-haiku-20240307) |
-| `AI_MODEL` | Modelo principal para respostas (ex: claude-sonnet-4-20250514) |
+| `AI_MODEL` | Modelo principal para respostas (ex: claude-sonnet-4-6) |
+| `AI_MODEL_STRONG` | Modelo forte para queries complexas (ex: claude-opus-4-0-20250514) |
 
 ---
 
@@ -398,6 +408,7 @@ Consulte `.env.example` para a lista completa. Variáveis críticas:
 
 - [x] ~~Rotinas proativas~~ — Agente Proativo implementado (opera em grupos de clientes autorizados)
 - [x] ~~Novos tools~~ — `criar_demanda_cliente`, `enviar_mensagem_grupo` implementados
+- [x] ~~Arquitetura Claude Code~~ — Agent Loop real, Extended Thinking, Prompt Caching, Model Routing (Sonnet/Opus)
 - [ ] pgvector para busca semântica de memórias
 - [ ] Webhooks Asana para acompanhamento em tempo real
 - [ ] Novos tools: mover tarefas entre seções no Asana

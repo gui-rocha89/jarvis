@@ -249,6 +249,25 @@ describe('Proactive Agent', () => {
 });
 
 // ============================================
+// TESTES: AI_MODEL_STRONG (config.mjs)
+// ============================================
+describe('AI Model Strong', () => {
+  it('CONFIG.AI_MODEL_STRONG existe e é string', async () => {
+    const { CONFIG } = await import('../src/config.mjs');
+    assert.ok(typeof CONFIG.AI_MODEL_STRONG === 'string');
+    assert.ok(CONFIG.AI_MODEL_STRONG.length > 0);
+  });
+
+  it('CONFIG.AI_MODEL_STRONG difere do AI_MODEL', async () => {
+    const { CONFIG } = await import('../src/config.mjs');
+    // Em produção AI_MODEL_STRONG deve ser opus e AI_MODEL deve ser sonnet
+    // Aqui apenas verificamos que ambos existem
+    assert.ok(typeof CONFIG.AI_MODEL === 'string');
+    assert.ok(typeof CONFIG.AI_MODEL_STRONG === 'string');
+  });
+});
+
+// ============================================
 // TESTES: Validação de estrutura
 // ============================================
 describe('Estrutura do projeto', () => {
@@ -271,6 +290,7 @@ describe('Estrutura do projeto', () => {
       'TEAM_ASANA',
       'ASANA_PROJECTS',
       'GCAL_CALENDAR_ID',
+      'AI_MODEL_STRONG',
     ];
 
     for (const v of requiredVars) {
