@@ -98,13 +98,20 @@ export async function generateResponse(text, chatId, senderJid, pushName, isGrou
     const groupInfo = await getGroupInfo(chatId);
 
     // Montar histórico
+    // Identificar mensagens do próprio Jarvis por múltiplos critérios
+    const botNumber = CONFIG.BOT_NUMBER || '';
     const chatHistory = [];
     for (const m of recentMessages) {
-      const name = m.push_name || 'Desconhecido';
-      if (name === 'Jarvis') {
-        chatHistory.push({ role: 'assistant', content: m.text });
+      const isJarvisMsg = m.push_name === 'Jarvis' ||
+        m.message_id?.startsWith('jarvis_') ||
+        (botNumber && m.sender && m.sender.includes(botNumber));
+      // Timestamp para noção temporal
+      const timeTag = m.hora_br ? `[${new Date(m.hora_br).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}] ` : '';
+      if (isJarvisMsg) {
+        chatHistory.push({ role: 'assistant', content: `${timeTag}${m.text}` });
       } else {
-        chatHistory.push({ role: 'user', content: `[${name}]: ${m.text}` });
+        const name = m.push_name || 'Desconhecido';
+        chatHistory.push({ role: 'user', content: `${timeTag}[${name}]: ${m.text}` });
       }
     }
 
@@ -260,13 +267,20 @@ export async function handleManagedClientMessage(text, senderJid, pushName, chat
     ]);
 
     // Montar histórico do chat
+    // Identificar mensagens do Jarvis por múltiplos critérios (push_name, message_id, sender)
+    const botNum = CONFIG.BOT_NUMBER || '';
     const chatHistory = [];
     for (const m of recentMessages) {
-      const name = m.push_name || 'Desconhecido';
-      if (name === 'Jarvis') {
-        chatHistory.push({ role: 'assistant', content: m.text });
+      const isJarvisMsg = m.push_name === 'Jarvis' ||
+        m.message_id?.startsWith('jarvis_') ||
+        (botNum && m.sender && m.sender.includes(botNum));
+      // Incluir timestamp no histórico para noção temporal
+      const timeTag = m.hora_br ? `[${new Date(m.hora_br).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}] ` : '';
+      if (isJarvisMsg) {
+        chatHistory.push({ role: 'assistant', content: `${timeTag}${m.text}` });
       } else {
-        chatHistory.push({ role: 'user', content: `[${name}]: ${m.text}` });
+        const name = m.push_name || 'Desconhecido';
+        chatHistory.push({ role: 'user', content: `${timeTag}[${name}]: ${m.text}` });
       }
     }
     // Consolidar consecutivos

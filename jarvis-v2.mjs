@@ -128,7 +128,12 @@ async function loadTeamContacts() {
 // ============================================
 async function handleIncomingMessage(m) {
   if (m.key.remoteJid === 'status@broadcast') return;
-  if (m.key.fromMe && sentByBot.has(m.key.id)) { sentByBot.delete(m.key.id); return; }
+  // Ignorar TODAS as mensagens fromMe (enviadas pelo próprio bot)
+  // Não depender do sentByBot — ele é efêmero e perde dados no restart do PM2
+  if (m.key.fromMe) {
+    sentByBot.delete(m.key.id); // limpar se existia
+    return;
+  }
 
   const from = m.key.remoteJid;
   const isGroup = from.endsWith('@g.us');
@@ -301,8 +306,8 @@ async function handleIncomingMessage(m) {
   // Decidir se Jarvis deve responder
   const quotedParticipant = m.message?.extendedTextMessage?.contextInfo?.participant || '';
   const quotedStanzaId = m.message?.extendedTextMessage?.contextInfo?.stanzaId || '';
-  const botNumber = CONFIG.GUI_JID.split('@')[0];
-  const isReplyToJarvis = (botNumber && quotedParticipant.includes(botNumber)) || sentByBot.has(quotedStanzaId);
+  const botNum = CONFIG.BOT_NUMBER || '';
+  const isReplyToJarvis = (botNum && quotedParticipant.includes(botNum)) || sentByBot.has(quotedStanzaId);
 
   if (!shouldJarvisRespond(text, from, isGroup, isReplyToJarvis)) return;
 
@@ -1757,7 +1762,11 @@ async function startWhatsApp() {
     }
     if (connection === 'open') {
       connectionStatus = 'connected';
-      console.log('[JARVIS] Conectado ao WhatsApp!');
+      // Salvar JID do bot para identificação de mensagens próprias
+      const botJid = sock.user?.id || '';
+      CONFIG.BOT_JID = botJid;
+      CONFIG.BOT_NUMBER = botJid.split(':')[0] || botJid.split('@')[0] || '';
+      console.log(`[JARVIS] Conectado ao WhatsApp! (bot: ${CONFIG.BOT_NUMBER})`);
       // Registrar função de envio para o loader.mjs (proativo)
       registerSendFunction(sendText);
       console.log('[PROACTIVE] sendText registrada para tools proativas');

@@ -202,7 +202,9 @@ export async function storeMessage(data) {
 export async function getRecentMessages(chatId, limit = 30) {
   try {
     const result = await pool.query(
-      `SELECT message_id, push_name, text, is_audio, timestamp, message_key FROM jarvis_messages
+      `SELECT message_id, push_name, sender, text, is_audio, timestamp, message_key,
+              created_at AT TIME ZONE 'America/Sao_Paulo' as hora_br
+       FROM jarvis_messages
        WHERE chat_id = $1 AND text IS NOT NULL AND text != ''
        ORDER BY timestamp DESC LIMIT $2`,
       [chatId, limit]
