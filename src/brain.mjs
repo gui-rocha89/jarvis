@@ -886,10 +886,40 @@ export async function runOverdueCheck() {
     }
 
     const now = new Date();
+    const { asanaWrite } = await import('./skills/loader.mjs');
+    const { TEAM_ASANA } = await import('./config.mjs');
+
+    // Inverter TEAM_ASANA para buscar GID pelo nome
+    const nameToGid = {};
+    for (const [name, gid] of Object.entries(TEAM_ASANA)) {
+      nameToGid[name.toLowerCase()] = gid;
+    }
+
     for (const [assignee, tasks] of Object.entries(byAssignee)) {
       if (assignee === 'Sem responsavel' || assignee === 'Sem responsável') continue;
 
-      let msg = `@${assignee}, mencionei você nessas tasks e ainda não tive retorno:\n\n`;
+      const assigneeGid = nameToGid[assignee.toLowerCase()];
+
+      // 1. PRIMEIRO: Comentar DE VERDADE em cada task no Asana (com @mention)
+      for (const t of tasks.slice(0, 5)) {
+        const daysLate = Math.floor((now - new Date(t.due_on)) / (1000 * 60 * 60 * 24));
+        const commentBody = assigneeGid
+          ? { html_text: `<body><a data-asana-gid="${assigneeGid}"/> Essa task está com ${daysLate} dia(s) de atraso (prazo: ${new Date(t.due_on).toLocaleDateString('pt-BR')}). Pode dar um retorno sobre o andamento?</body>` }
+          : { text: `${assignee}, essa task está com ${daysLate} dia(s) de atraso (prazo: ${new Date(t.due_on).toLocaleDateString('pt-BR')}). Pode dar um retorno sobre o andamento?` };
+
+        const commentResult = await asanaWrite('POST', `/tasks/${t.gid}/stories`, commentBody);
+        if (commentResult.success) {
+          console.log(`[COBRANCA] Comentário real no Asana: task ${t.gid} (${t.name})`);
+        } else {
+          console.error(`[COBRANCA] Erro ao comentar task ${t.gid}:`, commentResult.error);
+        }
+
+        // Rate limit: 1 req/s pra não bater no limite da API Asana
+        await new Promise(r => setTimeout(r, 1000));
+      }
+
+      // 2. DEPOIS: Mandar resumo no WhatsApp
+      let msg = `@${assignee}, te mencionei nessas tasks no Asana:\n\n`;
       for (const t of tasks.slice(0, 5)) {
         const daysLate = Math.floor((now - new Date(t.due_on)) / (1000 * 60 * 60 * 24));
         const url = `https://app.asana.com/0/${t.projectGid}/${t.gid}`;
@@ -902,9 +932,9 @@ export async function runOverdueCheck() {
       msg += 'Pode verificar? 🙏';
 
       await sendFn(CONFIG.GROUP_TAREFAS, msg);
-      console.log(`[COBRANCA] Cobrado ${assignee}: ${tasks.length} tasks atrasadas`);
+      console.log(`[COBRANCA] Cobrado ${assignee}: ${tasks.length} tasks (comentou no Asana + avisou no WhatsApp)`);
 
-      // Pequeno delay entre mensagens pra não spammar
+      // Delay entre responsáveis
       await new Promise(r => setTimeout(r, 2000));
     }
 
