@@ -824,9 +824,21 @@ export async function executeJarvisTool(toolName, input, context = {}) {
 
     // Enviar com ou sem menções reais
     if (mentionJids.length > 0 && _sendTextWithMentionsFn) {
+      // Substituir @Nome pelo @número no texto (WhatsApp exige @número para renderizar menção)
+      let msgText = input.mensagem;
+      if (input.mencoes && Array.isArray(input.mencoes)) {
+        for (let i = 0; i < input.mencoes.length && i < mentionJids.length; i++) {
+          const nome = input.mencoes[i];
+          const jid = mentionJids[i];
+          const phoneNum = jid.replace(/@s\.whatsapp\.net$/, '');
+          // Substituir @Nome ou @nome pelo @número (case-insensitive)
+          const mentionRegex = new RegExp(`@${nome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'gi');
+          msgText = msgText.replace(mentionRegex, `@${phoneNum}`);
+        }
+      }
       const mentions = mentionJids.map(jid => ({ jid }));
-      await _sendTextWithMentionsFn(targetJid, input.mensagem, mentions);
-      console.log(`[TOOL] Mensagem enviada para ${input.grupo} com ${mentionJids.length} menções: ${input.mensagem.substring(0, 60)}...`);
+      await _sendTextWithMentionsFn(targetJid, msgText, mentions);
+      console.log(`[TOOL] Mensagem enviada para ${input.grupo} com ${mentionJids.length} menções: ${msgText.substring(0, 60)}...`);
     } else {
       await _sendTextFn(targetJid, input.mensagem);
       console.log(`[TOOL] Mensagem enviada para ${input.grupo}: ${input.mensagem.substring(0, 60)}...`);
