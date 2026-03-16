@@ -29,6 +29,7 @@ import { synthesizeProfile, getProfile, listProfiles, syncProfiles } from './src
 import { asanaRequest, getOverdueTasks, getGCalClient, JARVIS_TOOLS, registerSendFunction, registerSendWithMentionsFunction } from './src/skills/loader.mjs';
 import { getMediaType, extractSender } from './src/helpers.mjs';
 import { startAsanaStudy, stopAsanaStudy, asanaBatchState } from './src/batch-asana.mjs';
+import { startEmailMonitor, stopEmailMonitor, emailMonitorState } from './src/asana-email-monitor.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -969,6 +970,14 @@ app.get('/dashboard/agents', auth, async (req, res) => {
       homeworkCount: hwCount.rows[0].cnt,
       topEntities: topEntities.rows,
     });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- Email Monitor (Asana @mentions) ---
+app.get('/dashboard/email-monitor', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM asana_email_log ORDER BY created_at DESC LIMIT 20').catch(() => ({ rows: [] }));
+    res.json({ status: emailMonitorState, recentLogs: rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -2145,5 +2154,6 @@ initDB().then(async () => {
   await loadManagedClients(pool);
   startWhatsApp();
   setupCronJobs();
+  startEmailMonitor();
   console.log('[JARVIS] Todos os sistemas 3.0 inicializados.');
 });

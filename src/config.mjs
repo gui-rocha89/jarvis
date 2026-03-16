@@ -16,6 +16,12 @@ export const CONFIG = {
   ASANA_WORKSPACE: process.env.ASANA_WORKSPACE || '',
   JARVIS_VERSION: '3.0.0',
   JWT_SECRET: process.env.JWT_SECRET || '',
+  // IMAP (Asana Email Monitor)
+  IMAP_HOST: process.env.IMAP_HOST || '',
+  IMAP_PORT: parseInt(process.env.IMAP_PORT) || 993,
+  IMAP_USER: process.env.IMAP_USER || '',
+  IMAP_PASSWORD: process.env.IMAP_PASSWORD || '',
+  IMAP_POLL_INTERVAL: parseInt(process.env.IMAP_POLL_INTERVAL) || 90,
 };
 
 // Asana GIDs da equipe (via .env JSON ou fallback vazio)
