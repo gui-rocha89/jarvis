@@ -526,6 +526,21 @@ export async function handleManagedClientMessage(text, senderJid, pushName, chat
       return null;
     }
 
+    // SALVAGUARDA ANTI-VAZAMENTO: bloquear menções a processos internos na resposta ao cliente
+    const leakCheck = checkInternalLeak(finalText);
+    if (leakCheck.leaked) {
+      console.warn(`[PROACTIVE] ⚠️ VAZAMENTO BLOQUEADO para ${managedClient.groupName}: "${leakCheck.match}"`);
+      console.warn(`[PROACTIVE] Texto original: ${finalText.substring(0, 300)}`);
+      // Tentar sanitizar removendo a parte que vaza — se sobrar algo útil, envia
+      const sanitized = sanitizeClientResponse(finalText);
+      if (sanitized && isValidResponse(sanitized)) {
+        console.log(`[PROACTIVE] Resposta sanitizada: ${sanitized.substring(0, 80)}`);
+        clientGroupCooldown.set(chatId, Date.now());
+        return { text: sanitized };
+      }
+      return null; // Não conseguiu sanitizar — silêncio
+    }
+
     // SALVAGUARDA ANTI-ALUCINAÇÃO: no grupo do cliente é CRÍTICO não inventar dados
     const hallucinationCheck = antiHallucinationCheck(finalText, toolsUsed || new Set());
     if (!hallucinationCheck.safe) {
@@ -685,6 +700,46 @@ async function getClientProfile(chatId, groupName) {
  * Constrói o system prompt para o agente de cliente.
  * NÃO usa regras rígidas — deixa o Jarvis usar seu conhecimento acumulado.
  */
+// ============================================
+// FILTRO ANTI-VAZAMENTO — bloqueia menções internas na resposta ao cliente
+// ============================================
+const INTERNAL_LEAK_PATTERNS = [
+  // Nomes da equipe (case-insensitive)
+  /\b(bruna|nicolas|nícolas|arthur|bruno|rigon|guilherme)\b/i,
+  // Ferramentas internas
+  /\b(asana|trello|cabine de comando|monday|notion)\b/i,
+  // Termos de processo interno
+  /\b(task criada|task registrada|tarefa criada|equipe (avisada|notificada|informada)|notificad[oa] internamente|registrad[oa] internamente|grupo (tarefas|interno)|notifica[çc][ãa]o interna)\b/i,
+  // Ações internas expostas
+  /\b(avisei (a |o |ao |à )?(equipe|bruna|nicolas|arthur|gui)|mandei (pra|para|pro|no) (grupo|equipe)|criei (uma |a )?(task|tarefa) (no|do|na))\b/i,
+];
+
+function checkInternalLeak(text) {
+  for (const pattern of INTERNAL_LEAK_PATTERNS) {
+    const match = text.match(pattern);
+    if (match) {
+      return { leaked: true, match: match[0] };
+    }
+  }
+  return { leaked: false };
+}
+
+function sanitizeClientResponse(text) {
+  // Tenta remover frases que contêm vazamento, mantendo o resto
+  const lines = text.split('\n');
+  const cleanLines = lines.filter(line => {
+    for (const pattern of INTERNAL_LEAK_PATTERNS) {
+      if (pattern.test(line)) return false;
+    }
+    return true;
+  });
+
+  const result = cleanLines.join('\n').trim();
+  // Se removeu tudo ou sobrou muito pouco, retorna null
+  if (!result || result.length < 15) return null;
+  return result;
+}
+
 function buildClientAgentPrompt(managedClient, memoryContext, dateStr, timeStr, dayOfWeek) {
   const clientName = managedClient.groupName?.split('🔛')[0]?.trim() || 'Cliente';
 
@@ -722,8 +777,14 @@ QUANDO AGIR:
 - Cliente mandou demanda de trabalho → responda confirmando, pergunte o que faltar (prazo, referências), crie a task no Asana, ANEXE material se houver, avise a equipe
 - Cliente mandou material (fotos, vídeos, documentos) → crie a task + use anexar_midia_asana (basta o task_gid) + avise equipe
 - Cliente tem dúvida sobre andamento → responda com o que você sabe. Se não sabe, pergunte internamente e avise o cliente que está verificando
-- Cliente mandou aprovação/feedback → notifique a equipe internamente
+- Cliente mandou aprovação/feedback → REGISTRE VOCÊ MESMO na task do Asana (use comentar_task) e depois avise a equipe no grupo tarefas. VOCÊ é o responsável por registrar — NUNCA delegue isso pra equipe humana
 - Conversa casual, cumprimento ou mensagem irrelevante → [SILENCIO] (NÃO responda)
+
+REGRA DE AUTONOMIA — FAÇA, NÃO DELEGUE:
+- Quando o cliente aprova algo, manda feedback ou pede alteração → VOCÊ MESMO registra no Asana via comentar_task
+- NUNCA mande mensagem pra equipe pedindo "anota na task" ou "registra isso" — VOCÊ faz isso usando as tools
+- A equipe deve ser NOTIFICADA do fato, não receber ordens de registrar. Exemplo correto: "@Bruna, o Douglas aprovou o vídeo do PU, mas pediu pra cortar os dados. Já registrei na task."
+- Exemplo ERRADO: "@Bruna, anota na task que o Douglas aprovou" — isso é VOCÊ fugindo do trabalho
 
 QUANDO FICAR EM SILÊNCIO:
 - Mensagens casuais ("bom dia", "ok", emojis, risadas)
@@ -751,18 +812,28 @@ TOOLS DISPONÍVEIS:
 - enviar_mensagem_grupo: para notificar/perguntar pra equipe internamente (grupo "tarefas") — USE SEMPRE que precisar avisar, perguntar, ou tirar dúvida com a equipe
 - lembrar: para salvar informações importantes sobre o cliente — USE para guardar tudo que aprender
 
-⚠️ ATENÇÃO MÁXIMA — SEPARAÇÃO INTERNO vs EXTERNO:
-Você fala em DOIS contextos diferentes:
-1. RESPOSTA DIRETA (o texto que você retorna) → vai para o GRUPO DO CLIENTE. Deve ser 100% profissional, sem NENHUMA menção a ferramentas, Asana, tasks, ou processos internos.
-2. NOTIFICAÇÃO INTERNA (via tool enviar_mensagem_grupo para "tarefas") → vai para o grupo INTERNO da equipe. Aqui pode ter detalhes operacionais.
+🚨🚨🚨 REGRA #1 — MAIS IMPORTANTE DE TODAS — SEPARAÇÃO INTERNO vs EXTERNO 🚨🚨🚨
 
-NUNCA misture os dois. Sua resposta direta NUNCA deve conter:
-- "task criada", "Asana", "Cabine de Comando"
-- "executado", "equipe avisada", "Bruna notificada"
-- Checklists de ações internas (✅ task, ✅ equipe)
-- Qualquer menção a processos, ferramentas ou nomes de pessoas da equipe
+O texto que você retorna como resposta final vai DIRETO para o GRUPO DO CLIENTE no WhatsApp.
+O cliente VAI LER essa mensagem. Ele NÃO É da equipe. Ele NÃO deve saber dos processos internos.
 
-Se precisar executar ações (criar task, avisar equipe), faça via tools SILENCIOSAMENTE. Sua resposta ao cliente deve ser APENAS o que o cliente precisa saber.
+PROIBIDO NA SUA RESPOSTA (vai pro cliente!):
+- Nomes da equipe: "Bruna", "Nicolas", "Arthur", "Bruno", "Rigon", "Gui" — NUNCA mencione
+- Ferramentas internas: "Asana", "task", "Cabine de Comando", "Trello" — NUNCA mencione
+- Ações internas: "equipe notificada", "registrado internamente", "Bruna avisada", "task criada" — NUNCA mencione
+- Processos: "grupo tarefas", "notificação interna", "registrado no sistema" — NUNCA mencione
+
+Para comunicação INTERNA com a equipe → use a tool enviar_mensagem_grupo (vai pro grupo "tarefas", que é INTERNO). Aí sim pode falar de tasks, Asana, equipe.
+
+EXEMPLO CORRETO:
+- Tools: enviar_mensagem_grupo("tarefas", "@Bruna, o Douglas aprovou o vídeo...")
+- Resposta ao cliente: "Perfeito, Douglas! Aprovação registrada. Já estamos encaminhando para edição. Tem mais algum ajuste?"
+
+EXEMPLO ERRADO (o que aconteceu e NUNCA deve se repetir):
+- Resposta ao cliente: "Tudo registrado! Bruna notificada internamente sobre o requisito..."
+  ↑ ISSO EXPÕE PROCESSOS INTERNOS PRO CLIENTE! GRAVÍSSIMO!
+
+Pense assim: se a frase menciona QUALQUER pessoa da equipe ou QUALQUER ferramenta interna, ela NÃO pode estar na sua resposta.
 
 REGRAS ABSOLUTAS:
 - NUNCA altere descrições de tasks no Asana (use SOMENTE comentários)
