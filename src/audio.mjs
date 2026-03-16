@@ -19,10 +19,10 @@ export let voiceConfig = {
   elevenlabs: {
     voiceId: process.env.ELEVENLABS_VOICE_ID || 'CstacWqMhJQlnfLPxRG4',
     model: 'eleven_v3',
-    stability: 0.5,
-    similarity_boost: 0.75,
-    style: 0.0,
-    use_speaker_boost: true,
+    stability: 0.3,
+    similarity_boost: 0.6,
+    style: 0.35,
+    use_speaker_boost: false,
   },
 };
 
