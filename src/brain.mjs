@@ -201,13 +201,17 @@ export function isConversationActive(chatId) {
   return true;
 }
 
-export function shouldJarvisRespond(text, chatId, isGroup, isReplyToJarvis) {
+export function shouldJarvisRespond(text, chatId, isGroup, isReplyToJarvis, isMentionedByTag = false) {
   if (!text) return false;
   const lower = text.toLowerCase().trim();
 
   if (isGroup) {
     if (!JARVIS_ALLOWED_GROUPS.has(chatId)) return false;
     if (lower.includes('jarvis')) return true;
+    if (isMentionedByTag) {
+      console.log('[JARVIS] @menção detectada via metadata, respondendo...');
+      return true;
+    }
     if (isReplyToJarvis) {
       console.log('[JARVIS] Reply detectado, respondendo...');
       return true;

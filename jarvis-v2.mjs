@@ -329,12 +329,40 @@ async function handleIncomingMessage(m) {
   }
 
   // Decidir se Jarvis deve responder
-  const quotedParticipant = m.message?.extendedTextMessage?.contextInfo?.participant || '';
-  const quotedStanzaId = m.message?.extendedTextMessage?.contextInfo?.stanzaId || '';
-  const botNum = CONFIG.BOT_NUMBER || '';
-  const isReplyToJarvis = (botNum && quotedParticipant.includes(botNum)) || sentByBot.has(quotedStanzaId);
+  // Extrair contextInfo de QUALQUER tipo de mensagem (não só extendedTextMessage)
+  const contextInfo = m.message?.extendedTextMessage?.contextInfo
+    || m.message?.imageMessage?.contextInfo
+    || m.message?.videoMessage?.contextInfo
+    || m.message?.documentMessage?.contextInfo
+    || m.message?.audioMessage?.contextInfo
+    || m.message?.stickerMessage?.contextInfo
+    || null;
 
-  if (!shouldJarvisRespond(text, from, isGroup, isReplyToJarvis)) return;
+  const quotedParticipant = contextInfo?.participant || '';
+  const quotedStanzaId = contextInfo?.stanzaId || '';
+  const botNum = CONFIG.BOT_NUMBER || '';
+  const botJid = CONFIG.BOT_JID || '';
+
+  // Verificar se é reply ao Jarvis: por número OU por JID completo (inclui @lid) OU por sentByBot
+  const isReplyToJarvis = sentByBot.has(quotedStanzaId)
+    || (botNum && quotedParticipant.includes(botNum))
+    || (botJid && quotedParticipant === botJid)
+    || (botJid && quotedParticipant === botJid.replace(/:.*@/, '@')); // 555597337777:123@s.whatsapp.net → 555597337777@s.whatsapp.net
+
+  // Verificar se Jarvis foi @mencionado na mensagem (metadata, não texto)
+  const mentionedJids = contextInfo?.mentionedJid || [];
+  const isMentionedByTag = mentionedJids.some(jid =>
+    jid === botJid
+    || (botNum && jid.includes(botNum))
+    || (botJid && jid === botJid.replace(/:.*@/, '@'))
+  );
+
+  // Debug: logar detecção de replies e mentions em grupos
+  if (isGroup && (quotedParticipant || mentionedJids.length > 0)) {
+    console.log(`[REPLY-DEBUG] quotedParticipant=${quotedParticipant} | botJid=${botJid} | botNum=${botNum} | isReplyToJarvis=${isReplyToJarvis} | mentionedJids=${JSON.stringify(mentionedJids)} | isMentionedByTag=${isMentionedByTag}`);
+  }
+
+  if (!shouldJarvisRespond(text, from, isGroup, isReplyToJarvis, isMentionedByTag)) return;
 
   // Modo pausa: loga mas nao responde
   if (jarvisPaused) {
@@ -818,6 +846,130 @@ app.get('/status', auth, async (req, res) => {
     messages_stored: msgCount, memories_stored: memStats.total,
     ai_model: CONFIG.AI_MODEL, architecture: 'Jarvis 3.0 - Agent Loop + Extended Thinking + Prompt Caching',
   });
+});
+
+// --- Agentes & Inteligência ---
+app.get('/dashboard/agents', auth, async (req, res) => {
+  try {
+    // 1. Memórias por escopo (o que cada "cérebro" sabe)
+    const memByScope = await pool.query('SELECT scope, COUNT(*)::int as cnt FROM jarvis_memories GROUP BY scope');
+    const scopeMap = {};
+    for (const row of memByScope.rows) scopeMap[row.scope] = row.cnt;
+
+    // 2. Memórias por categoria (distribuição de conhecimento)
+    const memByCat = await pool.query('SELECT category, COUNT(*)::int as cnt, AVG(importance)::float as avg_imp FROM jarvis_memories GROUP BY category ORDER BY cnt DESC');
+    const catMap = {};
+    for (const row of memByCat.rows) catMap[row.category] = { count: row.cnt, avgImportance: Math.round(row.avg_imp * 10) / 10 };
+
+    // 3. Aprendizado recente (últimas 24h, 7 dias, 30 dias)
+    const learning = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int as last_24h,
+        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days')::int as last_7d,
+        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '30 days')::int as last_30d,
+        COUNT(*)::int as total
+      FROM jarvis_memories
+    `);
+
+    // 4. Evolução diária (últimos 14 dias)
+    const timeline = await pool.query(`
+      SELECT DATE(created_at) as day, COUNT(*)::int as cnt
+      FROM jarvis_memories
+      WHERE created_at > NOW() - INTERVAL '14 days'
+      GROUP BY DATE(created_at)
+      ORDER BY day
+    `);
+
+    // 5. Perfis sintetizados
+    const profiles = await pool.query('SELECT entity_type, COUNT(*)::int as cnt FROM jarvis_profiles GROUP BY entity_type').catch(() => ({ rows: [] }));
+    const profileMap = {};
+    for (const row of profiles.rows) profileMap[row.entity_type] = row.cnt;
+
+    // 6. Estudo Asana (progresso)
+    const asanaStudy = await pool.query(`
+      SELECT phase, status, items_total, items_done, facts_extracted, started_at, completed_at
+      FROM asana_study_log ORDER BY started_at DESC LIMIT 5
+    `).catch(() => ({ rows: [] }));
+
+    // 7. Mensagens processadas (volume de aprendizado WhatsApp)
+    const msgStats = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int as msgs_24h,
+        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days')::int as msgs_7d,
+        COUNT(*)::int as total
+      FROM jarvis_messages
+    `);
+
+    // 8. Homework (instruções manuais)
+    const hwCount = await pool.query('SELECT COUNT(*)::int as cnt FROM homework').catch(() => ({ rows: [{ cnt: 0 }] }));
+
+    // 9. Top entidades com mais memórias (quem o Jarvis mais conhece)
+    const topEntities = await pool.query(`
+      SELECT entity_id, scope, COUNT(*)::int as cnt
+      FROM jarvis_memories
+      WHERE entity_id IS NOT NULL AND entity_id != ''
+      GROUP BY entity_id, scope
+      ORDER BY cnt DESC
+      LIMIT 15
+    `).catch(() => ({ rows: [] }));
+
+    // Definir agentes com suas especialidades
+    const agents = [
+      {
+        id: 'master',
+        nome: 'Master',
+        icon: '🎯',
+        cor: '#00d4ff',
+        especialidade: 'Conversação geral, personalidade Jarvis (Tony Stark)',
+        triggers: 'Resposta padrão, saudações, perguntas gerais',
+        capabilities: ['Personalidade Jarvis', 'Contexto de conversa', 'Janela 3min', 'Modo áudio'],
+        memoriasRelevantes: (scopeMap.chat || 0) + (scopeMap.user || 0),
+      },
+      {
+        id: 'creative',
+        nome: 'Creative',
+        icon: '🎨',
+        cor: '#a855f7',
+        especialidade: 'Copy, legendas, roteiros, CTAs, conteúdo criativo',
+        triggers: 'copy, arte, conteúdo, post, legenda, roteiro, headline',
+        capabilities: ['Copywriting', 'Legendas para redes', 'Roteiros de vídeo', 'Headlines e CTAs'],
+        memoriasRelevantes: (catMap.style?.count || 0) + (catMap.pattern?.count || 0) + (catMap.client_profile?.count || 0),
+      },
+      {
+        id: 'manager',
+        nome: 'Manager',
+        icon: '📋',
+        cor: '#ffd700',
+        especialidade: 'Gestão de projetos, prazos, Asana, cobrança',
+        triggers: 'tarefa, prazo, status, cobrança, task, projeto, atrasada',
+        capabilities: ['Consultar tarefas Asana', 'Criar demandas', 'Cobrança automática', 'Relatório diário'],
+        memoriasRelevantes: (catMap.deadline?.count || 0) + (catMap.decision?.count || 0) + (catMap.process?.count || 0) + (catMap.client?.count || 0),
+      },
+      {
+        id: 'researcher',
+        nome: 'Researcher',
+        icon: '🔬',
+        cor: '#00ff88',
+        especialidade: 'Pesquisa, dados, tendências, análise',
+        triggers: 'pesquisar, dados, benchmark, tendência, análise, relatório',
+        capabilities: ['Busca na memória (RAG)', 'Análise de dados', 'Relatórios', 'Tendências'],
+        memoriasRelevantes: (scopeMap.agent || 0),
+      },
+    ];
+
+    res.json({
+      agents,
+      scopes: scopeMap,
+      categories: catMap,
+      learning: learning.rows[0] || {},
+      timeline: timeline.rows,
+      profiles: profileMap,
+      asanaStudy: asanaStudy.rows,
+      msgStats: msgStats.rows[0] || {},
+      homeworkCount: hwCount.rows[0].cnt,
+      topEntities: topEntities.rows,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.get('/dashboard/health', auth, async (req, res) => {

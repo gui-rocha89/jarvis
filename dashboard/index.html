@@ -233,6 +233,7 @@
       <!-- Nav Tabs -->
       <nav class="hidden md:flex items-center gap-1">
         <button onclick="switchTab('overview')" data-tab="overview" class="tab-btn tab-active px-3 py-4 text-xs font-semibold tracking-wider uppercase transition-colors hover:text-stark-blue">Visão Geral</button>
+        <button onclick="switchTab('agents')" data-tab="agents" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Agentes</button>
         <button onclick="switchTab('chat')" data-tab="chat" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Chat</button>
         <button onclick="switchTab('memory')" data-tab="memory" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Memória</button>
         <button onclick="switchTab('voice')" data-tab="voice" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Voz</button>
@@ -262,6 +263,10 @@
       <button onclick="switchTab('overview')" data-tab-m="overview" class="mobile-tab flex flex-col items-center gap-1 px-3 py-1 text-stark-blue">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
         <span class="text-[10px]">Geral</span>
+      </button>
+      <button onclick="switchTab('agents')" data-tab-m="agents" class="mobile-tab flex flex-col items-center gap-1 px-3 py-1 text-stark-dim">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+        <span class="text-[10px]">Agentes</span>
       </button>
       <button onclick="switchTab('chat')" data-tab-m="chat" class="mobile-tab flex flex-col items-center gap-1 px-3 py-1 text-stark-dim">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
@@ -918,6 +923,140 @@
       </div>
     </div>
 
+    <!-- ==================== AGENTS TAB ==================== -->
+    <div id="tab-agents" class="tab-content hidden space-y-6">
+
+      <!-- Agent Cards -->
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" id="agents-cards">
+        <!-- Populated by JS -->
+      </div>
+
+      <!-- Learning Stats -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <!-- Learning Velocity -->
+        <div class="panel p-5">
+          <h3 class="font-orbitron text-sm text-stark-cyan mb-4 tracking-wider" style="color:#00f0ff">VELOCIDADE DE APRENDIZADO</h3>
+          <div class="grid grid-cols-3 gap-4 mb-4">
+            <div class="text-center">
+              <div id="learn-24h" class="font-orbitron text-2xl text-stark-green" style="color:#00ff88">--</div>
+              <div class="text-[10px] text-stark-dim uppercase tracking-wider">Últimas 24h</div>
+            </div>
+            <div class="text-center">
+              <div id="learn-7d" class="font-orbitron text-2xl text-stark-blue">--</div>
+              <div class="text-[10px] text-stark-dim uppercase tracking-wider">Últimos 7 dias</div>
+            </div>
+            <div class="text-center">
+              <div id="learn-30d" class="font-orbitron text-2xl text-stark-purple" style="color:#7b61ff">--</div>
+              <div class="text-[10px] text-stark-dim uppercase tracking-wider">Últimos 30 dias</div>
+            </div>
+          </div>
+          <div class="relative" style="height:200px">
+            <canvas id="learning-timeline-chart"></canvas>
+          </div>
+        </div>
+
+        <!-- Knowledge Distribution -->
+        <div class="panel p-5">
+          <h3 class="font-orbitron text-sm text-stark-cyan mb-4 tracking-wider" style="color:#00f0ff">DISTRIBUIÇÃO DE CONHECIMENTO</h3>
+          <div id="knowledge-bars" class="space-y-3">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Sources & Study Status -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <!-- Data Sources -->
+        <div class="panel p-5">
+          <h3 class="font-orbitron text-sm text-stark-cyan mb-4 tracking-wider" style="color:#00f0ff">FONTES DE DADOS</h3>
+          <div class="space-y-3">
+            <div class="flex items-center justify-between p-3 rounded bg-stark-bg border border-stark-border">
+              <div class="flex items-center gap-3">
+                <span class="text-xl">💬</span>
+                <div>
+                  <div class="text-sm font-rajdhani font-semibold text-white">WhatsApp (Tempo Real)</div>
+                  <div class="text-[10px] text-stark-dim">Aprende em cada mensagem recebida</div>
+                </div>
+              </div>
+              <div class="text-right">
+                <div id="src-whatsapp-msgs" class="text-sm font-mono text-stark-blue">--</div>
+                <div class="text-[10px] text-stark-dim">mensagens hoje</div>
+              </div>
+            </div>
+            <div class="flex items-center justify-between p-3 rounded bg-stark-bg border border-stark-border">
+              <div class="flex items-center gap-3">
+                <span class="text-xl">📋</span>
+                <div>
+                  <div class="text-sm font-rajdhani font-semibold text-white">Asana (Estudo 5x/dia)</div>
+                  <div class="text-[10px] text-stark-dim">Seg-Sex: projetos, tasks, comentários</div>
+                </div>
+              </div>
+              <div class="text-right">
+                <div id="src-asana-facts" class="text-sm font-mono text-stark-gold" style="color:#ffd700">--</div>
+                <div class="text-[10px] text-stark-dim">fatos extraídos</div>
+              </div>
+            </div>
+            <div class="flex items-center justify-between p-3 rounded bg-stark-bg border border-stark-border">
+              <div class="flex items-center gap-3">
+                <span class="text-xl">👤</span>
+                <div>
+                  <div class="text-sm font-rajdhani font-semibold text-white">Perfis Sintetizados</div>
+                  <div class="text-[10px] text-stark-dim">Síntese automática a cada 6h</div>
+                </div>
+              </div>
+              <div class="text-right">
+                <div id="src-profiles" class="text-sm font-mono text-stark-green" style="color:#00ff88">--</div>
+                <div class="text-[10px] text-stark-dim">perfis ativos</div>
+              </div>
+            </div>
+            <div class="flex items-center justify-between p-3 rounded bg-stark-bg border border-stark-border">
+              <div class="flex items-center gap-3">
+                <span class="text-xl">📝</span>
+                <div>
+                  <div class="text-sm font-rajdhani font-semibold text-white">Homework (Manual)</div>
+                  <div class="text-[10px] text-stark-dim">Instruções diretas do dono</div>
+                </div>
+              </div>
+              <div class="text-right">
+                <div id="src-homework" class="text-sm font-mono text-stark-orange" style="color:#ff8a00">--</div>
+                <div class="text-[10px] text-stark-dim">instruções</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Top Entities Known -->
+        <div class="panel p-5">
+          <h3 class="font-orbitron text-sm text-stark-cyan mb-4 tracking-wider" style="color:#00f0ff">QUEM O JARVIS MAIS CONHECE</h3>
+          <div id="top-entities" class="space-y-2">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Asana Study History -->
+      <div class="panel p-5">
+        <h3 class="font-orbitron text-sm text-stark-cyan mb-4 tracking-wider" style="color:#00f0ff">HISTÓRICO DE ESTUDOS ASANA</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs font-mono">
+            <thead>
+              <tr class="text-stark-dim border-b border-stark-border">
+                <th class="text-left py-2 px-2">Fase</th>
+                <th class="text-left py-2 px-2">Status</th>
+                <th class="text-left py-2 px-2">Itens</th>
+                <th class="text-left py-2 px-2">Fatos</th>
+                <th class="text-left py-2 px-2">Início</th>
+                <th class="text-left py-2 px-2">Fim</th>
+              </tr>
+            </thead>
+            <tbody id="asana-study-history">
+              <tr><td colspan="6" class="text-center py-4 text-stark-dim">Carregando...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
     <!-- ==================== SECURITY TAB ==================== -->
     <div id="tab-security" class="tab-content hidden space-y-6">
       <!-- Password Change -->
@@ -1175,6 +1314,7 @@
       document.querySelector(`[data-tab-m="${tab}"]`)?.classList.replace('text-stark-dim', 'text-stark-blue');
 
       // Load data for tab
+      if (tab === 'agents') loadAgents();
       if (tab === 'logs') loadLogs();
       if (tab === 'memory') { loadMemoryStats(); loadMemoryFeed(); loadMemoryTimeline(); }
       if (tab === 'voice') loadVoiceConfig();
@@ -2055,6 +2195,168 @@
         btn.textContent = 'SINTETIZAR VOZ';
         btn.disabled = false;
       }
+    }
+
+    // ============================================
+    // AGENTS & INTELLIGENCE
+    // ============================================
+    let learningChart = null;
+
+    async function loadAgents() {
+      try {
+        const res = await api('/dashboard/agents');
+        const data = await res.json();
+
+        // === Agent Cards ===
+        const cardsEl = document.getElementById('agents-cards');
+        cardsEl.innerHTML = (data.agents || []).map(agent => {
+          const memFormatted = agent.memoriasRelevantes >= 1000
+            ? (agent.memoriasRelevantes / 1000).toFixed(1) + 'k'
+            : agent.memoriasRelevantes;
+          return `
+            <div class="panel p-4 relative overflow-hidden" style="border-color: ${agent.cor}30;">
+              <div class="flex items-center gap-3 mb-3">
+                <span class="text-3xl">${agent.icon}</span>
+                <div>
+                  <div class="font-orbitron text-sm tracking-wider" style="color:${agent.cor}">${agent.nome}</div>
+                  <div class="text-[10px] text-stark-dim">${agent.especialidade}</div>
+                </div>
+              </div>
+              <div class="mb-3">
+                <div class="text-[9px] text-stark-dim uppercase tracking-wider mb-1">Memórias Relevantes</div>
+                <div class="font-orbitron text-xl" style="color:${agent.cor}">${memFormatted}</div>
+              </div>
+              <div class="mb-2">
+                <div class="text-[9px] text-stark-dim uppercase tracking-wider mb-1">Capabilities</div>
+                <div class="flex flex-wrap gap-1">
+                  ${agent.capabilities.map(c => `<span class="text-[8px] px-1.5 py-0.5 rounded border border-stark-border text-stark-dim">${c}</span>`).join('')}
+                </div>
+              </div>
+              <div>
+                <div class="text-[9px] text-stark-dim uppercase tracking-wider mb-1">Triggers</div>
+                <div class="text-[9px] text-stark-dim font-mono italic">${agent.triggers}</div>
+              </div>
+              <div class="absolute top-0 right-0 w-20 h-20 opacity-5" style="background: radial-gradient(circle, ${agent.cor}, transparent 70%);"></div>
+            </div>`;
+        }).join('');
+
+        // === Learning Velocity ===
+        const learn = data.learning || {};
+        document.getElementById('learn-24h').textContent = (learn.last_24h || 0).toLocaleString();
+        document.getElementById('learn-7d').textContent = (learn.last_7d || 0).toLocaleString();
+        document.getElementById('learn-30d').textContent = (learn.last_30d || 0).toLocaleString();
+
+        // === Timeline Chart ===
+        const timeline = data.timeline || [];
+        const ctx = document.getElementById('learning-timeline-chart');
+        if (learningChart) learningChart.destroy();
+        learningChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: timeline.map(t => {
+              const d = new Date(t.day);
+              return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+            }),
+            datasets: [{
+              label: 'Memórias criadas',
+              data: timeline.map(t => t.cnt),
+              backgroundColor: '#00d4ff40',
+              borderColor: '#00d4ff',
+              borderWidth: 1,
+              borderRadius: 4,
+            }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { grid: { color: '#1a274440' }, ticks: { color: '#3a4a6b', font: { size: 9 } } },
+              y: { grid: { color: '#1a274440' }, ticks: { color: '#3a4a6b', font: { size: 9 } } },
+            }
+          }
+        });
+
+        // === Knowledge Distribution ===
+        const cats = data.categories || {};
+        const catEntries = Object.entries(cats).sort((a, b) => b[1].count - a[1].count);
+        const maxCat = catEntries.length > 0 ? catEntries[0][1].count : 1;
+        const catColors = {
+          client: '#00d4ff', client_profile: '#00f0ff', team_member: '#7b61ff', process: '#00ff88',
+          decision: '#ffd700', deadline: '#ff8a00', rule: '#ff3b3b', style: '#a855f7',
+          preference: '#ec4899', pattern: '#06b6d4', general: '#3a4a6b'
+        };
+        const catLabels = {
+          client: 'Clientes', client_profile: 'Perfis de Cliente', team_member: 'Equipe',
+          process: 'Processos', decision: 'Decisões', deadline: 'Prazos',
+          rule: 'Regras', style: 'Estilos', preference: 'Preferências',
+          pattern: 'Padrões', general: 'Geral'
+        };
+        document.getElementById('knowledge-bars').innerHTML = catEntries.map(([cat, info]) => {
+          const pct = Math.round((info.count / maxCat) * 100);
+          const color = catColors[cat] || '#3a4a6b';
+          const label = catLabels[cat] || cat;
+          return `
+            <div>
+              <div class="flex justify-between text-[10px] mb-1">
+                <span class="text-stark-dim uppercase tracking-wider">${label}</span>
+                <span class="font-mono" style="color:${color}">${info.count.toLocaleString()} <span class="text-stark-dim">(imp: ${info.avgImportance})</span></span>
+              </div>
+              <div class="w-full h-2 bg-stark-border rounded-full overflow-hidden">
+                <div class="h-full rounded-full transition-all duration-700" style="width:${pct}%; background:${color}"></div>
+              </div>
+            </div>`;
+        }).join('');
+
+        // === Data Sources ===
+        const msgStats = data.msgStats || {};
+        document.getElementById('src-whatsapp-msgs').textContent = (msgStats.msgs_24h || 0).toLocaleString();
+        const totalAsanaFacts = (data.asanaStudy || []).reduce((sum, s) => sum + (s.facts_extracted || 0), 0);
+        document.getElementById('src-asana-facts').textContent = totalAsanaFacts.toLocaleString();
+        const totalProfiles = Object.values(data.profiles || {}).reduce((a, b) => a + b, 0);
+        document.getElementById('src-profiles').textContent = totalProfiles;
+        document.getElementById('src-homework').textContent = data.homeworkCount || 0;
+
+        // === Top Entities ===
+        const topEl = document.getElementById('top-entities');
+        const scopeColors = { agent: '#00ff88', user: '#00d4ff', chat: '#7b61ff' };
+        const scopeLabels = { agent: 'Asana', user: 'Pessoa', chat: 'Conversa' };
+        topEl.innerHTML = (data.topEntities || []).map((e, i) => {
+          const color = scopeColors[e.scope] || '#3a4a6b';
+          const badge = scopeLabels[e.scope] || e.scope;
+          return `
+            <div class="flex items-center justify-between p-2 rounded ${i < 3 ? 'bg-stark-bg border border-stark-border' : ''}">
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] font-mono text-stark-dim w-5">#${i + 1}</span>
+                <span class="text-xs text-white truncate max-w-[180px]">${e.entity_id}</span>
+                <span class="text-[8px] px-1.5 py-0.5 rounded border" style="color:${color};border-color:${color}40">${badge}</span>
+              </div>
+              <span class="text-xs font-mono" style="color:${color}">${e.cnt}</span>
+            </div>`;
+        }).join('');
+
+        // === Asana Study History ===
+        const historyEl = document.getElementById('asana-study-history');
+        const studies = data.asanaStudy || [];
+        if (studies.length === 0) {
+          historyEl.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-stark-dim">Nenhum estudo registrado</td></tr>';
+        } else {
+          const statusColors = { completed: 'text-stark-green', running: 'text-stark-blue', error: 'text-stark-red', pending: 'text-stark-dim' };
+          historyEl.innerHTML = studies.map(s => {
+            const started = s.started_at ? new Date(s.started_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '--';
+            const completed = s.completed_at ? new Date(s.completed_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '--';
+            const statusClass = statusColors[s.status] || 'text-stark-dim';
+            return `<tr class="border-b border-stark-border/50 hover:bg-stark-border/10">
+              <td class="py-2 px-2">${s.phase || '--'}</td>
+              <td class="py-2 px-2 ${statusClass}">${s.status || '--'}</td>
+              <td class="py-2 px-2">${s.items_done || 0}/${s.items_total || 0}</td>
+              <td class="py-2 px-2 text-stark-gold" style="color:#ffd700">${s.facts_extracted || 0}</td>
+              <td class="py-2 px-2 text-stark-dim">${started}</td>
+              <td class="py-2 px-2 text-stark-dim">${completed}</td>
+            </tr>`;
+          }).join('');
+        }
+
+      } catch (e) { console.error('Agents error:', e); }
     }
 
     // ============================================
