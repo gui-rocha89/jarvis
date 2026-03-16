@@ -844,7 +844,8 @@ export async function runOverdueCheck() {
   try {
     const { getOverdueTasks, getSendFunction, getSendWithMentionsFunction, asanaRequest, asanaWrite } = await import('./skills/loader.mjs');
     const { searchMemories } = await import('./memory.mjs');
-    const { TEAM_ASANA } = await import('./config.mjs');
+    const { getProfile } = await import('./profiles.mjs');
+    const { TEAM_ASANA, managedClients } = await import('./config.mjs');
     const sendFn = getSendFunction();
     if (!sendFn || !CONFIG.GROUP_TAREFAS) {
       console.log('[COBRANCA] WhatsApp não conectado ou grupo tarefas não configurado');
@@ -994,18 +995,75 @@ export async function runOverdueCheck() {
         }
       } catch (e) { console.error(`[COBRANCA] Erro ao buscar memórias:`, e.message); }
 
-      // 1D. Mensagens recentes do WhatsApp sobre o assunto (se houver grupo do cliente)
+      // 1D. Mensagens REAIS do WhatsApp sobre o cliente (direto do banco, não só memórias)
       try {
         const clientMatch = t.name.match(/\[([^\]]+)\]/);
         if (clientMatch) {
           const clientName = clientMatch[1].toLowerCase();
-          // Buscar memórias de chat que mencionem o cliente
-          const chatMemories = await searchMemories(clientName, 'chat', null, 3);
+
+          // 1D-i. Buscar memórias de chat que mencionem o cliente
+          const chatMemories = await searchMemories(clientName, 'chat', null, 5);
           if (chatMemories.length > 0) {
-            taskContext += `\n\nCONVERSAS RECENTES NO WHATSAPP sobre ${clientMatch[1]}:`;
+            taskContext += `\n\nMEMÓRIAS DE CONVERSAS DO WHATSAPP sobre ${clientMatch[1]}:`;
             for (const m of chatMemories) {
               taskContext += `\n- ${m.content}`;
             }
+          }
+
+          // 1D-ii. Buscar mensagens REAIS do grupo do cliente no banco (últimas 10 relevantes)
+          let clientGroupJid = null;
+          for (const [jid, client] of managedClients) {
+            if (client.groupName?.toLowerCase().includes(clientName) || client.slug?.toLowerCase().includes(clientName)) {
+              clientGroupJid = jid;
+              break;
+            }
+          }
+          if (clientGroupJid) {
+            const { rows: recentMsgs } = await pool.query(
+              `SELECT push_name, text, created_at AT TIME ZONE 'America/Sao_Paulo' as hora_br
+               FROM jarvis_messages
+               WHERE chat_id = $1 AND text IS NOT NULL AND text != '' AND LENGTH(text) > 15
+               ORDER BY timestamp DESC LIMIT 10`,
+              [clientGroupJid]
+            ).catch(() => ({ rows: [] }));
+            if (recentMsgs.length > 0) {
+              taskContext += `\n\nMENSAGENS RECENTES NO GRUPO DO WHATSAPP do cliente ${clientMatch[1]}:`;
+              for (const msg of recentMsgs.reverse()) {
+                const date = new Date(msg.hora_br).toLocaleDateString('pt-BR');
+                taskContext += `\n- ${msg.push_name} (${date}): ${msg.text.substring(0, 200)}`;
+              }
+            }
+          }
+        }
+      } catch (e) { console.error(`[COBRANCA] Erro ao buscar WhatsApp:`, e.message); }
+
+      // 1E. Perfil sintetizado do RESPONSÁVEL (como ele trabalha, preferências, padrões)
+      try {
+        if (t.assignee && t.assignee !== 'Sem responsável') {
+          const firstName = t.assignee.split(/\s+/)[0].toLowerCase();
+          const teamProfile = await getProfile('team_member', firstName);
+          if (teamProfile?.profile) {
+            const profileData = typeof teamProfile.profile === 'string' ? JSON.parse(teamProfile.profile) : teamProfile.profile;
+            taskContext += `\n\nPERFIL DO ${t.assignee.toUpperCase()} (como ele trabalha):`;
+            if (profileData.summary) taskContext += `\n${profileData.summary}`;
+            if (profileData.strengths) taskContext += `\nPontos fortes: ${JSON.stringify(profileData.strengths)}`;
+            if (profileData.patterns) taskContext += `\nPadrões: ${JSON.stringify(profileData.patterns)}`;
+          }
+        }
+      } catch (e) {}
+
+      // 1F. Perfil sintetizado do CLIENTE (tier, importância, histórico)
+      try {
+        const clientMatch = t.name.match(/\[([^\]]+)\]/);
+        if (clientMatch) {
+          const clientSlug = clientMatch[1].toLowerCase().replace(/\s+/g, '_');
+          const clientProfile = await getProfile('client', clientSlug);
+          if (clientProfile?.profile) {
+            const profileData = typeof clientProfile.profile === 'string' ? JSON.parse(clientProfile.profile) : clientProfile.profile;
+            taskContext += `\n\nPERFIL DO CLIENTE ${clientMatch[1].toUpperCase()}:`;
+            if (profileData.summary) taskContext += `\n${profileData.summary}`;
+            if (profileData.tier) taskContext += `\nTier: ${profileData.tier}`;
+            if (profileData.patterns) taskContext += `\nPadrões: ${JSON.stringify(profileData.patterns)}`;
           }
         }
       } catch (e) {}
@@ -1026,25 +1084,30 @@ export async function runOverdueCheck() {
       try {
         const aiResponse = await anthropic.messages.create({
           model: CONFIG.AI_MODEL,
-          max_tokens: 400,
+          max_tokens: 500,
           system: `Você é o Jarvis, gerente de projetos da agência Stream Lab. Gere um comentário para a task atrasada.
 
-EQUIPE DA STREAM LAB: ${teamList}
-Pode e DEVE mencionar nomes de CLIENTES que aparecem nos dados (ex: "o planner do Dr. Márcio", "as artes da Minner", "o material da Dra. Fernanda").
+Você tem acesso a TODOS os dados da agência: Asana (tasks, comentários, custom fields), memórias de conversas, perfis da equipe, mensagens reais do WhatsApp e perfis dos clientes. USE TUDO pra formular uma cobrança INTELIGENTE e HUMANA.
 
-CONTEXTO COMPLETO: Você tem acesso a dados do Asana, memórias e histórico. USE TUDO pra formular uma cobrança INTELIGENTE.
+EQUIPE DA STREAM LAB: ${teamList}
+
+COMO USAR O CONTEXTO (cruze os dados!):
+- Se o PERFIL DO MEMBRO mostra que ele tende a atrasar em certo tipo de task → adapte a abordagem
+- Se o PERFIL DO CLIENTE mostra que é Tier 1 ou alta prioridade → reforce a urgência
+- Se as MENSAGENS DO WHATSAPP mostram que o cliente já cobrou → mencione isso ("o cliente já perguntou no grupo sobre isso")
+- Se os COMENTÁRIOS DA TASK mostram progresso parcial → reconheça e pergunte o que falta
+- Se as MEMÓRIAS mostram decisões anteriores ou contexto → use ("conforme foi decidido na reunião...")
+- Se a SEÇÃO indica fase específica (ex: "Aprovação cliente") → cobre sobre AQUELA fase
+- Se NUNCA teve comentário → pergunte se já começou
 
 REGRAS ABSOLUTAS:
-1. ENTENDA do que se trata a task — leia descrição, comentários, memórias
-2. Cobrança ESPECÍFICA sobre o conteúdo — "o planner de março precisa ser finalizado" é bom, "pode dar retorno?" é PROIBIDO
-3. Se já houve progresso nos comentários, reconheça e pergunte O QUE FALTA
-4. Se tem conversa no WhatsApp relevante (ex: cliente cobrou), mencione — "o cliente já cobrou no grupo"
-5. Se nunca teve comentário, pergunte se já foi iniciada
-6. Se a seção indica fase específica (ex: "Aprovação cliente"), cobre sobre AQUELA fase
-7. 2-3 frases no máximo. Tom direto, profissional, sem "Olá" nem "Oi"
-8. NUNCA INVENTE nomes de pessoas que NÃO existem nos dados fornecidos. Se um nome NÃO aparece na descrição, nos comentários ou nas memórias — NÃO o mencione. Inventar nomes é PROIBIDO
-9. NUNCA comece com "@NomeDaPessoa" — a menção do responsável já é feita automaticamente pelo sistema
-10. Responda SOMENTE o texto do comentário, sem aspas nem prefixo`,
+1. Cobrança ESPECÍFICA sobre o conteúdo — "as artes do feed da Minner precisam ir pra aprovação" é bom. "pode dar retorno?" é PROIBIDO
+2. Tom de colega que entende o trabalho, não de robô — seja direto mas humano
+3. 2-4 frases no máximo
+4. Pode e DEVE mencionar nomes de CLIENTES que aparecem nos dados
+5. NUNCA INVENTE nomes que NÃO existem nos dados. Inventar nomes é PROIBIDO
+6. NUNCA comece com "@NomeDaPessoa" — a menção já é feita automaticamente pelo sistema
+7. Responda SOMENTE o texto do comentário, sem aspas nem prefixo`,
           messages: [{ role: 'user', content: taskContext }],
         });
         commentText = aiResponse.content[0]?.text?.trim() || '';
