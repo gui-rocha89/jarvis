@@ -17,6 +17,7 @@ const _groupMessageDedup = new Map(); // JID → timestamp da última mensagem (
 export function registerSendFunction(fn) { _sendTextFn = fn; }
 export function registerSendWithMentionsFunction(fn) { _sendTextWithMentionsFn = fn; }
 export function getSendFunction() { return _sendTextFn; }
+export function getSendWithMentionsFunction() { return _sendTextWithMentionsFn; }
 
 // ============================================
 // SKILL: ASANA

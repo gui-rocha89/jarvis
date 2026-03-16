@@ -842,7 +842,7 @@ export async function generateDailyReport() {
 export async function runOverdueCheck() {
   if (!CONFIG.ASANA_PAT) return;
   try {
-    const { getOverdueTasks, getSendFunction, asanaRequest, asanaWrite } = await import('./skills/loader.mjs');
+    const { getOverdueTasks, getSendFunction, getSendWithMentionsFunction, asanaRequest, asanaWrite } = await import('./skills/loader.mjs');
     const { searchMemories } = await import('./memory.mjs');
     const { TEAM_ASANA } = await import('./config.mjs');
     const sendFn = getSendFunction();
@@ -901,6 +901,10 @@ export async function runOverdueCheck() {
     // Claude para gerar comentários contextualizados
     const Anthropic = (await import('@anthropic-ai/sdk')).default;
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
+
+    // Lista da equipe real (pra evitar alucinação de nomes)
+    const teamNames = Object.keys(TEAM_ASANA).map(n => n.charAt(0).toUpperCase() + n.slice(1));
+    const teamList = [...new Set(teamNames)].join(', ');
 
     const now = new Date();
     const allCommentResults = []; // Todos os resultados pra expor no grupo no final
@@ -1025,18 +1029,22 @@ export async function runOverdueCheck() {
           max_tokens: 400,
           system: `Você é o Jarvis, gerente de projetos da agência Stream Lab. Gere um comentário para a task atrasada.
 
-CONTEXTO COMPLETO: Você tem acesso a TODAS as informações — dados do Asana, memórias de conversas, histórico de comentários. USE TUDO pra formular uma cobrança INTELIGENTE.
+EQUIPE DA STREAM LAB (ÚNICOS nomes que você pode referenciar): ${teamList}
+QUALQUER outro nome que apareça na descrição/comentários é CLIENTE ou EXTERNO — NUNCA mencione como se fosse da equipe.
+
+CONTEXTO COMPLETO: Você tem acesso a dados do Asana, memórias e histórico. USE TUDO pra formular uma cobrança INTELIGENTE.
 
 REGRAS ABSOLUTAS:
-1. ENTENDA do que se trata a task antes de cobrar — leia a descrição, os comentários anteriores, as memórias
-2. Faça uma cobrança ESPECÍFICA sobre o conteúdo — "o planner de março precisa ser finalizado" é bom, "pode dar retorno?" é PROIBIDO
-3. Se os comentários mostram que já houve progresso, reconheça e pergunte O QUE FALTA
-4. Se tem conversa no WhatsApp relevante (ex: cliente cobrou algo), mencione — "o cliente já cobrou esse retorno no grupo"
-5. Se a task nunca teve comentário, pergunte se já foi iniciada e ofereça ajuda
+1. ENTENDA do que se trata a task — leia descrição, comentários, memórias
+2. Cobrança ESPECÍFICA sobre o conteúdo — "o planner de março precisa ser finalizado" é bom, "pode dar retorno?" é PROIBIDO
+3. Se já houve progresso nos comentários, reconheça e pergunte O QUE FALTA
+4. Se tem conversa no WhatsApp relevante (ex: cliente cobrou), mencione — "o cliente já cobrou no grupo"
+5. Se nunca teve comentário, pergunte se já foi iniciada
 6. Se a seção indica fase específica (ex: "Aprovação cliente"), cobre sobre AQUELA fase
 7. 2-3 frases no máximo. Tom direto, profissional, sem "Olá" nem "Oi"
-8. NÃO invente dados — só use o que está no contexto fornecido
-9. Responda SOMENTE o texto do comentário`,
+8. NUNCA invente nomes de pessoas — só use nomes que aparecem EXPLICITAMENTE nos dados. Se a descrição menciona um nome externo (ex: "Gabriel", "Márcio", "Fernanda"), refira-se a eles como "o cliente" ou pelo contexto, NUNCA como se fossem da equipe
+9. NUNCA comece com "@NomeDaPessoa" — a menção já é feita automaticamente pelo sistema
+10. Responda SOMENTE o texto do comentário, sem aspas nem prefixo`,
           messages: [{ role: 'user', content: taskContext }],
         });
         commentText = aiResponse.content[0]?.text?.trim() || '';
@@ -1081,10 +1089,12 @@ REGRAS ABSOLUTAS:
     }
 
     // ============================================
-    // FASE 4: Expor no grupo Tarefas Diárias (resumo consolidado)
+    // FASE 4: Expor no grupo Tarefas Diárias com menções REAIS no WhatsApp
     // ============================================
     if (allCommentResults.length > 0) {
-      // Agrupar por responsável pra mensagem do WhatsApp
+      const sendWithMentions = getSendWithMentionsFunction();
+
+      // Agrupar por responsável
       const byPerson = {};
       for (const r of allCommentResults) {
         const name = r.task.assignee || 'Sem responsável';
@@ -1095,7 +1105,11 @@ REGRAS ABSOLUTAS:
       for (const [person, results] of Object.entries(byPerson)) {
         if (person === 'Sem responsável') continue;
 
-        let msg = `📋 *Cobrança automática — ${person}*\n\n`;
+        // Resolver JID do WhatsApp pra menção real
+        const firstName = person.split(/\s+/)[0].toLowerCase();
+        const whatsappJid = teamWhatsApp.get(firstName) || teamPhones.get(firstName);
+
+        let msg = `📋 *Cobrança automática — @${person}*\n\n`;
         msg += `Comentei nas seguintes tasks no Asana:\n\n`;
         for (const { task: t, comment, daysLate, section } of results) {
           const url = `https://app.asana.com/0/${t.projectGid}/${t.gid}`;
@@ -1105,7 +1119,14 @@ REGRAS ABSOLUTAS:
         }
         msg += `⚠️ Verifica no Asana e responde nos comentários das tasks.`;
 
-        await sendFn(CONFIG.GROUP_TAREFAS, msg);
+        // Enviar com menção real no WhatsApp (a pessoa recebe notificação)
+        if (whatsappJid && sendWithMentions) {
+          await sendWithMentions(CONFIG.GROUP_TAREFAS, msg, [{ jid: whatsappJid }]);
+          console.log(`[COBRANCA] WhatsApp com menção real: ${person} (${whatsappJid})`);
+        } else {
+          await sendFn(CONFIG.GROUP_TAREFAS, msg);
+          console.log(`[COBRANCA] WhatsApp sem menção (JID não encontrado): ${person}`);
+        }
         await new Promise(r => setTimeout(r, 2000));
       }
 
