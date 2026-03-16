@@ -842,7 +842,9 @@ export async function generateDailyReport() {
 export async function runOverdueCheck() {
   if (!CONFIG.ASANA_PAT) return;
   try {
-    const { getOverdueTasks, getSendFunction } = await import('./skills/loader.mjs');
+    const { getOverdueTasks, getSendFunction, asanaRequest, asanaWrite } = await import('./skills/loader.mjs');
+    const { searchMemories } = await import('./memory.mjs');
+    const { TEAM_ASANA } = await import('./config.mjs');
     const sendFn = getSendFunction();
     if (!sendFn || !CONFIG.GROUP_TAREFAS) {
       console.log('[COBRANCA] WhatsApp não conectado ou grupo tarefas não configurado');
@@ -865,29 +867,15 @@ export async function runOverdueCheck() {
     } catch {}
 
     const today = new Date().toISOString().split('T')[0];
-    // Limpar entradas antigas (manter só hoje)
     for (const gid of Object.keys(notified)) {
       if (notified[gid] !== today) delete notified[gid];
     }
 
-    // Filtrar tasks não cobradas hoje
     const toCobrar = overdue.filter(t => !notified[t.gid]);
     if (toCobrar.length === 0) {
       console.log('[COBRANCA] Todas as tasks atrasadas já foram cobradas hoje');
       return;
     }
-
-    // Agrupar por responsável
-    const byAssignee = {};
-    for (const t of toCobrar) {
-      const name = t.assignee || 'Sem responsável';
-      if (!byAssignee[name]) byAssignee[name] = [];
-      byAssignee[name].push(t);
-    }
-
-    const now = new Date();
-    const { asanaRequest, asanaWrite } = await import('./skills/loader.mjs');
-    const { TEAM_ASANA } = await import('./config.mjs');
 
     // Inverter TEAM_ASANA para buscar GID pelo nome
     const nameToGid = {};
@@ -899,113 +887,214 @@ export async function runOverdueCheck() {
     const Anthropic = (await import('@anthropic-ai/sdk')).default;
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 
-    for (const [assignee, tasks] of Object.entries(byAssignee)) {
-      if (assignee === 'Sem responsavel' || assignee === 'Sem responsável') continue;
+    const now = new Date();
+    const allCommentResults = []; // Todos os resultados pra expor no grupo no final
 
-      const assigneeGid = nameToGid[assignee.toLowerCase()];
-      const commentResults = []; // pra montar o resumo do WhatsApp
+    // Processar task por task (não agrupa por responsável — processa todas em sequência)
+    for (const t of toCobrar.slice(0, 10)) {
+      if (notified[t.gid]) continue;
+      const daysLate = Math.floor((now - new Date(t.due_on)) / (1000 * 60 * 60 * 24));
 
-      // 1. PARA CADA TASK: consultar contexto completo → gerar comentário inteligente → postar
-      for (const t of tasks.slice(0, 5)) {
-        const daysLate = Math.floor((now - new Date(t.due_on)) / (1000 * 60 * 60 * 24));
+      // ============================================
+      // FASE 1: Coleta de inteligência completa
+      // ============================================
+      let taskContext = `TASK: ${t.name}\nGID: ${t.gid}\nPrazo: ${t.due_on} (${daysLate} dias de atraso)\nResponsável: ${t.assignee || 'Sem responsável'}\nProjeto: ${t.project}`;
 
-        // Buscar detalhes completos da task (nome, notas, seção, comentários recentes)
-        let taskContext = `Task: ${t.name}\nPrazo: ${t.due_on} (${daysLate} dias de atraso)\nResponsável: ${assignee}`;
-        try {
-          const taskDetail = await asanaRequest(`/tasks/${t.gid}?opt_fields=name,notes,memberships.section.name,memberships.project.name,custom_fields.name,custom_fields.display_value`);
-          if (taskDetail?.data) {
-            const td = taskDetail.data;
-            if (td.notes) taskContext += `\nDescrição: ${td.notes.substring(0, 500)}`;
-            if (td.memberships?.[0]?.section?.name) taskContext += `\nSeção atual: ${td.memberships[0].section.name}`;
-            if (td.memberships?.[0]?.project?.name) taskContext += `\nProjeto: ${td.memberships[0].project.name}`;
-            const customFields = (td.custom_fields || []).filter(cf => cf.display_value);
-            if (customFields.length) taskContext += `\nCampos: ${customFields.map(cf => `${cf.name}: ${cf.display_value}`).join(', ')}`;
+      // 1A. Detalhes completos da task no Asana (descrição, seção, campos, followers)
+      let followers = [];
+      let sectionName = '';
+      let projectName = t.project;
+      try {
+        const taskDetail = await asanaRequest(`/tasks/${t.gid}?opt_fields=name,notes,memberships.section.name,memberships.project.name,custom_fields.name,custom_fields.display_value,followers.name,num_subtasks`);
+        if (taskDetail?.data) {
+          const td = taskDetail.data;
+          if (td.notes) taskContext += `\nDescrição da task: ${td.notes.substring(0, 600)}`;
+          if (td.memberships?.[0]?.section?.name) {
+            sectionName = td.memberships[0].section.name;
+            taskContext += `\nSeção atual no Asana: ${sectionName}`;
           }
+          if (td.memberships?.[0]?.project?.name) {
+            projectName = td.memberships[0].project.name;
+            taskContext += `\nProjeto: ${projectName}`;
+          }
+          const customFields = (td.custom_fields || []).filter(cf => cf.display_value);
+          if (customFields.length) taskContext += `\nCampos custom: ${customFields.map(cf => `${cf.name}: ${cf.display_value}`).join(', ')}`;
+          if (td.followers && td.followers.length > 0) {
+            followers = td.followers.map(f => f.name).filter(Boolean);
+            taskContext += `\nPessoas envolvidas (followers): ${followers.join(', ')}`;
+          }
+          if (td.num_subtasks > 0) taskContext += `\nSubtasks: ${td.num_subtasks}`;
+        }
+      } catch (e) { console.error(`[COBRANCA] Erro ao buscar detalhes task ${t.gid}:`, e.message); }
 
-          // Buscar últimos 5 comentários
-          const stories = await asanaRequest(`/tasks/${t.gid}/stories?opt_fields=text,created_by.name,created_at,type&limit=10`);
-          if (stories?.data) {
-            const comments = stories.data.filter(s => s.type === 'comment').slice(-5);
-            if (comments.length > 0) {
-              taskContext += `\n\nÚltimos comentários:`;
-              for (const c of comments) {
-                const date = new Date(c.created_at).toLocaleDateString('pt-BR');
-                taskContext += `\n- ${c.created_by?.name || 'Alguém'} (${date}): ${(c.text || '').substring(0, 200)}`;
-              }
-            } else {
-              taskContext += `\n\nNenhum comentário na task.`;
+      // 1B. Últimos comentários da task
+      try {
+        const stories = await asanaRequest(`/tasks/${t.gid}/stories?opt_fields=text,created_by.name,created_at,type&limit=15`);
+        if (stories?.data) {
+          const comments = stories.data.filter(s => s.type === 'comment').slice(-5);
+          if (comments.length > 0) {
+            taskContext += `\n\nÚLTIMOS COMENTÁRIOS NA TASK:`;
+            for (const c of comments) {
+              const date = new Date(c.created_at).toLocaleDateString('pt-BR');
+              taskContext += `\n- ${c.created_by?.name || '?'} (${date}): ${(c.text || '').substring(0, 300)}`;
+            }
+          } else {
+            taskContext += `\n\nNenhum comentário na task — nunca houve movimentação via comentários.`;
+          }
+        }
+      } catch (e) { console.error(`[COBRANCA] Erro ao buscar stories task ${t.gid}:`, e.message); }
+
+      // 1C. MEMÓRIAS DO JARVIS — cruzar com dados do estudo do Asana + conversas do WhatsApp
+      try {
+        // Buscar pelo nome da task
+        const taskMemories = await searchMemories(t.name, 'agent', null, 5);
+        // Buscar pelo cliente (extrair do nome da task entre colchetes, ex: [MINNER])
+        const clientMatch = t.name.match(/\[([^\]]+)\]/);
+        let clientMemories = [];
+        if (clientMatch) {
+          clientMemories = await searchMemories(clientMatch[1], null, null, 5);
+        }
+        // Buscar pelo responsável
+        const assigneeMemories = t.assignee && t.assignee !== 'Sem responsável'
+          ? await searchMemories(t.assignee, null, null, 3) : [];
+
+        const allMemories = [...taskMemories, ...clientMemories, ...assigneeMemories];
+        // Deduplicar por conteúdo
+        const seen = new Set();
+        const uniqueMemories = allMemories.filter(m => {
+          if (seen.has(m.content)) return false;
+          seen.add(m.content);
+          return true;
+        });
+
+        if (uniqueMemories.length > 0) {
+          taskContext += `\n\nMEMÓRIAS RELEVANTES DO JARVIS (dados do estudo do Asana + conversas):`;
+          for (const m of uniqueMemories.slice(0, 8)) {
+            taskContext += `\n- [${m.category}] ${m.content}`;
+          }
+        }
+      } catch (e) { console.error(`[COBRANCA] Erro ao buscar memórias:`, e.message); }
+
+      // 1D. Mensagens recentes do WhatsApp sobre o assunto (se houver grupo do cliente)
+      try {
+        const clientMatch = t.name.match(/\[([^\]]+)\]/);
+        if (clientMatch) {
+          const clientName = clientMatch[1].toLowerCase();
+          // Buscar memórias de chat que mencionem o cliente
+          const chatMemories = await searchMemories(clientName, 'chat', null, 3);
+          if (chatMemories.length > 0) {
+            taskContext += `\n\nCONVERSAS RECENTES NO WHATSAPP sobre ${clientMatch[1]}:`;
+            for (const m of chatMemories) {
+              taskContext += `\n- ${m.content}`;
             }
           }
-        } catch (ctxErr) {
-          console.error(`[COBRANCA] Erro ao buscar contexto da task ${t.gid}:`, ctxErr.message);
         }
+      } catch (e) {}
 
-        // Gerar comentário contextualizado via Claude
-        let commentText = '';
-        try {
-          const aiResponse = await anthropic.messages.create({
-            model: CONFIG.AI_MODEL,
-            max_tokens: 300,
-            system: `Você é o Jarvis, gerente de projetos da agência Stream Lab. Gere um comentário CURTO (2-3 frases) para cobrar o responsável sobre essa task atrasada.
-
-REGRAS:
-- Analise o contexto da task (nome, descrição, seção, comentários anteriores) pra entender DO QUE SE TRATA
-- Faça uma cobrança INTELIGENTE e ESPECÍFICA sobre o conteúdo da task — NUNCA genérica
-- Se já tem comentários recentes com atualização, reconheça e pergunte sobre o próximo passo
-- Se a task parece estar em progresso (ex: seção "Em andamento"), pergunte o que falta pra finalizar
-- Se não tem nenhum comentário, pergunte se já foi iniciada
-- Tom profissional mas direto — como uma gestora de projetos eficiente
-- NÃO use "Pode dar um retorno sobre o andamento?" — isso é genérico demais
-- NÃO comece com "Olá" ou "Oi"
-- Responda SOMENTE o texto do comentário, sem aspas nem prefixo`,
-            messages: [{ role: 'user', content: taskContext }],
-          });
-          commentText = aiResponse.content[0]?.text?.trim() || '';
-        } catch (aiErr) {
-          console.error(`[COBRANCA] Erro no Claude ao gerar comentário:`, aiErr.message);
-          // Fallback: comentário simples mas não mentiroso
-          commentText = `${t.name} está com ${daysLate} dia(s) de atraso. Qual o status atual?`;
-        }
-
-        if (!commentText) commentText = `${t.name} está com ${daysLate} dia(s) de atraso. Qual o status atual?`;
-
-        // Postar comentário no Asana com @mention
-        const commentBody = assigneeGid
-          ? { html_text: `<body><a data-asana-gid="${assigneeGid}"/> ${commentText}</body>` }
-          : { text: `${assignee}, ${commentText}` };
-
-        const result = await asanaWrite('POST', `/tasks/${t.gid}/stories`, commentBody);
-        if (result.success) {
-          console.log(`[COBRANCA] Comentário contextualizado no Asana: task ${t.gid} — "${commentText.substring(0, 80)}..."`);
-          commentResults.push({ task: t, comment: commentText, daysLate });
-        } else {
-          console.error(`[COBRANCA] Erro ao comentar task ${t.gid}:`, result.error);
-        }
-
-        notified[t.gid] = today;
-
-        // Rate limit: ~1.5s entre tasks (API Asana + Claude)
-        await new Promise(r => setTimeout(r, 1500));
+      // ============================================
+      // FASE 2: Gerar comentário inteligente via Claude
+      // ============================================
+      // Montar lista de TODOS os envolvidos pra mencionar
+      const allInvolved = new Set();
+      if (t.assignee && t.assignee !== 'Sem responsável') allInvolved.add(t.assignee);
+      for (const f of followers) {
+        // Só adicionar se é da equipe (tem GID no TEAM_ASANA)
+        if (nameToGid[f.toLowerCase()]) allInvolved.add(f);
       }
 
-      // 2. Mandar resumo no WhatsApp (só se comentou pelo menos 1)
-      if (commentResults.length > 0) {
-        let msg = `@${assignee}, te marquei nessas tasks no Asana:\n\n`;
-        for (const { task: t, comment, daysLate } of commentResults) {
+      let commentText = '';
+      let mentionGids = []; // Quem mencionar no comentário do Asana
+      try {
+        const aiResponse = await anthropic.messages.create({
+          model: CONFIG.AI_MODEL,
+          max_tokens: 400,
+          system: `Você é o Jarvis, gerente de projetos da agência Stream Lab. Gere um comentário para a task atrasada.
+
+CONTEXTO COMPLETO: Você tem acesso a TODAS as informações — dados do Asana, memórias de conversas, histórico de comentários. USE TUDO pra formular uma cobrança INTELIGENTE.
+
+REGRAS ABSOLUTAS:
+1. ENTENDA do que se trata a task antes de cobrar — leia a descrição, os comentários anteriores, as memórias
+2. Faça uma cobrança ESPECÍFICA sobre o conteúdo — "o planner de março precisa ser finalizado" é bom, "pode dar retorno?" é PROIBIDO
+3. Se os comentários mostram que já houve progresso, reconheça e pergunte O QUE FALTA
+4. Se tem conversa no WhatsApp relevante (ex: cliente cobrou algo), mencione — "o cliente já cobrou esse retorno no grupo"
+5. Se a task nunca teve comentário, pergunte se já foi iniciada e ofereça ajuda
+6. Se a seção indica fase específica (ex: "Aprovação cliente"), cobre sobre AQUELA fase
+7. 2-3 frases no máximo. Tom direto, profissional, sem "Olá" nem "Oi"
+8. NÃO invente dados — só use o que está no contexto fornecido
+9. Responda SOMENTE o texto do comentário`,
+          messages: [{ role: 'user', content: taskContext }],
+        });
+        commentText = aiResponse.content[0]?.text?.trim() || '';
+      } catch (aiErr) {
+        console.error(`[COBRANCA] Erro Claude:`, aiErr.message);
+        commentText = `Essa task está com ${daysLate} dia(s) de atraso desde ${new Date(t.due_on).toLocaleDateString('pt-BR')}. Qual o status atual?`;
+      }
+
+      if (!commentText) commentText = `Essa task está com ${daysLate} dia(s) de atraso. Qual o status atual?`;
+
+      // ============================================
+      // FASE 3: Comentar no Asana mencionando TODOS os envolvidos
+      // ============================================
+      // Montar HTML com @mentions de todos os envolvidos
+      let mentionsHtml = '';
+      const mentionedNames = [];
+      for (const person of allInvolved) {
+        const gid = nameToGid[person.toLowerCase()];
+        if (gid) {
+          mentionsHtml += `<a data-asana-gid="${gid}"/> `;
+          mentionedNames.push(person);
+        }
+      }
+
+      const commentBody = mentionsHtml
+        ? { html_text: `<body>${mentionsHtml}${commentText}</body>` }
+        : { text: commentText };
+
+      const result = await asanaWrite('POST', `/tasks/${t.gid}/stories`, commentBody);
+      if (result.success) {
+        console.log(`[COBRANCA] ✅ Task ${t.gid} — mencionou [${mentionedNames.join(', ')}]: "${commentText.substring(0, 80)}..."`);
+        allCommentResults.push({
+          task: t, comment: commentText, daysLate,
+          mentioned: mentionedNames, section: sectionName, project: projectName,
+        });
+      } else {
+        console.error(`[COBRANCA] ❌ Erro ao comentar task ${t.gid}:`, result.error);
+      }
+
+      notified[t.gid] = today;
+      await new Promise(r => setTimeout(r, 1500));
+    }
+
+    // ============================================
+    // FASE 4: Expor no grupo Tarefas Diárias (resumo consolidado)
+    // ============================================
+    if (allCommentResults.length > 0) {
+      // Agrupar por responsável pra mensagem do WhatsApp
+      const byPerson = {};
+      for (const r of allCommentResults) {
+        const name = r.task.assignee || 'Sem responsável';
+        if (!byPerson[name]) byPerson[name] = [];
+        byPerson[name].push(r);
+      }
+
+      for (const [person, results] of Object.entries(byPerson)) {
+        if (person === 'Sem responsável') continue;
+
+        let msg = `📋 *Cobrança automática — ${person}*\n\n`;
+        msg += `Comentei nas seguintes tasks no Asana:\n\n`;
+        for (const { task: t, comment, daysLate, section } of results) {
           const url = `https://app.asana.com/0/${t.projectGid}/${t.gid}`;
-          msg += `• *${t.name}* (${daysLate}d atraso)\n  _"${comment.substring(0, 100)}${comment.length > 100 ? '...' : ''}"_\n  ${url}\n\n`;
+          msg += `• *${t.name}*${section ? ` (${section})` : ''} — ${daysLate}d atraso\n`;
+          msg += `  💬 _"${comment.substring(0, 120)}${comment.length > 120 ? '...' : ''}"_\n`;
+          msg += `  ${url}\n\n`;
         }
-        if (tasks.length > 5) {
-          msg += `_...e mais ${tasks.length - 5} task(s)_\n\n`;
-        }
-        msg += 'Dá uma olhada? 🙏';
+        msg += `⚠️ Verifica no Asana e responde nos comentários das tasks.`;
 
         await sendFn(CONFIG.GROUP_TAREFAS, msg);
-        console.log(`[COBRANCA] ${assignee}: ${commentResults.length} tasks cobradas com contexto`);
+        await new Promise(r => setTimeout(r, 2000));
       }
 
-      // Delay entre responsáveis
-      await new Promise(r => setTimeout(r, 2000));
+      console.log(`[COBRANCA] Concluída: ${allCommentResults.length} tasks cobradas com inteligência completa`);
     }
 
     // Salvar controle anti-spam
@@ -1014,7 +1103,6 @@ REGRAS:
       [JSON.stringify(notified)]
     ).catch(() => {});
 
-    console.log(`[COBRANCA] Concluída: ${toCobrar.length} tasks cobradas`);
   } catch (err) {
     console.error('[COBRANCA] Erro:', err.message);
   }
