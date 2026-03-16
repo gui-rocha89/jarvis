@@ -23,7 +23,7 @@ import jwt from 'jsonwebtoken';
 import { CONFIG, AUDIO_ALLOWED, teamPhones, teamWhatsApp, managedClients, loadManagedClients, saveManagedClients, isManagedClientGroup } from './src/config.mjs';
 import { pool, initDB, storeMessage, getRecentMessages, getContactInfo, getGroupInfo, upsertContact, upsertGroup, getMessageCount } from './src/database.mjs';
 import { initMemory, processMemory, getMemoryContext, getMemoryStats, searchMemories, storeFacts, extractFacts } from './src/memory.mjs';
-import { shouldJarvisRespond, isValidResponse, generateResponse, markConversationActive, isConversationActive, findTeamJid, extractMentionsFromText, generateDailyReport, handleManagedClientMessage } from './src/brain.mjs';
+import { shouldJarvisRespond, isValidResponse, generateResponse, markConversationActive, isConversationActive, findTeamJid, extractMentionsFromText, generateDailyReport, handleManagedClientMessage, runOverdueCheck } from './src/brain.mjs';
 import { voiceConfig, loadVoiceConfig, saveVoiceConfig, transcribeAudio, generateAudio } from './src/audio.mjs';
 import { synthesizeProfile, getProfile, listProfiles, syncProfiles } from './src/profiles.mjs';
 import { asanaRequest, getOverdueTasks, getGCalClient, JARVIS_TOOLS, registerSendFunction, registerSendWithMentionsFunction } from './src/skills/loader.mjs';
@@ -1735,7 +1735,36 @@ function setupCronJobs() {
     });
   }
 
-  console.log('[CRON] Jobs ativados: syncProfiles 6h + estudo Asana 5x/dia (seg-sex 08h/11h/13:30/15h/17h)');
+  // ============================================
+  // COBRANÇA AUTOMÁTICA — 2x por dia (estilo Camile)
+  // 09:30 BRT = 12:30 UTC | 14:30 BRT = 17:30 UTC
+  // ============================================
+  cron.schedule('30 12 * * 1-5', async () => {
+    console.log('[CRON] Cobrança automática (09:30 BRT)...');
+    try { await runOverdueCheck(); } catch (err) { console.error('[CRON] Erro na cobrança:', err.message); }
+  });
+  cron.schedule('30 17 * * 1-5', async () => {
+    console.log('[CRON] Cobrança automática (14:30 BRT)...');
+    try { await runOverdueCheck(); } catch (err) { console.error('[CRON] Erro na cobrança:', err.message); }
+  });
+
+  // ============================================
+  // RELATÓRIO DIÁRIO — 08:00 BRT = 11:00 UTC
+  // ============================================
+  cron.schedule('0 11 * * 1-5', async () => {
+    console.log('[CRON] Relatório diário (08:00 BRT)...');
+    try {
+      const report = await generateDailyReport();
+      const { getSendFunction } = await import('./src/skills/loader.mjs');
+      const sendFn = getSendFunction();
+      if (sendFn && CONFIG.GROUP_TAREFAS) {
+        await sendFn(CONFIG.GROUP_TAREFAS, report);
+        console.log('[CRON] Relatório diário enviado no grupo Tarefas');
+      }
+    } catch (err) { console.error('[CRON] Erro no relatório:', err.message); }
+  });
+
+  console.log('[CRON] Jobs ativados: syncProfiles 6h + estudo Asana 5x/dia + cobrança 2x/dia + relatório diário 08h');
 }
 
 // ============================================

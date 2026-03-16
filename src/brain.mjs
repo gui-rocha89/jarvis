@@ -145,8 +145,8 @@ async function agentLoop(model, systemPrompt, messages, tools, context = {}) {
 // NÃO bloqueia: confirmações, instruções, ações, planos.
 // ============================================
 export function antiHallucinationCheck(finalText, toolsUsed) {
-  // Se usou tools de busca nesta iteração, a resposta é baseada em dados reais
-  if (toolsUsed.has('buscar_mensagens') || toolsUsed.has('consultar_tarefas') || toolsUsed.has('buscar_memorias')) {
+  // Se usou tools de busca/consulta nesta iteração, a resposta é baseada em dados reais
+  if (toolsUsed.has('buscar_mensagens') || toolsUsed.has('consultar_tarefas') || toolsUsed.has('consultar_task') || toolsUsed.has('buscar_memorias')) {
     return { safe: true };
   }
 
@@ -716,7 +716,7 @@ PROCESSOS DA AGÊNCIA QUE VOCÊ DEVE SEGUIR:
 
 QUANDO AGIR:
 - Cliente mandou demanda de trabalho → responda confirmando, pergunte o que faltar (prazo, referências), crie a task no Asana, ANEXE material se houver, avise a equipe
-- Cliente mandou material (fotos, vídeos, documentos) → crie a task + use anexar_midia_asana com os message_ids indicados + avise equipe
+- Cliente mandou material (fotos, vídeos, documentos) → crie a task + use anexar_midia_asana (basta o task_gid) + avise equipe
 - Cliente tem dúvida sobre andamento → responda com o que você sabe. Se não sabe, pergunte internamente e avise o cliente que está verificando
 - Cliente mandou aprovação/feedback → notifique a equipe internamente
 - Conversa casual, cumprimento ou mensagem irrelevante → [SILENCIO] (NÃO responda)
@@ -739,9 +739,13 @@ TOM DE VOZ:
 
 TOOLS DISPONÍVEIS:
 - criar_demanda_cliente: para criar tasks no Asana quando identificar uma demanda. OBRIGATÓRIO preencher: urgencia ("24h", "48h", "72h" ou "negociavel") e tipo_demanda ("design", "audiovisual", "marketing", "planejamento", "reuniao", "captacao", "endomarketing", "demanda_extra"). O campo "cliente" é o nome do cliente. Se souber o tier do cliente, preencha também.
-- anexar_midia_asana: para subir fotos/vídeos/docs do WhatsApp na task do Asana. Use SEMPRE que o cliente mandar material. Precisa do task_gid (retornado pelo criar_demanda_cliente OU extraído de um link de task existente). Para os arquivos: se tiver os message_ids exatos (indicados como [msg_id: xxx]), use-os. Se NÃO tiver os IDs, use upload_all_recent=true — pega todos os arquivos recentes automaticamente. NUNCA INVENTE message_ids — se não tem os IDs, use upload_all_recent=true.
+- anexar_midia_asana: para subir fotos/vídeos/docs do WhatsApp na task do Asana. Basta passar o task_gid — encontra e envia todos os arquivos recentes automaticamente.
+- consultar_task: para ver detalhes de uma task específica (nome, responsável, prazo, comentários). Use ANTES de responder sobre qualquer task.
+- comentar_task: para adicionar comentário em uma task do Asana, com @menção de pessoas.
+- atualizar_task: para mudar responsável, prazo, ou marcar como concluída. NUNCA altera descrição.
+- buscar_memorias: para consultar o que você já sabe sobre clientes, processos, regras. Use ANTES de inventar.
 - enviar_mensagem_grupo: para notificar/perguntar pra equipe internamente (grupo "tarefas") — USE SEMPRE que precisar avisar, perguntar, ou tirar dúvida com a equipe
-- lembrar: para salvar informações importantes sobre o cliente — USE para guardar tudo que aprender (respostas da equipe, preferências do cliente, processos descobertos)
+- lembrar: para salvar informações importantes sobre o cliente — USE para guardar tudo que aprender
 
 ⚠️ ATENÇÃO MÁXIMA — SEPARAÇÃO INTERNO vs EXTERNO:
 Você fala em DOIS contextos diferentes:
@@ -768,29 +772,150 @@ ${memoryContext ? '\n' + memoryContext : ''}`;
 }
 
 // ============================================
-// RELATÓRIO DIÁRIO
+// RELATÓRIO DIÁRIO (melhorado com 4 categorias)
 // ============================================
 export async function generateDailyReport() {
-  if (!CONFIG.ASANA_PAT) return 'Relatorio indisponivel - Asana nao configurado.';
+  if (!CONFIG.ASANA_PAT) return 'Relatório indisponível - Asana não configurado.';
   try {
-    const { getOverdueTasks } = await import('./skills/loader.mjs');
-    const overdue = await getOverdueTasks();
+    const { getTasksSummary } = await import('./skills/loader.mjs');
+    const summary = await getTasksSummary();
     const now = new Date();
     const dateStr = now.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-    let report = `*RELATORIO JARVIS — ${dateStr}*\n\n`;
-    if (overdue.length === 0) {
-      report += 'Nenhuma task atrasada. Equipe em dia.\n';
-    } else {
-      report += `*${overdue.length} task(s) atrasada(s):*\n\n`;
-      for (const t of overdue.slice(0, 15)) {
+    const dayNames = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+    const dayOfWeek = dayNames[new Date(now.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' })).getDay()];
+
+    let report = `📋 *RELATÓRIO JARVIS — ${dayOfWeek}, ${dateStr}*\n\n`;
+
+    // Tasks atrasadas
+    if (summary.atrasadas.length > 0) {
+      report += `⏰ *${summary.atrasadas.length} task(s) ATRASADA(S):*\n`;
+      for (const t of summary.atrasadas.slice(0, 10)) {
         const daysLate = Math.floor((now - new Date(t.due_on)) / (1000 * 60 * 60 * 24));
-        report += `- *${t.name}*\n  ${t.project} | ${t.assignee} | ${daysLate} dia(s) de atraso\n\n`;
+        report += `• *${t.name}* — ${t.assignee} (${daysLate}d atraso)\n  ${t.project}\n`;
       }
+      report += '\n';
     }
-    report += '\n_Jarvis 3.0, seu gerente de projetos incansavel._';
+
+    // Tasks vencendo hoje
+    if (summary.vencendo_hoje.length > 0) {
+      report += `📅 *${summary.vencendo_hoje.length} task(s) VENCEM HOJE:*\n`;
+      for (const t of summary.vencendo_hoje.slice(0, 10)) {
+        report += `• *${t.name}* — ${t.assignee}\n  ${t.project}\n`;
+      }
+      report += '\n';
+    }
+
+    // Tasks vencendo amanhã (preventivo)
+    if (summary.vencendo_amanha.length > 0) {
+      report += `⚠️ *${summary.vencendo_amanha.length} task(s) VENCEM AMANHÃ:*\n`;
+      for (const t of summary.vencendo_amanha.slice(0, 10)) {
+        report += `• *${t.name}* — ${t.assignee}\n  ${t.project}\n`;
+      }
+      report += '\n';
+    }
+
+    // Tasks concluídas ontem
+    if (summary.concluidas_ontem.length > 0) {
+      report += `✅ *${summary.concluidas_ontem.length} task(s) concluída(s) ontem:*\n`;
+      for (const t of summary.concluidas_ontem.slice(0, 8)) {
+        report += `• ${t.name} — ${t.assignee}\n`;
+      }
+      report += '\n';
+    }
+
+    // Tudo em dia
+    if (summary.atrasadas.length === 0 && summary.vencendo_hoje.length === 0) {
+      report += '🟢 Nenhuma task atrasada ou vencendo hoje. Equipe em dia!\n\n';
+    }
+
+    report += '_Jarvis 3.0 — seu gestor de projetos 24/7_ 🤖';
     return report;
   } catch (err) {
     console.error('[REPORT] Erro:', err.message);
-    return 'Erro ao gerar relatorio.';
+    return 'Erro ao gerar relatório.';
+  }
+}
+
+// ============================================
+// COBRANÇA AUTOMÁTICA (estilo Camile)
+// ============================================
+export async function runOverdueCheck() {
+  if (!CONFIG.ASANA_PAT) return;
+  try {
+    const { getOverdueTasks, getSendFunction } = await import('./skills/loader.mjs');
+    const sendFn = getSendFunction();
+    if (!sendFn || !CONFIG.GROUP_TAREFAS) {
+      console.log('[COBRANCA] WhatsApp não conectado ou grupo tarefas não configurado');
+      return;
+    }
+
+    const overdue = await getOverdueTasks();
+    if (overdue.length === 0) {
+      console.log('[COBRANCA] Nenhuma task atrasada');
+      return;
+    }
+
+    // Controle anti-spam: não cobrar a mesma task 2x no mesmo dia
+    let notified = {};
+    try {
+      const { rows } = await pool.query("SELECT value FROM jarvis_config WHERE key = 'overdue_notified'");
+      if (rows.length > 0) {
+        notified = typeof rows[0].value === 'string' ? JSON.parse(rows[0].value) : rows[0].value;
+      }
+    } catch {}
+
+    const today = new Date().toISOString().split('T')[0];
+    // Limpar entradas antigas (manter só hoje)
+    for (const gid of Object.keys(notified)) {
+      if (notified[gid] !== today) delete notified[gid];
+    }
+
+    // Filtrar tasks não cobradas hoje
+    const toCobrar = overdue.filter(t => !notified[t.gid]);
+    if (toCobrar.length === 0) {
+      console.log('[COBRANCA] Todas as tasks atrasadas já foram cobradas hoje');
+      return;
+    }
+
+    // Agrupar por responsável
+    const byAssignee = {};
+    for (const t of toCobrar) {
+      const name = t.assignee || 'Sem responsável';
+      if (!byAssignee[name]) byAssignee[name] = [];
+      byAssignee[name].push(t);
+    }
+
+    const now = new Date();
+    for (const [assignee, tasks] of Object.entries(byAssignee)) {
+      if (assignee === 'Sem responsavel' || assignee === 'Sem responsável') continue;
+
+      let msg = `@${assignee}, mencionei você nessas tasks e ainda não tive retorno:\n\n`;
+      for (const t of tasks.slice(0, 5)) {
+        const daysLate = Math.floor((now - new Date(t.due_on)) / (1000 * 60 * 60 * 24));
+        const url = `https://app.asana.com/0/${t.projectGid}/${t.gid}`;
+        msg += `• *${t.name}* (prazo: ${new Date(t.due_on).toLocaleDateString('pt-BR')}, ${daysLate} dia(s) de atraso)\n  ${url}\n\n`;
+        notified[t.gid] = today;
+      }
+      if (tasks.length > 5) {
+        msg += `_...e mais ${tasks.length - 5} task(s)_\n\n`;
+      }
+      msg += 'Pode verificar? 🙏';
+
+      await sendFn(CONFIG.GROUP_TAREFAS, msg);
+      console.log(`[COBRANCA] Cobrado ${assignee}: ${tasks.length} tasks atrasadas`);
+
+      // Pequeno delay entre mensagens pra não spammar
+      await new Promise(r => setTimeout(r, 2000));
+    }
+
+    // Salvar controle anti-spam
+    await pool.query(
+      "INSERT INTO jarvis_config (key, value) VALUES ('overdue_notified', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
+      [JSON.stringify(notified)]
+    ).catch(() => {});
+
+    console.log(`[COBRANCA] Concluída: ${toCobrar.length} tasks cobradas`);
+  } catch (err) {
+    console.error('[COBRANCA] Erro:', err.message);
   }
 }

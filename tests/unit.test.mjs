@@ -330,7 +330,15 @@ describe('Mídia e Asana Upload', () => {
     const tool = JARVIS_TOOLS.find(t => t.name === 'anexar_midia_asana');
     assert.ok(tool, 'Tool anexar_midia_asana não encontrada');
     assert.ok(tool.input_schema.properties.task_gid, 'task_gid não definido no schema');
-    assert.ok(tool.input_schema.properties.message_ids, 'message_ids não definido no schema');
+  });
+
+  it('JARVIS_TOOLS inclui novas tools de gestão', async () => {
+    const { JARVIS_TOOLS } = await import('../src/skills/loader.mjs');
+    const toolNames = JARVIS_TOOLS.map(t => t.name);
+    assert.ok(toolNames.includes('consultar_task'), 'consultar_task não encontrada');
+    assert.ok(toolNames.includes('comentar_task'), 'comentar_task não encontrada');
+    assert.ok(toolNames.includes('atualizar_task'), 'atualizar_task não encontrada');
+    assert.ok(toolNames.includes('buscar_memorias'), 'buscar_memorias não encontrada');
   });
 
   it('handleManagedClientMessage aceita mediaFiles como 7o argumento', async () => {

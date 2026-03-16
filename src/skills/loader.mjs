@@ -4,6 +4,7 @@
 // ============================================
 import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, ASANA_CUSTOM_FIELDS, ASANA_CLIENTE_MAP, ASANA_URGENCIA_MAP, ASANA_TIER_MAP, ASANA_TIPO_DEMANDA_MAP, GCAL_KEY_PATH, GCAL_CALENDAR_ID, managedClients, saveManagedClients, teamWhatsApp } from '../config.mjs';
 import { pool } from '../database.mjs';
+import { searchMemories } from '../memory.mjs';
 import { readFile, readdir, stat } from 'fs/promises';
 import { readFileSync } from 'fs';
 import { google } from 'googleapis';
@@ -115,6 +116,27 @@ export async function asanaUploadAttachment(taskGid, filePath, fileName) {
   }
 }
 
+// PUT/POST genérico para Asana (criar, atualizar, comentar)
+export async function asanaWrite(method, endpoint, body = null) {
+  if (!CONFIG.ASANA_PAT) return { error: 'Asana não configurado' };
+  try {
+    const options = {
+      method,
+      headers: { Authorization: `Bearer ${CONFIG.ASANA_PAT}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+    };
+    if (body) options.body = JSON.stringify({ data: body });
+    const response = await fetch(`https://app.asana.com/api/1.0${endpoint}`, options);
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      return { error: err.errors?.[0]?.message || `HTTP ${response.status}` };
+    }
+    const data = await response.json();
+    return { success: true, data: data.data };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
 export async function getOverdueTasks() {
   const projects = await asanaRequest(`/projects?workspace=${CONFIG.ASANA_WORKSPACE}&opt_fields=name,archived&limit=100`);
   if (!projects) return [];
@@ -128,11 +150,60 @@ export async function getOverdueTasks() {
     if (!tasks) continue;
     for (const task of tasks) {
       if (!task.completed && task.due_on && task.due_on < today) {
-        overdue.push({ name: task.name, due_on: task.due_on, assignee: task.assignee?.name || 'Sem responsavel', project: project.name });
+        overdue.push({ gid: task.gid, name: task.name, due_on: task.due_on, assignee: task.assignee?.name || 'Sem responsavel', project: project.name, projectGid: project.gid });
       }
     }
   }
   return overdue;
+}
+
+/**
+ * Resumo completo de tasks: atrasadas, vencendo hoje, vencendo amanhã, concluídas ontem.
+ */
+export async function getTasksSummary() {
+  const projects = await asanaRequest(`/projects?workspace=${CONFIG.ASANA_WORKSPACE}&opt_fields=name,archived&limit=100`);
+  if (!projects) return { atrasadas: [], vencendo_hoje: [], vencendo_amanha: [], concluidas_ontem: [] };
+
+  const now = new Date();
+  const brDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  const today = brDate.toISOString().split('T')[0];
+  const tomorrow = new Date(brDate);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowStr = tomorrow.toISOString().split('T')[0];
+  const yesterday = new Date(brDate);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+  const result = { atrasadas: [], vencendo_hoje: [], vencendo_amanha: [], concluidas_ontem: [] };
+  const { PUBLIC_ASANA_PROJECTS } = await import('../config.mjs');
+
+  for (const project of projects) {
+    if (!PUBLIC_ASANA_PROJECTS.has(project.gid)) continue;
+    if (project.archived) continue;
+
+    // Tasks não concluídas
+    const tasks = await asanaRequest(`/tasks?project=${project.gid}&opt_fields=name,due_on,completed,completed_at,assignee.name&completed_since=now&limit=100`);
+    if (tasks) {
+      for (const t of tasks) {
+        if (t.completed) continue;
+        const item = { gid: t.gid, name: t.name, due_on: t.due_on, assignee: t.assignee?.name || 'Sem responsável', project: project.name, projectGid: project.gid };
+        if (t.due_on && t.due_on < today) result.atrasadas.push(item);
+        else if (t.due_on === today) result.vencendo_hoje.push(item);
+        else if (t.due_on === tomorrowStr) result.vencendo_amanha.push(item);
+      }
+    }
+
+    // Tasks concluídas ontem
+    const completed = await asanaRequest(`/tasks?project=${project.gid}&opt_fields=name,completed_at,assignee.name&completed_since=${yesterdayStr}T00:00:00Z&limit=50`);
+    if (completed) {
+      for (const t of completed) {
+        if (t.completed_at && t.completed_at.startsWith(yesterdayStr)) {
+          result.concluidas_ontem.push({ gid: t.gid, name: t.name, assignee: t.assignee?.name || 'Sem responsável', project: project.name });
+        }
+      }
+    }
+  }
+  return result;
 }
 
 // ============================================
@@ -365,26 +436,72 @@ export const JARVIS_TOOLS = [
   },
   {
     name: 'anexar_midia_asana',
-    description: 'Anexar arquivos de midia (imagens, videos, documentos) recebidos do WhatsApp a uma task do Asana. Use SEMPRE que o cliente enviar material (fotos, videos, PDFs). Pode usar message_ids especificos OU chat_id pra pegar todos os arquivos recentes daquele chat. Se nao tiver os IDs exatos, use chat_id com upload_all_recent=true.',
+    description: 'Anexar TODOS os arquivos de midia recentes (imagens, videos, documentos) recebidos do WhatsApp a uma task do Asana. Basta informar o task_gid — a tool automaticamente encontra e envia todos os arquivos recentes.',
     input_schema: {
       type: 'object',
       properties: {
         task_gid: { type: 'string', description: 'GID da task no Asana onde anexar os arquivos' },
-        message_ids: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Lista de message_ids do WhatsApp cujas midias devem ser anexadas (vem no contexto da mensagem como [msg_id: xxx]). Se nao tiver os IDs exatos, use chat_id com upload_all_recent.',
-        },
         chat_id: {
           type: 'string',
-          description: 'ID do chat (numero do WhatsApp, ex: 555599154868). Quando informado com upload_all_recent=true, anexa TODOS os arquivos recentes desse chat.',
-        },
-        upload_all_recent: {
-          type: 'boolean',
-          description: 'Se true, ignora message_ids e anexa TODOS os arquivos de midia do chat (do chat_id informado ou de todos os chats). Use quando nao tiver os message_ids exatos.',
+          description: 'Numero do WhatsApp do remetente (ex: 555599154868). Se informado, filtra arquivos somente desse chat. Se omitido, pega de todos os chats.',
         },
       },
       required: ['task_gid'],
+    },
+  },
+  // ============================================
+  // NOVAS TOOLS — Gestão de Projetos (estilo Camile)
+  // ============================================
+  {
+    name: 'consultar_task',
+    description: 'Consultar uma task ESPECIFICA do Asana pelo GID. Retorna nome, responsavel, prazo, secao, custom fields e ultimos comentarios. USE SEMPRE antes de responder sobre status de uma task. NUNCA invente dados — consulte primeiro.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        task_gid: { type: 'string', description: 'GID da task no Asana (ex: 1213645436753789)' },
+        incluir_comentarios: { type: 'boolean', description: 'Se true, inclui os ultimos 10 comentarios da task (default: true)' },
+      },
+      required: ['task_gid'],
+    },
+  },
+  {
+    name: 'comentar_task',
+    description: 'Adicionar um comentario em uma task do Asana. Use para registrar informacoes, cobrar responsaveis, ou dar atualizacoes. Pode mencionar pessoas da equipe com @.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        task_gid: { type: 'string', description: 'GID da task no Asana' },
+        texto: { type: 'string', description: 'Texto do comentario' },
+        mencionar: { type: 'string', description: 'Nome da pessoa para mencionar no comentario (ex: "bruna", "bruno"). Sera convertido em @menção real do Asana.' },
+      },
+      required: ['task_gid', 'texto'],
+    },
+  },
+  {
+    name: 'atualizar_task',
+    description: 'Atualizar campos de uma task existente no Asana: responsavel, prazo, ou marcar como concluida. NUNCA altera a descricao (notes) da task — use comentar_task pra isso.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        task_gid: { type: 'string', description: 'GID da task no Asana' },
+        responsavel: { type: 'string', description: 'Nome do novo responsavel (ex: "bruno", "bruna", "nicolas")' },
+        prazo: { type: 'string', description: 'Novo prazo em formato YYYY-MM-DD' },
+        concluir: { type: 'boolean', description: 'Se true, marca a task como concluida' },
+      },
+      required: ['task_gid'],
+    },
+  },
+  {
+    name: 'buscar_memorias',
+    description: 'Buscar na memoria de longo prazo do Jarvis. Use para consultar o que voce ja sabe sobre um cliente, pessoa, processo ou regra ANTES de responder. Evita inventar informacao.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'O que buscar (ex: "preferencias do cliente Minner", "regras do Asana", "estilo do Bruno")' },
+        escopo: { type: 'string', enum: ['user', 'chat', 'agent'], description: 'Escopo da busca: "user" (pessoa), "chat" (grupo/conversa), "agent" (conhecimento geral do Jarvis). Default: todos.' },
+        limite: { type: 'number', description: 'Maximo de resultados (default: 10)' },
+      },
+      required: ['query'],
     },
   },
 ];
@@ -634,123 +751,193 @@ export async function executeJarvisTool(toolName, input, context = {}) {
 
   if (toolName === 'anexar_midia_asana') {
     const taskGid = input.task_gid;
-    const messageIds = input.message_ids || [];
     const chatId = input.chat_id || '';
-    const uploadAllRecent = input.upload_all_recent || false;
     if (!taskGid) return { error: 'task_gid é obrigatório' };
 
     const results = [];
     const mediaBaseDir = path.join(process.cwd(), 'media_files');
-
-    // Coletar todos os arquivos a enviar
     let filesToUpload = [];
 
-    if (uploadAllRecent || messageIds.length === 0) {
-      // Modo: upload de TODOS os arquivos recentes
-      try {
-        const subdirs = await readdir(mediaBaseDir).catch(() => []);
-        // Se chatId informado, filtrar pelo diretório do chat
-        const targetDirs = chatId ? subdirs.filter(d => d.includes(chatId.split('@')[0])) : subdirs;
-        for (const subdir of (targetDirs.length > 0 ? targetDirs : subdirs)) {
-          const dirPath = path.join(mediaBaseDir, subdir);
-          const files = await readdir(dirPath).catch(() => []);
-          for (const file of files) {
-            const filePath = path.join(dirPath, file);
-            const fileStat = await stat(filePath).catch(() => null);
-            if (fileStat && fileStat.isFile()) {
-              // Somente arquivos das últimas 24h
-              const ageHours = (Date.now() - fileStat.mtimeMs) / (1000 * 60 * 60);
-              if (ageHours <= 24) {
-                filesToUpload.push({ path: filePath, fileName: file, messageId: file.split('.')[0] });
-              }
+    // Sempre busca todos os arquivos recentes (simplificado)
+    try {
+      const subdirs = await readdir(mediaBaseDir).catch(() => []);
+      const targetDirs = chatId ? subdirs.filter(d => d.includes(chatId.split('@')[0])) : subdirs;
+      for (const subdir of (targetDirs.length > 0 ? targetDirs : subdirs)) {
+        const dirPath = path.join(mediaBaseDir, subdir);
+        const files = await readdir(dirPath).catch(() => []);
+        for (const file of files) {
+          const filePath = path.join(dirPath, file);
+          const fileStat = await stat(filePath).catch(() => null);
+          if (fileStat && fileStat.isFile()) {
+            const ageHours = (Date.now() - fileStat.mtimeMs) / (1000 * 60 * 60);
+            if (ageHours <= 24) {
+              filesToUpload.push({ path: filePath, fileName: file });
             }
           }
         }
-        // Deduplicar por tamanho (evita reenviar a mesma foto encaminhada)
-        const seen = new Map();
-        const deduped = [];
-        for (const f of filesToUpload) {
-          const fileStat = await stat(f.path).catch(() => null);
-          const key = fileStat ? fileStat.size : f.fileName;
-          if (!seen.has(key)) {
-            seen.set(key, true);
-            deduped.push(f);
-          }
-        }
-        filesToUpload = deduped;
-        console.log(`[TOOL] upload_all_recent: ${filesToUpload.length} arquivos encontrados (${chatId || 'todos os chats'})`);
-      } catch (e) {
-        console.error('[TOOL] Erro listando media_files:', e.message);
       }
-    } else {
-      // Modo: buscar por message_ids específicos
-      for (const msgId of messageIds) {
-        let found = false;
+      // Deduplicar por tamanho
+      const seen = new Map();
+      filesToUpload = filesToUpload.filter(f => {
         try {
-          const subdirs = await readdir(mediaBaseDir).catch(() => []);
-          for (const subdir of subdirs) {
-            const dirPath = path.join(mediaBaseDir, subdir);
-            const files = await readdir(dirPath).catch(() => []);
-            const match = files.find(f => f.startsWith(msgId));
-            if (match) {
-              filesToUpload.push({ path: path.join(dirPath, match), fileName: match, messageId: msgId });
-              found = true;
-              break;
-            }
-          }
-        } catch {}
-        if (!found) {
-          // Fallback: se nenhum message_id bate, tenta upload_all_recent
-          console.log(`[TOOL] message_id ${msgId} não encontrado, tentando fallback...`);
-          results.push({ messageId: msgId, success: false, error: 'ID não encontrado' });
-        }
-      }
-      // Se NENHUM message_id foi encontrado, fallback pra todos os recentes
-      if (filesToUpload.length === 0 && results.length > 0) {
-        console.log('[TOOL] Nenhum message_id válido, fallback para upload_all_recent');
-        try {
-          const subdirs = await readdir(mediaBaseDir).catch(() => []);
-          const targetDirs = chatId ? subdirs.filter(d => d.includes(chatId.split('@')[0])) : subdirs;
-          for (const subdir of (targetDirs.length > 0 ? targetDirs : subdirs)) {
-            const dirPath = path.join(mediaBaseDir, subdir);
-            const files = await readdir(dirPath).catch(() => []);
-            for (const file of files) {
-              const filePath = path.join(dirPath, file);
-              const fileStat = await stat(filePath).catch(() => null);
-              if (fileStat && fileStat.isFile()) {
-                const ageHours = (Date.now() - fileStat.mtimeMs) / (1000 * 60 * 60);
-                if (ageHours <= 24) {
-                  filesToUpload.push({ path: filePath, fileName: file, messageId: file.split('.')[0] });
-                }
-              }
-            }
-          }
-          // Deduplicar
-          const seen = new Map();
-          const deduped = [];
-          for (const f of filesToUpload) {
-            const fileStat = await stat(f.path).catch(() => null);
-            const key = fileStat ? fileStat.size : f.fileName;
-            if (!seen.has(key)) { seen.set(key, true); deduped.push(f); }
-          }
-          filesToUpload = deduped;
-          results.length = 0; // Limpar erros dos IDs falhos
-          console.log(`[TOOL] Fallback: ${filesToUpload.length} arquivos recentes encontrados`);
-        } catch (e) {
-          console.error('[TOOL] Erro no fallback:', e.message);
-        }
-      }
+          const s = readFileSync(f.path).length;
+          if (seen.has(s)) return false;
+          seen.set(s, true);
+          return true;
+        } catch { return false; }
+      });
+      console.log(`[TOOL] anexar_midia: ${filesToUpload.length} arquivos encontrados`);
+    } catch (e) {
+      console.error('[TOOL] Erro listando media_files:', e.message);
     }
 
-    // Upload de cada arquivo
     for (const file of filesToUpload) {
       const uploadResult = await asanaUploadAttachment(taskGid, file.path, file.fileName);
-      results.push({ messageId: file.messageId, fileName: file.fileName, ...uploadResult });
+      results.push({ fileName: file.fileName, ...uploadResult });
     }
 
     const successCount = results.filter(r => r.success).length;
-    console.log(`[TOOL] Anexos uploaded: ${successCount}/${filesToUpload.length || messageIds.length} para task ${taskGid}`);
-    return { success: successCount > 0, total: filesToUpload.length || messageIds.length, uploaded: successCount, results };
+    console.log(`[TOOL] Anexos uploaded: ${successCount}/${filesToUpload.length} para task ${taskGid}`);
+    return { success: successCount > 0, total: filesToUpload.length, uploaded: successCount, results };
+  }
+
+  // ============================================
+  // NOVAS TOOLS — Gestão de Projetos
+  // ============================================
+
+  if (toolName === 'consultar_task') {
+    const taskGid = input.task_gid;
+    if (!taskGid) return { error: 'task_gid é obrigatório' };
+
+    const task = await asanaRequest(`/tasks/${taskGid}?opt_fields=name,notes,assignee.name,due_on,completed,completed_at,custom_fields.name,custom_fields.display_value,memberships.section.name,memberships.project.name,tags.name,num_subtasks`);
+    if (!task) return { error: `Task ${taskGid} não encontrada` };
+
+    const result = {
+      gid: task.gid,
+      nome: task.name,
+      responsavel: task.assignee?.name || 'Sem responsável',
+      prazo: task.due_on || 'Sem prazo',
+      concluida: task.completed,
+      secao: task.memberships?.[0]?.section?.name || 'Desconhecida',
+      projeto: task.memberships?.[0]?.project?.name || 'Desconhecido',
+      campos_custom: (task.custom_fields || []).filter(f => f.display_value).map(f => ({ nome: f.name, valor: f.display_value })),
+      subtasks: task.num_subtasks || 0,
+      url: `https://app.asana.com/0/0/${taskGid}`,
+    };
+
+    // Incluir comentários recentes
+    if (input.incluir_comentarios !== false) {
+      const stories = await asanaRequest(`/tasks/${taskGid}/stories?opt_fields=text,created_by.name,created_at,type&limit=15`);
+      if (stories) {
+        result.comentarios = stories
+          .filter(s => s.type === 'comment' && s.text)
+          .slice(-10)
+          .map(s => ({
+            autor: s.created_by?.name || 'Desconhecido',
+            texto: s.text.substring(0, 300),
+            data: s.created_at ? new Date(s.created_at).toLocaleDateString('pt-BR') : '',
+          }));
+      }
+    }
+
+    console.log(`[TOOL] Task consultada: ${task.name} (${task.assignee?.name || 'sem resp.'}, prazo: ${task.due_on || 'sem'})`);
+    return result;
+  }
+
+  if (toolName === 'comentar_task') {
+    const taskGid = input.task_gid;
+    const texto = input.texto;
+    if (!taskGid || !texto) return { error: 'task_gid e texto são obrigatórios' };
+
+    // Resolver menção se informada
+    let commentText = texto;
+    if (input.mencionar) {
+      const asanaGid = TEAM_ASANA[input.mencionar.toLowerCase()];
+      if (asanaGid) {
+        // Menção real do Asana via HTML
+        commentText = `<a data-asana-gid="${asanaGid}"/> ${texto}`;
+      }
+    }
+
+    // Usar endpoint com html_text pra suportar menções
+    const useHtml = commentText.includes('data-asana-gid');
+    const body = useHtml
+      ? { html_text: `<body>${commentText}</body>` }
+      : { text: commentText };
+
+    const resp = await asanaWrite('POST', `/tasks/${taskGid}/stories`, body);
+    if (resp.error) return { error: `Erro ao comentar: ${resp.error}` };
+
+    console.log(`[TOOL] Comentário adicionado na task ${taskGid}: ${texto.substring(0, 60)}`);
+    return { success: true, task_gid: taskGid, comentario: texto.substring(0, 100) };
+  }
+
+  if (toolName === 'atualizar_task') {
+    const taskGid = input.task_gid;
+    if (!taskGid) return { error: 'task_gid é obrigatório' };
+
+    const updates = {};
+    const actions = [];
+
+    // Atualizar responsável
+    if (input.responsavel) {
+      const asanaGid = TEAM_ASANA[input.responsavel.toLowerCase()];
+      if (asanaGid) {
+        updates.assignee = asanaGid;
+        actions.push(`responsável → ${input.responsavel}`);
+      } else {
+        return { error: `Responsável "${input.responsavel}" não encontrado na equipe` };
+      }
+    }
+
+    // Atualizar prazo
+    if (input.prazo) {
+      updates.due_on = input.prazo;
+      actions.push(`prazo → ${input.prazo}`);
+    }
+
+    // Marcar como concluída
+    if (input.concluir) {
+      updates.completed = true;
+      actions.push('marcada como concluída');
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return { error: 'Nenhuma atualização informada (responsavel, prazo ou concluir)' };
+    }
+
+    const resp = await asanaWrite('PUT', `/tasks/${taskGid}`, updates);
+    if (resp.error) return { error: `Erro ao atualizar: ${resp.error}` };
+
+    console.log(`[TOOL] Task ${taskGid} atualizada: ${actions.join(', ')}`);
+    return { success: true, task_gid: taskGid, atualizacoes: actions };
+  }
+
+  if (toolName === 'buscar_memorias') {
+    const query = input.query;
+    if (!query) return { error: 'query é obrigatória' };
+
+    const escopo = input.escopo || null;
+    const limite = input.limite || 10;
+
+    try {
+      const memories = await searchMemories(query, escopo, null, limite);
+      if (memories.length === 0) {
+        return { encontradas: 0, mensagem: 'Nenhuma memória encontrada para essa busca', memorias: [] };
+      }
+      return {
+        encontradas: memories.length,
+        memorias: memories.map(m => ({
+          conteudo: m.content,
+          categoria: m.category,
+          importancia: m.importance,
+          escopo: m.scope,
+          criado_em: m.created_at ? new Date(m.created_at).toLocaleDateString('pt-BR') : '',
+        })),
+      };
+    } catch (err) {
+      return { error: `Erro ao buscar memórias: ${err.message}` };
+    }
   }
 
   return { error: 'Ferramenta desconhecida' };
