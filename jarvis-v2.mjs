@@ -2111,37 +2111,54 @@ async function startWhatsApp() {
         try {
           realTeamJids.clear();
           realTeamJids.add(CONFIG.GUI_JID);
-          for (const gid of [CONFIG.GROUP_TAREFAS, CONFIG.GROUP_GALAXIAS]) {
-            if (!gid) continue;
-            const meta = await sock.groupMetadata(gid);
-            for (const p of meta.participants) {
-              realTeamJids.add(p.id); // JID real do participante
-              // Preferir phoneNumber (@s.whatsapp.net) para menções — LIDs não geram notificação
-              const mentionJid = p.phoneNumber || p.id;
-              const contact = await getContactInfo(p.id);
-              // Também buscar por phoneNumber se tiver
-              const contactByPhone = p.phoneNumber ? await getContactInfo(p.phoneNumber) : null;
-              const pushName = contact?.push_name || contactByPhone?.push_name || p.notify;
-              if (pushName) {
-                const firstName = pushName.split(' ')[0].toLowerCase();
-                teamWhatsApp.set(firstName, mentionJid);
-                // Alias limpo (só letras): "bruSna" → "brusna"
-                const cleanName = firstName.replace(/[^a-záàâãéêíóôõúç]/gi, '').toLowerCase();
-                if (cleanName !== firstName) {
-                  teamWhatsApp.set(cleanName, mentionJid);
-                }
-                // Mapeamento por push_name completo também (sem emojis)
-                const fullClean = pushName.replace(/[^a-záàâãéêíóôõúç\s]/gi, '').trim().toLowerCase();
-                if (fullClean && fullClean !== firstName) {
-                  teamWhatsApp.set(fullClean, mentionJid);
-                }
-                if (mentionJid.includes('@s.whatsapp.net') && !teamPhones.has(firstName)) {
-                  teamPhones.set(firstName, mentionJid);
+          // Mapear participantes de TODOS os grupos relevantes (internos + clientes)
+          const allGroups = [CONFIG.GROUP_TAREFAS, CONFIG.GROUP_GALAXIAS];
+          // Adicionar grupos de clientes gerenciados
+          for (const [jid] of managedClients) {
+            if (jid && !allGroups.includes(jid)) allGroups.push(jid);
+          }
+
+          for (const gid of allGroups.filter(Boolean)) {
+            try {
+              const meta = await sock.groupMetadata(gid);
+              const isInternalGroup = gid === CONFIG.GROUP_TAREFAS || gid === CONFIG.GROUP_GALAXIAS;
+              for (const p of meta.participants) {
+                if (isInternalGroup) realTeamJids.add(p.id);
+                // Preferir phoneNumber (@s.whatsapp.net) para menções — LIDs não geram notificação
+                const mentionJid = p.phoneNumber || p.id;
+                const contact = await getContactInfo(p.id);
+                const contactByPhone = p.phoneNumber ? await getContactInfo(p.phoneNumber) : null;
+                const pushName = contact?.push_name || contactByPhone?.push_name || p.notify;
+                if (pushName) {
+                  const firstName = pushName.split(' ')[0].toLowerCase();
+                  // Não sobrescrever equipe com contatos de cliente (equipe tem prioridade)
+                  if (!teamWhatsApp.has(firstName) || isInternalGroup) {
+                    teamWhatsApp.set(firstName, mentionJid);
+                  }
+                  // Alias limpo (só letras)
+                  const cleanName = firstName.replace(/[^a-záàâãéêíóôõúç]/gi, '').toLowerCase();
+                  if (cleanName !== firstName && (!teamWhatsApp.has(cleanName) || isInternalGroup)) {
+                    teamWhatsApp.set(cleanName, mentionJid);
+                  }
+                  // push_name completo sem emojis
+                  const fullClean = pushName.replace(/[^a-záàâãéêíóôõúç\s]/gi, '').trim().toLowerCase();
+                  if (fullClean && fullClean !== firstName && (!teamWhatsApp.has(fullClean) || isInternalGroup)) {
+                    teamWhatsApp.set(fullClean, mentionJid);
+                  }
+                  if (mentionJid.includes('@s.whatsapp.net') && !teamPhones.has(firstName)) {
+                    teamPhones.set(firstName, mentionJid);
+                  }
                 }
               }
+              if (!isInternalGroup) {
+                console.log(`[TEAM] Grupo cliente "${meta.subject}" mapeado: ${meta.participants.length} participantes`);
+              }
+            } catch (err) {
+              console.warn(`[TEAM] Erro ao mapear grupo ${gid}: ${err.message}`);
             }
           }
           console.log(`[TEAM] ${realTeamJids.size} membros da equipe real identificados`);
+          console.log(`[TEAM] ${teamWhatsApp.size} contatos mapeados para menções`);
           console.log('[TEAM] Mapeamento:', JSON.stringify(Object.fromEntries(teamWhatsApp)));
         } catch (err) { console.error('[TEAM] Erro:', err.message); }
       }, 5000);
