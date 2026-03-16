@@ -601,6 +601,31 @@ export const JARVIS_TOOLS = [
   },
 ];
 
+/**
+ * Fuzzy match: retorna true se duas strings têm distância de edição ≤ 2
+ * Útil para "bruna" vs "brusna", "nicolas" vs "nícolas", etc.
+ */
+function fuzzyMatch(a, b) {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 2) return false;
+  // Levenshtein simplificado (máx 2)
+  const lenA = a.length, lenB = b.length;
+  const matrix = Array.from({ length: lenA + 1 }, (_, i) =>
+    Array.from({ length: lenB + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
+  );
+  for (let i = 1; i <= lenA; i++) {
+    for (let j = 1; j <= lenB; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,     // delete
+        matrix[i][j - 1] + 1,     // insert
+        matrix[i - 1][j - 1] + cost // substitute
+      );
+    }
+  }
+  return matrix[lenA][lenB] <= 2;
+}
+
 export async function executeJarvisTool(toolName, input, context = {}) {
   console.log(`[TOOL] Executando: ${toolName}`, JSON.stringify(input));
 
@@ -757,13 +782,23 @@ export async function executeJarvisTool(toolName, input, context = {}) {
         // Versão sem caracteres especiais (ex: "brusna" → "brusna", "bruna" → "bruna")
         const nomeClean = nomeLower.replace(/[^a-záàâãéêíóôõúç]/gi, '').toLowerCase();
 
-        // 1. Buscar no map teamWhatsApp — match exato E fuzzy (sem acentos/chars especiais)
+        // 1. Buscar no map teamWhatsApp — match exato, parcial, e fuzzy (tolerância a typos)
         let jidFromTeam = teamWhatsApp.get(nomeLower);
         if (!jidFromTeam) {
-          // Fuzzy: procurar chaves que contenham o nome ou vice-versa
+          // Parcial: procurar chaves que contenham o nome ou vice-versa
           for (const [key, jid] of teamWhatsApp) {
             const keyClean = key.replace(/[^a-záàâãéêíóôõúç]/gi, '').toLowerCase();
             if (keyClean.includes(nomeClean) || nomeClean.includes(keyClean)) {
+              jidFromTeam = jid;
+              break;
+            }
+          }
+        }
+        if (!jidFromTeam) {
+          // Fuzzy: tolerância a 1-2 caracteres diferentes (ex: "bruna" vs "brusna")
+          for (const [key, jid] of teamWhatsApp) {
+            const keyClean = key.replace(/[^a-záàâãéêíóôõúç]/gi, '').toLowerCase();
+            if (fuzzyMatch(nomeClean, keyClean)) {
               jidFromTeam = jid;
               break;
             }
