@@ -837,15 +837,276 @@ export async function generateDailyReport() {
 }
 
 // ============================================
-// COBRANÇA AUTOMÁTICA (estilo Camile)
 // ============================================
+// PIPELINE MULTI-AGENTE DE GESTÃO DE PROJETOS
+// ============================================
+// 3 agentes colaboram em pipeline:
+//   🔍 RESEARCHER → coleta e cruza todos os dados (Asana + RAG + perfis)
+//   🧠 MANAGER    → analisa o contexto e decide o que cobrar e como
+//   ✍️  WRITER     → formula as mensagens no tom certo pra cada pessoa
+// ============================================
+
+// AGENTE 1: RESEARCHER — Coleta de inteligência
+async function agentResearcher(task, { asanaRequest, searchMemories, getProfile }) {
+  const t = task;
+  const now = new Date();
+  const daysLate = Math.floor((now - new Date(t.due_on)) / (1000 * 60 * 60 * 24));
+
+  const intel = {
+    task: t, daysLate,
+    asana: { description: '', section: '', project: t.project, customFields: [], followers: [], subtasks: 0 },
+    comments: [],
+    memories: { asana: [], whatsapp: [], people: [] },
+    profiles: { assignee: null, client: null },
+  };
+
+  // 1. Detalhes completos da task no Asana
+  try {
+    const taskDetail = await asanaRequest(`/tasks/${t.gid}?opt_fields=name,notes,memberships.section.name,memberships.project.name,custom_fields.name,custom_fields.display_value,followers.name,num_subtasks`);
+    if (taskDetail?.data) {
+      const td = taskDetail.data;
+      intel.asana.description = (td.notes || '').substring(0, 800);
+      if (td.memberships?.[0]?.section?.name) intel.asana.section = td.memberships[0].section.name;
+      if (td.memberships?.[0]?.project?.name) intel.asana.project = td.memberships[0].project.name;
+      intel.asana.customFields = (td.custom_fields || []).filter(cf => cf.display_value).map(cf => `${cf.name}: ${cf.display_value}`);
+      intel.asana.followers = (td.followers || []).map(f => f.name).filter(Boolean);
+      intel.asana.subtasks = td.num_subtasks || 0;
+    }
+  } catch (e) { console.error(`[RESEARCHER] Erro detalhes task ${t.gid}:`, e.message); }
+
+  // 2. Comentários da task (histórico de interações)
+  try {
+    const stories = await asanaRequest(`/tasks/${t.gid}/stories?opt_fields=text,created_by.name,created_at,type&limit=20`);
+    if (stories?.data) {
+      intel.comments = stories.data
+        .filter(s => s.type === 'comment' && s.text)
+        .slice(-8)
+        .map(c => ({
+          author: c.created_by?.name || '?',
+          date: new Date(c.created_at).toLocaleDateString('pt-BR'),
+          text: c.text.substring(0, 400),
+        }));
+    }
+  } catch (e) { console.error(`[RESEARCHER] Erro stories task ${t.gid}:`, e.message); }
+
+  // 3. BUSCA PROFUNDA NO RAG — 8 queries paralelas cruzando tudo
+  try {
+    const clientMatch = t.name.match(/\[([^\]]+)\]/);
+    const clientName = clientMatch ? clientMatch[1] : '';
+    const assigneeName = t.assignee && t.assignee !== 'Sem responsável' ? t.assignee : '';
+    const assigneeFirst = assigneeName.split(/\s+/)[0] || '';
+    const taskKeywords = t.name.replace(/\[.*?\]/g, '').trim().split(/\s+/).filter(w => w.length > 3).slice(0, 3);
+
+    const searches = await Promise.allSettled([
+      searchMemories(t.name, 'agent', null, 10),
+      clientName ? searchMemories(clientName, null, null, 10) : Promise.resolve([]),
+      assigneeName ? searchMemories(assigneeName, null, null, 8) : Promise.resolve([]),
+      clientName ? searchMemories(clientName, 'chat', null, 8) : Promise.resolve([]),
+      assigneeFirst ? searchMemories(assigneeFirst, 'chat', null, 5) : Promise.resolve([]),
+      taskKeywords.length > 0 ? searchMemories(taskKeywords.join(' '), null, null, 5) : Promise.resolve([]),
+      (assigneeFirst && clientName) ? searchMemories(`${assigneeFirst} ${clientName}`, null, null, 5) : Promise.resolve([]),
+      clientName ? searchMemories(clientName, 'user', null, 5) : Promise.resolve([]),
+    ]);
+
+    const seen = new Set();
+    for (const result of searches) {
+      if (result.status !== 'fulfilled' || !Array.isArray(result.value)) continue;
+      for (const m of result.value) {
+        if (seen.has(m.content)) continue;
+        seen.add(m.content);
+        if (m.scope === 'agent') intel.memories.asana.push(m);
+        else if (m.scope === 'chat') intel.memories.whatsapp.push(m);
+        else intel.memories.people.push(m);
+      }
+    }
+
+    // Limitar pra não estourar contexto
+    intel.memories.asana = intel.memories.asana.slice(0, 12);
+    intel.memories.whatsapp = intel.memories.whatsapp.slice(0, 12);
+    intel.memories.people = intel.memories.people.slice(0, 8);
+
+    console.log(`[RESEARCHER] Task ${t.gid}: ${seen.size} memórias únicas (asana:${intel.memories.asana.length} whatsapp:${intel.memories.whatsapp.length} people:${intel.memories.people.length})`);
+  } catch (e) { console.error(`[RESEARCHER] Erro memórias:`, e.message); }
+
+  // 4. Perfis sintetizados (responsável + cliente)
+  try {
+    if (t.assignee && t.assignee !== 'Sem responsável') {
+      const firstName = t.assignee.split(/\s+/)[0].toLowerCase();
+      const profile = await getProfile('team_member', firstName);
+      if (profile?.profile) {
+        intel.profiles.assignee = typeof profile.profile === 'string' ? JSON.parse(profile.profile) : profile.profile;
+      }
+    }
+  } catch (e) {}
+
+  try {
+    const clientMatch = t.name.match(/\[([^\]]+)\]/);
+    if (clientMatch) {
+      const clientSlug = clientMatch[1].toLowerCase().replace(/\s+/g, '_');
+      const profile = await getProfile('client', clientSlug);
+      if (profile?.profile) {
+        intel.profiles.client = typeof profile.profile === 'string' ? JSON.parse(profile.profile) : profile.profile;
+      }
+    }
+  } catch (e) {}
+
+  return intel;
+}
+
+// AGENTE 2: MANAGER — Analisa e decide o que cobrar
+async function agentManager(intel, { anthropic, teamList }) {
+  // Montar dossiê completo pro Claude analisar
+  let dossier = `TASK: ${intel.task.name}\nGID: ${intel.task.gid}`;
+  dossier += `\nPrazo: ${intel.task.due_on} (${intel.daysLate} dias de atraso)`;
+  dossier += `\nResponsável: ${intel.task.assignee || 'Sem responsável'}`;
+  dossier += `\nProjeto: ${intel.asana.project}`;
+  if (intel.asana.section) dossier += `\nSeção: ${intel.asana.section}`;
+  if (intel.asana.description) dossier += `\nDescrição: ${intel.asana.description}`;
+  if (intel.asana.customFields.length) dossier += `\nCampos: ${intel.asana.customFields.join(', ')}`;
+  if (intel.asana.followers.length) dossier += `\nEnvolvidos: ${intel.asana.followers.join(', ')}`;
+  if (intel.asana.subtasks > 0) dossier += `\nSubtasks: ${intel.asana.subtasks}`;
+
+  if (intel.comments.length > 0) {
+    dossier += `\n\nHISTÓRICO DE COMENTÁRIOS (${intel.comments.length}):`;
+    for (const c of intel.comments) dossier += `\n- ${c.author} (${c.date}): ${c.text}`;
+  } else {
+    dossier += `\n\nSEM COMENTÁRIOS — nunca houve interação na task.`;
+  }
+
+  if (intel.memories.asana.length > 0) {
+    dossier += `\n\nCONHECIMENTO DO ASANA (estudo completo de tasks e projetos):`;
+    for (const m of intel.memories.asana) dossier += `\n- [${m.category}] ${m.content}`;
+  }
+  if (intel.memories.whatsapp.length > 0) {
+    dossier += `\n\nCONHECIMENTO DO WHATSAPP (conversas processadas dos grupos):`;
+    for (const m of intel.memories.whatsapp) dossier += `\n- [${m.category}] ${m.content}`;
+  }
+  if (intel.memories.people.length > 0) {
+    dossier += `\n\nCONHECIMENTO SOBRE PESSOAS:`;
+    for (const m of intel.memories.people) dossier += `\n- [${m.category}] ${m.content}`;
+  }
+
+  if (intel.profiles.assignee) {
+    dossier += `\n\nPERFIL DO RESPONSÁVEL:`;
+    if (intel.profiles.assignee.summary) dossier += `\n${intel.profiles.assignee.summary}`;
+    if (intel.profiles.assignee.patterns) dossier += `\nPadrões: ${JSON.stringify(intel.profiles.assignee.patterns)}`;
+  }
+  if (intel.profiles.client) {
+    dossier += `\n\nPERFIL DO CLIENTE:`;
+    if (intel.profiles.client.summary) dossier += `\n${intel.profiles.client.summary}`;
+    if (intel.profiles.client.tier) dossier += `\nTier: ${intel.profiles.client.tier}`;
+  }
+
+  try {
+    const response = await anthropic.messages.create({
+      model: CONFIG.AI_MODEL,
+      max_tokens: 600,
+      system: `Você é o AGENTE MANAGER do Jarvis — gerente de projetos sênior da Stream Lab.
+
+Seu papel: analisar o dossiê completo que o Agente Researcher coletou e DECIDIR o que cobrar.
+
+EQUIPE: ${teamList}
+
+Você recebe dados REAIS — do Asana, das conversas do WhatsApp, dos perfis da equipe. CRUZE TUDO:
+- Comentários mostram progresso? Reconheça e pergunte O QUE FALTA
+- WhatsApp mostra que o cliente já cobrou? Mencione isso na cobrança
+- Perfil do membro mostra padrão de atraso? Adapte a abordagem
+- Seção indica fase específica? Cobre sobre aquela fase
+- Nunca teve comentário? Pergunte se já iniciou
+- Memórias mostram decisões/reuniões? Referencie
+
+Responda em JSON:
+{
+  "analise": "sua análise em 1-2 frases do que está acontecendo",
+  "urgencia": "baixa|media|alta|critica",
+  "comentario_asana": "o texto do comentário pro Asana (2-4 frases, específico, humano)",
+  "resumo_whatsapp": "resumo de 1 frase pro grupo do WhatsApp"
+}
+
+REGRAS:
+1. ESPECÍFICO — "as artes do feed precisam ir pra aprovação" SIM. "pode dar retorno?" NUNCA
+2. Tom de colega, não de robô
+3. Pode mencionar nomes de CLIENTES dos dados. NUNCA invente nomes
+4. NUNCA comece com "@NomeDaPessoa" — a menção é automática
+5. Responda SOMENTE o JSON, sem markdown nem explicação`,
+      messages: [{ role: 'user', content: dossier }],
+    });
+
+    const text = response.content[0]?.text?.trim() || '';
+    // Extrair JSON (pode vir com ```json ... ```)
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const decision = JSON.parse(jsonMatch[0]);
+      console.log(`[MANAGER] Task ${intel.task.gid}: urgência=${decision.urgencia} — "${decision.analise?.substring(0, 80)}"`);
+      return decision;
+    }
+    // Fallback: texto direto
+    return { analise: 'análise automática', urgencia: 'media', comentario_asana: text, resumo_whatsapp: text.substring(0, 100) };
+  } catch (err) {
+    console.error(`[MANAGER] Erro Claude:`, err.message);
+    return {
+      analise: 'erro na análise',
+      urgencia: 'media',
+      comentario_asana: `Essa task está com ${intel.daysLate} dia(s) de atraso desde ${new Date(intel.task.due_on).toLocaleDateString('pt-BR')}. Qual o status atual?`,
+      resumo_whatsapp: `${intel.daysLate} dias de atraso`,
+    };
+  }
+}
+
+// AGENTE 3: WRITER — Formula mensagem do WhatsApp no tom certo pra cada pessoa
+async function agentWriter(personName, taskResults, { anthropic, teamList }) {
+  const tasksSummary = taskResults.map(r => {
+    const url = `https://app.asana.com/0/${r.intel.task.projectGid}/${r.intel.task.gid}`;
+    return `- Task: ${r.intel.task.name} (${r.intel.daysLate} dias de atraso, seção: ${r.intel.asana.section || 'N/A'})
+  Análise: ${r.decision.analise}
+  Urgência: ${r.decision.urgencia}
+  Comentário no Asana: ${r.decision.comentario_asana}
+  Link: ${url}`;
+  }).join('\n\n');
+
+  try {
+    const response = await anthropic.messages.create({
+      model: CONFIG.AI_MODEL,
+      max_tokens: 500,
+      system: `Você é o AGENTE WRITER do Jarvis — responsável por formular mensagens HUMANAS e AMIGÁVEIS pro WhatsApp.
+
+O Agente Manager já analisou as tasks e decidiu o que cobrar. Seu papel é formular a mensagem pro grupo de forma que pareça um colega de equipe fazendo um check-in natural, NÃO um robô automatizado.
+
+REGRAS DE TOM:
+1. Fale como colega — "Fala Bruno!", "E aí Arthur", "Opa Nicolas"
+2. NUNCA use "cobrança automática", "alerta", "notificação" ou qualquer termo robótico
+3. Se tem 1 task: seja conversacional ("vi que a arte do feed da Minner tá pendente, consegue ver isso hoje?")
+4. Se tem várias: agrupe naturalmente ("separei umas tasks que precisam de atenção")
+5. Mencione o conteúdo REAL ("as artes do feed", "o planner de março") — nunca genérico
+6. Feche de forma leve — "qualquer coisa grita!", "me avisa se precisar de algo", "tmj!"
+7. Use emojis com moderação (1-2 no máximo)
+8. A mensagem TEM que começar com @${personName} pra funcionar a menção no WhatsApp
+
+Responda SOMENTE o texto da mensagem, sem aspas nem prefixo.`,
+      messages: [{ role: 'user', content: `Pessoa: ${personName}\n\nTasks para mencionar:\n${tasksSummary}` }],
+    });
+    return response.content[0]?.text?.trim() || '';
+  } catch (err) {
+    console.error(`[WRITER] Erro Claude:`, err.message);
+    // Fallback amigável
+    let msg = `@${personName}, passei no Asana e vi algumas tasks pendentes:\n\n`;
+    for (const r of taskResults) {
+      const url = `https://app.asana.com/0/${r.intel.task.projectGid}/${r.intel.task.gid}`;
+      msg += `• *${r.intel.task.name}* — ${r.intel.daysLate} dias de atraso\n  ${url}\n\n`;
+    }
+    msg += `Dá uma olhada quando puder! 💪`;
+    return msg;
+  }
+}
+
+// ORQUESTRADOR — Conecta os 3 agentes
 export async function runOverdueCheck() {
   if (!CONFIG.ASANA_PAT) return;
   try {
     const { getOverdueTasks, getSendFunction, getSendWithMentionsFunction, asanaRequest, asanaWrite } = await import('./skills/loader.mjs');
     const { searchMemories } = await import('./memory.mjs');
     const { getProfile } = await import('./profiles.mjs');
-    const { TEAM_ASANA, managedClients } = await import('./config.mjs');
+    const { TEAM_ASANA } = await import('./config.mjs');
     const sendFn = getSendFunction();
     if (!sendFn || !CONFIG.GROUP_TAREFAS) {
       console.log('[COBRANCA] WhatsApp não conectado ou grupo tarefas não configurado');
@@ -878,264 +1139,73 @@ export async function runOverdueCheck() {
       return;
     }
 
-    // Inverter TEAM_ASANA para buscar GID pelo nome (suporta match parcial: "Bruno Faccin" → "bruno")
-    const teamEntries = Object.entries(TEAM_ASANA); // [["gui","123"], ["bruno","456"], ...]
+    // Resolver nomes → GIDs do Asana (match parcial)
+    const teamEntries = Object.entries(TEAM_ASANA);
     function findTeamGid(fullName) {
       if (!fullName) return null;
       const lower = fullName.toLowerCase();
-      // Match exato primeiro
-      for (const [name, gid] of teamEntries) {
-        if (lower === name) return gid;
-      }
-      // Match pelo primeiro nome
+      for (const [name, gid] of teamEntries) { if (lower === name) return gid; }
       const firstName = lower.split(/\s+/)[0];
-      for (const [name, gid] of teamEntries) {
-        if (firstName === name) return gid;
-      }
-      // Match parcial (nome do time contido no nome completo)
-      for (const [name, gid] of teamEntries) {
-        if (lower.includes(name)) return gid;
-      }
+      for (const [name, gid] of teamEntries) { if (firstName === name) return gid; }
+      for (const [name, gid] of teamEntries) { if (lower.includes(name)) return gid; }
       return null;
     }
 
-    // Claude para gerar comentários contextualizados
     const Anthropic = (await import('@anthropic-ai/sdk')).default;
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
-
-    // Lista da equipe real (pra evitar alucinação de nomes)
     const teamNames = Object.keys(TEAM_ASANA).map(n => n.charAt(0).toUpperCase() + n.slice(1));
     const teamList = [...new Set(teamNames)].join(', ');
 
-    const now = new Date();
-    const allCommentResults = []; // Todos os resultados pra expor no grupo no final
+    console.log(`[PIPELINE] Iniciando pipeline multi-agente para ${toCobrar.slice(0, 10).length} tasks`);
+    const allResults = [];
 
-    // Processar task por task (não agrupa por responsável — processa todas em sequência)
+    // ============================================
+    // ETAPA 1: RESEARCHER coleta inteligência (paralelo por task)
+    // ============================================
+    console.log(`[PIPELINE] 🔍 Agente Researcher coletando dados...`);
+    const intelResults = [];
     for (const t of toCobrar.slice(0, 10)) {
       if (notified[t.gid]) continue;
-      const daysLate = Math.floor((now - new Date(t.due_on)) / (1000 * 60 * 60 * 24));
+      const intel = await agentResearcher(t, { asanaRequest, searchMemories, getProfile });
+      intelResults.push(intel);
+      await new Promise(r => setTimeout(r, 500)); // Rate limit Asana
+    }
+    console.log(`[PIPELINE] 🔍 Researcher concluído: ${intelResults.length} tasks analisadas`);
 
-      // ============================================
-      // FASE 1: Coleta de inteligência completa
-      // ============================================
-      let taskContext = `TASK: ${t.name}\nGID: ${t.gid}\nPrazo: ${t.due_on} (${daysLate} dias de atraso)\nResponsável: ${t.assignee || 'Sem responsável'}\nProjeto: ${t.project}`;
+    // ============================================
+    // ETAPA 2: MANAGER analisa e decide (1 chamada por task)
+    // ============================================
+    console.log(`[PIPELINE] 🧠 Agente Manager analisando...`);
+    const decisions = [];
+    for (const intel of intelResults) {
+      const decision = await agentManager(intel, { anthropic, teamList });
+      decisions.push({ intel, decision });
+      await new Promise(r => setTimeout(r, 300));
+    }
+    console.log(`[PIPELINE] 🧠 Manager concluído: ${decisions.length} decisões`);
 
-      // 1A. Detalhes completos da task no Asana (descrição, seção, campos, followers)
-      let followers = [];
-      let sectionName = '';
-      let projectName = t.project;
-      try {
-        const taskDetail = await asanaRequest(`/tasks/${t.gid}?opt_fields=name,notes,memberships.section.name,memberships.project.name,custom_fields.name,custom_fields.display_value,followers.name,num_subtasks`);
-        if (taskDetail?.data) {
-          const td = taskDetail.data;
-          if (td.notes) taskContext += `\nDescrição da task: ${td.notes.substring(0, 600)}`;
-          if (td.memberships?.[0]?.section?.name) {
-            sectionName = td.memberships[0].section.name;
-            taskContext += `\nSeção atual no Asana: ${sectionName}`;
-          }
-          if (td.memberships?.[0]?.project?.name) {
-            projectName = td.memberships[0].project.name;
-            taskContext += `\nProjeto: ${projectName}`;
-          }
-          const customFields = (td.custom_fields || []).filter(cf => cf.display_value);
-          if (customFields.length) taskContext += `\nCampos custom: ${customFields.map(cf => `${cf.name}: ${cf.display_value}`).join(', ')}`;
-          if (td.followers && td.followers.length > 0) {
-            followers = td.followers.map(f => f.name).filter(Boolean);
-            taskContext += `\nPessoas envolvidas (followers): ${followers.join(', ')}`;
-          }
-          if (td.num_subtasks > 0) taskContext += `\nSubtasks: ${td.num_subtasks}`;
-        }
-      } catch (e) { console.error(`[COBRANCA] Erro ao buscar detalhes task ${t.gid}:`, e.message); }
+    // ============================================
+    // ETAPA 3: Executar decisões — comentar no Asana
+    // ============================================
+    console.log(`[PIPELINE] 📝 Postando comentários no Asana...`);
+    const commentResults = [];
+    for (const { intel, decision } of decisions) {
+      const t = intel.task;
+      const commentText = decision.comentario_asana;
+      if (!commentText) continue;
 
-      // 1B. Últimos comentários da task
-      try {
-        const stories = await asanaRequest(`/tasks/${t.gid}/stories?opt_fields=text,created_by.name,created_at,type&limit=15`);
-        if (stories?.data) {
-          const comments = stories.data.filter(s => s.type === 'comment').slice(-5);
-          if (comments.length > 0) {
-            taskContext += `\n\nÚLTIMOS COMENTÁRIOS NA TASK:`;
-            for (const c of comments) {
-              const date = new Date(c.created_at).toLocaleDateString('pt-BR');
-              taskContext += `\n- ${c.created_by?.name || '?'} (${date}): ${(c.text || '').substring(0, 300)}`;
-            }
-          } else {
-            taskContext += `\n\nNenhum comentário na task — nunca houve movimentação via comentários.`;
-          }
-        }
-      } catch (e) { console.error(`[COBRANCA] Erro ao buscar stories task ${t.gid}:`, e.message); }
-
-      // 1C. BUSCA PROFUNDA NO SISTEMA DE MEMÓRIA (RAG completo)
-      // O Jarvis já processou TODAS as mensagens do WhatsApp + TODOS os dados do Asana
-      // e extraiu fatos estruturados. Aqui cruzamos TUDO.
-      try {
-        const clientMatch = t.name.match(/\[([^\]]+)\]/);
-        const clientName = clientMatch ? clientMatch[1] : '';
-        const assigneeName = t.assignee && t.assignee !== 'Sem responsável' ? t.assignee : '';
-        const assigneeFirst = assigneeName.split(/\s+/)[0] || '';
-
-        // Extrair palavras-chave da task pra buscas inteligentes (ex: "Arte feed março" → "arte", "feed")
-        const taskKeywords = t.name.replace(/\[.*?\]/g, '').trim().split(/\s+/).filter(w => w.length > 3).slice(0, 3);
-
-        // Buscas paralelas em TODOS os escopos e ângulos
-        const memorySearches = await Promise.allSettled([
-          // 1. Memórias sobre esta task específica (escopo agent = estudo do Asana)
-          searchMemories(t.name, 'agent', null, 10),
-          // 2. Memórias sobre o CLIENTE em TODOS os escopos (user + chat + agent)
-          clientName ? searchMemories(clientName, null, null, 10) : Promise.resolve([]),
-          // 3. Memórias sobre o RESPONSÁVEL — como ele trabalha, padrões, interações
-          assigneeName ? searchMemories(assigneeName, null, null, 8) : Promise.resolve([]),
-          // 4. Memórias de CHAT (conversas WhatsApp) sobre o cliente
-          clientName ? searchMemories(clientName, 'chat', null, 8) : Promise.resolve([]),
-          // 5. Memórias de CHAT sobre o responsável (o que ele disse nos grupos)
-          assigneeFirst ? searchMemories(assigneeFirst, 'chat', null, 5) : Promise.resolve([]),
-          // 6. Memórias do tipo deadline/decision sobre o cliente (prazos combinados, decisões)
-          clientName ? searchMemories(clientName, null, null, 5) : Promise.resolve([]),
-          // 7. Busca por palavras-chave da task (ex: "arte feed" pode trazer contexto adicional)
-          taskKeywords.length > 0 ? searchMemories(taskKeywords.join(' '), null, null, 5) : Promise.resolve([]),
-          // 8. Cruzamento: responsável + cliente juntos (interações específicas)
-          (assigneeFirst && clientName) ? searchMemories(`${assigneeFirst} ${clientName}`, null, null, 5) : Promise.resolve([]),
-        ]);
-
-        // Consolidar e deduplicar todas as memórias encontradas
-        const allMemories = [];
-        for (const result of memorySearches) {
-          if (result.status === 'fulfilled' && Array.isArray(result.value)) {
-            allMemories.push(...result.value);
-          }
-        }
-
-        const seen = new Set();
-        const uniqueMemories = allMemories.filter(m => {
-          if (seen.has(m.content)) return false;
-          seen.add(m.content);
-          return true;
-        });
-
-        if (uniqueMemories.length > 0) {
-          // Separar por tipo pra o Claude entender o que é cada coisa
-          const agentMems = uniqueMemories.filter(m => m.scope === 'agent');
-          const chatMems = uniqueMemories.filter(m => m.scope === 'chat');
-          const userMems = uniqueMemories.filter(m => m.scope === 'user');
-
-          if (agentMems.length > 0) {
-            taskContext += `\n\nCONHECIMENTO DO ASANA (estudo de tasks, comentários e projetos):`;
-            for (const m of agentMems.slice(0, 10)) {
-              taskContext += `\n- [${m.category}] ${m.content}`;
-            }
-          }
-          if (chatMems.length > 0) {
-            taskContext += `\n\nCONHECIMENTO DAS CONVERSAS DO WHATSAPP (o que foi discutido nos grupos):`;
-            for (const m of chatMems.slice(0, 10)) {
-              taskContext += `\n- [${m.category}] ${m.content}`;
-            }
-          }
-          if (userMems.length > 0) {
-            taskContext += `\n\nCONHECIMENTO SOBRE PESSOAS (perfis, preferências, padrões):`;
-            for (const m of userMems.slice(0, 8)) {
-              taskContext += `\n- [${m.category}] ${m.content}`;
-            }
-          }
-
-          console.log(`[COBRANCA] Task ${t.gid}: ${uniqueMemories.length} memórias encontradas (agent:${agentMems.length} chat:${chatMems.length} user:${userMems.length})`);
-        } else {
-          taskContext += `\n\nNenhuma memória encontrada sobre esta task — é a primeira vez que o Jarvis analisa este assunto.`;
-          console.log(`[COBRANCA] Task ${t.gid}: ZERO memórias encontradas`);
-        }
-      } catch (e) { console.error(`[COBRANCA] Erro ao buscar memórias:`, e.message); }
-
-      // 1E. Perfil sintetizado do RESPONSÁVEL (como ele trabalha, preferências, padrões)
-      try {
-        if (t.assignee && t.assignee !== 'Sem responsável') {
-          const firstName = t.assignee.split(/\s+/)[0].toLowerCase();
-          const teamProfile = await getProfile('team_member', firstName);
-          if (teamProfile?.profile) {
-            const profileData = typeof teamProfile.profile === 'string' ? JSON.parse(teamProfile.profile) : teamProfile.profile;
-            taskContext += `\n\nPERFIL DO ${t.assignee.toUpperCase()} (como ele trabalha):`;
-            if (profileData.summary) taskContext += `\n${profileData.summary}`;
-            if (profileData.strengths) taskContext += `\nPontos fortes: ${JSON.stringify(profileData.strengths)}`;
-            if (profileData.patterns) taskContext += `\nPadrões: ${JSON.stringify(profileData.patterns)}`;
-          }
-        }
-      } catch (e) {}
-
-      // 1F. Perfil sintetizado do CLIENTE (tier, importância, histórico)
-      try {
-        const clientMatch = t.name.match(/\[([^\]]+)\]/);
-        if (clientMatch) {
-          const clientSlug = clientMatch[1].toLowerCase().replace(/\s+/g, '_');
-          const clientProfile = await getProfile('client', clientSlug);
-          if (clientProfile?.profile) {
-            const profileData = typeof clientProfile.profile === 'string' ? JSON.parse(clientProfile.profile) : clientProfile.profile;
-            taskContext += `\n\nPERFIL DO CLIENTE ${clientMatch[1].toUpperCase()}:`;
-            if (profileData.summary) taskContext += `\n${profileData.summary}`;
-            if (profileData.tier) taskContext += `\nTier: ${profileData.tier}`;
-            if (profileData.patterns) taskContext += `\nPadrões: ${JSON.stringify(profileData.patterns)}`;
-          }
-        }
-      } catch (e) {}
-
-      // ============================================
-      // FASE 2: Gerar comentário inteligente via Claude
-      // ============================================
-      // Montar lista de TODOS os envolvidos pra mencionar
+      // Montar menções dos envolvidos
       const allInvolved = new Set();
       if (t.assignee && t.assignee !== 'Sem responsável') allInvolved.add(t.assignee);
-      for (const f of followers) {
-        // Só adicionar se é da equipe (tem GID no TEAM_ASANA)
+      for (const f of intel.asana.followers) {
         if (findTeamGid(f)) allInvolved.add(f);
       }
 
-      let commentText = '';
-      let mentionGids = []; // Quem mencionar no comentário do Asana
-      try {
-        const aiResponse = await anthropic.messages.create({
-          model: CONFIG.AI_MODEL,
-          max_tokens: 500,
-          system: `Você é o Jarvis, gerente de projetos da agência Stream Lab. Gere um comentário para a task atrasada.
-
-Você tem acesso a TODOS os dados da agência: Asana (tasks, comentários, custom fields), memórias de conversas, perfis da equipe, mensagens reais do WhatsApp e perfis dos clientes. USE TUDO pra formular uma cobrança INTELIGENTE e HUMANA.
-
-EQUIPE DA STREAM LAB: ${teamList}
-
-COMO USAR O CONTEXTO (cruze os dados!):
-- Se o PERFIL DO MEMBRO mostra que ele tende a atrasar em certo tipo de task → adapte a abordagem
-- Se o PERFIL DO CLIENTE mostra que é Tier 1 ou alta prioridade → reforce a urgência
-- Se as MENSAGENS DO WHATSAPP mostram que o cliente já cobrou → mencione isso ("o cliente já perguntou no grupo sobre isso")
-- Se os COMENTÁRIOS DA TASK mostram progresso parcial → reconheça e pergunte o que falta
-- Se as MEMÓRIAS mostram decisões anteriores ou contexto → use ("conforme foi decidido na reunião...")
-- Se a SEÇÃO indica fase específica (ex: "Aprovação cliente") → cobre sobre AQUELA fase
-- Se NUNCA teve comentário → pergunte se já começou
-
-REGRAS ABSOLUTAS:
-1. Cobrança ESPECÍFICA sobre o conteúdo — "as artes do feed da Minner precisam ir pra aprovação" é bom. "pode dar retorno?" é PROIBIDO
-2. Tom de colega que entende o trabalho, não de robô — seja direto mas humano
-3. 2-4 frases no máximo
-4. Pode e DEVE mencionar nomes de CLIENTES que aparecem nos dados
-5. NUNCA INVENTE nomes que NÃO existem nos dados. Inventar nomes é PROIBIDO
-6. NUNCA comece com "@NomeDaPessoa" — a menção já é feita automaticamente pelo sistema
-7. Responda SOMENTE o texto do comentário, sem aspas nem prefixo`,
-          messages: [{ role: 'user', content: taskContext }],
-        });
-        commentText = aiResponse.content[0]?.text?.trim() || '';
-      } catch (aiErr) {
-        console.error(`[COBRANCA] Erro Claude:`, aiErr.message);
-        commentText = `Essa task está com ${daysLate} dia(s) de atraso desde ${new Date(t.due_on).toLocaleDateString('pt-BR')}. Qual o status atual?`;
-      }
-
-      if (!commentText) commentText = `Essa task está com ${daysLate} dia(s) de atraso. Qual o status atual?`;
-
-      // ============================================
-      // FASE 3: Comentar no Asana mencionando TODOS os envolvidos
-      // ============================================
-      // Montar HTML com @mentions de todos os envolvidos
       let mentionsHtml = '';
       const mentionedNames = [];
       for (const person of allInvolved) {
         const gid = findTeamGid(person);
-        if (gid) {
-          mentionsHtml += `<a data-asana-gid="${gid}"/> `;
-          mentionedNames.push(person);
-        }
+        if (gid) { mentionsHtml += `<a data-asana-gid="${gid}"/> `; mentionedNames.push(person); }
       }
 
       const commentBody = mentionsHtml
@@ -1144,29 +1214,27 @@ REGRAS ABSOLUTAS:
 
       const result = await asanaWrite('POST', `/tasks/${t.gid}/stories`, commentBody);
       if (result.success) {
-        console.log(`[COBRANCA] ✅ Task ${t.gid} — mencionou [${mentionedNames.join(', ')}]: "${commentText.substring(0, 80)}..."`);
-        allCommentResults.push({
-          task: t, comment: commentText, daysLate,
-          mentioned: mentionedNames, section: sectionName, project: projectName,
-        });
+        console.log(`[PIPELINE] ✅ Asana ${t.gid} [${mentionedNames.join(',')}]: "${commentText.substring(0, 80)}..."`);
+        commentResults.push({ intel, decision, mentionedNames });
       } else {
-        console.error(`[COBRANCA] ❌ Erro ao comentar task ${t.gid}:`, result.error);
+        console.error(`[PIPELINE] ❌ Erro Asana ${t.gid}:`, result.error);
       }
 
       notified[t.gid] = today;
-      await new Promise(r => setTimeout(r, 1500));
+      await new Promise(r => setTimeout(r, 1000));
     }
 
     // ============================================
-    // FASE 4: Expor no grupo Tarefas Diárias com menções REAIS no WhatsApp
+    // ETAPA 4: WRITER formula mensagens + envia no WhatsApp
     // ============================================
-    if (allCommentResults.length > 0) {
+    if (commentResults.length > 0) {
+      console.log(`[PIPELINE] ✍️ Agente Writer formulando mensagens...`);
       const sendWithMentions = getSendWithMentionsFunction();
 
       // Agrupar por responsável
       const byPerson = {};
-      for (const r of allCommentResults) {
-        const name = r.task.assignee || 'Sem responsável';
+      for (const r of commentResults) {
+        const name = r.intel.task.assignee || 'Sem responsável';
         if (!byPerson[name]) byPerson[name] = [];
         byPerson[name].push(r);
       }
@@ -1174,40 +1242,24 @@ REGRAS ABSOLUTAS:
       for (const [person, results] of Object.entries(byPerson)) {
         if (person === 'Sem responsável') continue;
 
-        // Resolver JID do WhatsApp pra menção real
+        // Writer gera a mensagem no tom certo
+        const whatsappMsg = await agentWriter(person, results, { anthropic, teamList });
+
+        // Resolver JID e enviar com menção real
         const firstName = person.split(/\s+/)[0].toLowerCase();
         const whatsappJid = teamWhatsApp.get(firstName) || teamPhones.get(firstName);
 
-        // Saudações variadas pra não ficar repetitivo
-        const greetings = [
-          `Fala @${person}! 👋 Passei no Asana e vi algumas tasks que precisam da sua atenção:`,
-          `E aí @${person}, tudo certo? Dei uma olhada no Asana e separei umas tasks pra você dar uma verificada:`,
-          `Opa @${person}! 🙂 Passando pra te lembrar de algumas tasks que estão pendentes:`,
-          `@${person}, bora dar uma movimentada nessas tasks? Deixei uns comentários no Asana pra te ajudar:`,
-          `Fala @${person}! Tem algumas tasks que precisam de um retorno seu, dá uma olhada:`,
-        ];
-        let msg = greetings[Math.floor(Math.random() * greetings.length)] + '\n\n';
-        for (const { task: t, comment, daysLate, section } of results) {
-          const url = `https://app.asana.com/0/${t.projectGid}/${t.gid}`;
-          const atrasoLabel = daysLate === 1 ? '1 dia' : `${daysLate} dias`;
-          msg += `• *${t.name}*${section ? ` (${section})` : ''} — ${atrasoLabel} de atraso\n`;
-          msg += `  💬 _"${comment.substring(0, 120)}${comment.length > 120 ? '...' : ''}"_\n`;
-          msg += `  ${url}\n\n`;
-        }
-        msg += `Qualquer coisa responde lá nos comentários das tasks! 💪`;
-
-        // Enviar com menção real no WhatsApp (a pessoa recebe notificação)
         if (whatsappJid && sendWithMentions) {
-          await sendWithMentions(CONFIG.GROUP_TAREFAS, msg, [{ jid: whatsappJid }]);
-          console.log(`[COBRANCA] WhatsApp com menção real: ${person} (${whatsappJid})`);
+          await sendWithMentions(CONFIG.GROUP_TAREFAS, whatsappMsg, [{ jid: whatsappJid }]);
+          console.log(`[PIPELINE] ✍️ WhatsApp enviado pra ${person} com menção real`);
         } else {
-          await sendFn(CONFIG.GROUP_TAREFAS, msg);
-          console.log(`[COBRANCA] WhatsApp sem menção (JID não encontrado): ${person}`);
+          await sendFn(CONFIG.GROUP_TAREFAS, whatsappMsg);
+          console.log(`[PIPELINE] ✍️ WhatsApp enviado pra ${person} (sem menção)`);
         }
         await new Promise(r => setTimeout(r, 2000));
       }
 
-      console.log(`[COBRANCA] Concluída: ${allCommentResults.length} tasks cobradas com inteligência completa`);
+      console.log(`[PIPELINE] ✅ Pipeline concluído: ${commentResults.length} tasks cobradas via 3 agentes`);
     }
 
     // Salvar controle anti-spam
@@ -1217,6 +1269,6 @@ REGRAS ABSOLUTAS:
     ).catch(() => {});
 
   } catch (err) {
-    console.error('[COBRANCA] Erro:', err.message);
+    console.error('[PIPELINE] Erro:', err.message);
   }
 }
