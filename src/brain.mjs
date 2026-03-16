@@ -964,22 +964,46 @@ export async function runOverdueCheck() {
         }
       } catch (e) { console.error(`[COBRANCA] Erro ao buscar stories task ${t.gid}:`, e.message); }
 
-      // 1C. MEMÓRIAS DO JARVIS — cruzar com dados do estudo do Asana + conversas do WhatsApp
+      // 1C. BUSCA PROFUNDA NO SISTEMA DE MEMÓRIA (RAG completo)
+      // O Jarvis já processou TODAS as mensagens do WhatsApp + TODOS os dados do Asana
+      // e extraiu fatos estruturados. Aqui cruzamos TUDO.
       try {
-        // Buscar pelo nome da task
-        const taskMemories = await searchMemories(t.name, 'agent', null, 5);
-        // Buscar pelo cliente (extrair do nome da task entre colchetes, ex: [MINNER])
         const clientMatch = t.name.match(/\[([^\]]+)\]/);
-        let clientMemories = [];
-        if (clientMatch) {
-          clientMemories = await searchMemories(clientMatch[1], null, null, 5);
-        }
-        // Buscar pelo responsável
-        const assigneeMemories = t.assignee && t.assignee !== 'Sem responsável'
-          ? await searchMemories(t.assignee, null, null, 3) : [];
+        const clientName = clientMatch ? clientMatch[1] : '';
+        const assigneeName = t.assignee && t.assignee !== 'Sem responsável' ? t.assignee : '';
+        const assigneeFirst = assigneeName.split(/\s+/)[0] || '';
 
-        const allMemories = [...taskMemories, ...clientMemories, ...assigneeMemories];
-        // Deduplicar por conteúdo
+        // Extrair palavras-chave da task pra buscas inteligentes (ex: "Arte feed março" → "arte", "feed")
+        const taskKeywords = t.name.replace(/\[.*?\]/g, '').trim().split(/\s+/).filter(w => w.length > 3).slice(0, 3);
+
+        // Buscas paralelas em TODOS os escopos e ângulos
+        const memorySearches = await Promise.allSettled([
+          // 1. Memórias sobre esta task específica (escopo agent = estudo do Asana)
+          searchMemories(t.name, 'agent', null, 10),
+          // 2. Memórias sobre o CLIENTE em TODOS os escopos (user + chat + agent)
+          clientName ? searchMemories(clientName, null, null, 10) : Promise.resolve([]),
+          // 3. Memórias sobre o RESPONSÁVEL — como ele trabalha, padrões, interações
+          assigneeName ? searchMemories(assigneeName, null, null, 8) : Promise.resolve([]),
+          // 4. Memórias de CHAT (conversas WhatsApp) sobre o cliente
+          clientName ? searchMemories(clientName, 'chat', null, 8) : Promise.resolve([]),
+          // 5. Memórias de CHAT sobre o responsável (o que ele disse nos grupos)
+          assigneeFirst ? searchMemories(assigneeFirst, 'chat', null, 5) : Promise.resolve([]),
+          // 6. Memórias do tipo deadline/decision sobre o cliente (prazos combinados, decisões)
+          clientName ? searchMemories(clientName, null, null, 5) : Promise.resolve([]),
+          // 7. Busca por palavras-chave da task (ex: "arte feed" pode trazer contexto adicional)
+          taskKeywords.length > 0 ? searchMemories(taskKeywords.join(' '), null, null, 5) : Promise.resolve([]),
+          // 8. Cruzamento: responsável + cliente juntos (interações específicas)
+          (assigneeFirst && clientName) ? searchMemories(`${assigneeFirst} ${clientName}`, null, null, 5) : Promise.resolve([]),
+        ]);
+
+        // Consolidar e deduplicar todas as memórias encontradas
+        const allMemories = [];
+        for (const result of memorySearches) {
+          if (result.status === 'fulfilled' && Array.isArray(result.value)) {
+            allMemories.push(...result.value);
+          }
+        }
+
         const seen = new Set();
         const uniqueMemories = allMemories.filter(m => {
           if (seen.has(m.content)) return false;
@@ -988,54 +1012,36 @@ export async function runOverdueCheck() {
         });
 
         if (uniqueMemories.length > 0) {
-          taskContext += `\n\nMEMÓRIAS RELEVANTES DO JARVIS (dados do estudo do Asana + conversas):`;
-          for (const m of uniqueMemories.slice(0, 8)) {
-            taskContext += `\n- [${m.category}] ${m.content}`;
+          // Separar por tipo pra o Claude entender o que é cada coisa
+          const agentMems = uniqueMemories.filter(m => m.scope === 'agent');
+          const chatMems = uniqueMemories.filter(m => m.scope === 'chat');
+          const userMems = uniqueMemories.filter(m => m.scope === 'user');
+
+          if (agentMems.length > 0) {
+            taskContext += `\n\nCONHECIMENTO DO ASANA (estudo de tasks, comentários e projetos):`;
+            for (const m of agentMems.slice(0, 10)) {
+              taskContext += `\n- [${m.category}] ${m.content}`;
+            }
           }
+          if (chatMems.length > 0) {
+            taskContext += `\n\nCONHECIMENTO DAS CONVERSAS DO WHATSAPP (o que foi discutido nos grupos):`;
+            for (const m of chatMems.slice(0, 10)) {
+              taskContext += `\n- [${m.category}] ${m.content}`;
+            }
+          }
+          if (userMems.length > 0) {
+            taskContext += `\n\nCONHECIMENTO SOBRE PESSOAS (perfis, preferências, padrões):`;
+            for (const m of userMems.slice(0, 8)) {
+              taskContext += `\n- [${m.category}] ${m.content}`;
+            }
+          }
+
+          console.log(`[COBRANCA] Task ${t.gid}: ${uniqueMemories.length} memórias encontradas (agent:${agentMems.length} chat:${chatMems.length} user:${userMems.length})`);
+        } else {
+          taskContext += `\n\nNenhuma memória encontrada sobre esta task — é a primeira vez que o Jarvis analisa este assunto.`;
+          console.log(`[COBRANCA] Task ${t.gid}: ZERO memórias encontradas`);
         }
       } catch (e) { console.error(`[COBRANCA] Erro ao buscar memórias:`, e.message); }
-
-      // 1D. Mensagens REAIS do WhatsApp sobre o cliente (direto do banco, não só memórias)
-      try {
-        const clientMatch = t.name.match(/\[([^\]]+)\]/);
-        if (clientMatch) {
-          const clientName = clientMatch[1].toLowerCase();
-
-          // 1D-i. Buscar memórias de chat que mencionem o cliente
-          const chatMemories = await searchMemories(clientName, 'chat', null, 5);
-          if (chatMemories.length > 0) {
-            taskContext += `\n\nMEMÓRIAS DE CONVERSAS DO WHATSAPP sobre ${clientMatch[1]}:`;
-            for (const m of chatMemories) {
-              taskContext += `\n- ${m.content}`;
-            }
-          }
-
-          // 1D-ii. Buscar mensagens REAIS do grupo do cliente no banco (últimas 10 relevantes)
-          let clientGroupJid = null;
-          for (const [jid, client] of managedClients) {
-            if (client.groupName?.toLowerCase().includes(clientName) || client.slug?.toLowerCase().includes(clientName)) {
-              clientGroupJid = jid;
-              break;
-            }
-          }
-          if (clientGroupJid) {
-            const { rows: recentMsgs } = await pool.query(
-              `SELECT push_name, text, created_at AT TIME ZONE 'America/Sao_Paulo' as hora_br
-               FROM jarvis_messages
-               WHERE chat_id = $1 AND text IS NOT NULL AND text != '' AND LENGTH(text) > 15
-               ORDER BY timestamp DESC LIMIT 10`,
-              [clientGroupJid]
-            ).catch(() => ({ rows: [] }));
-            if (recentMsgs.length > 0) {
-              taskContext += `\n\nMENSAGENS RECENTES NO GRUPO DO WHATSAPP do cliente ${clientMatch[1]}:`;
-              for (const msg of recentMsgs.reverse()) {
-                const date = new Date(msg.hora_br).toLocaleDateString('pt-BR');
-                taskContext += `\n- ${msg.push_name} (${date}): ${msg.text.substring(0, 200)}`;
-              }
-            }
-          }
-        }
-      } catch (e) { console.error(`[COBRANCA] Erro ao buscar WhatsApp:`, e.message); }
 
       // 1E. Perfil sintetizado do RESPONSÁVEL (como ele trabalha, preferências, padrões)
       try {
