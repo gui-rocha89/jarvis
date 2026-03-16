@@ -877,10 +877,25 @@ export async function runOverdueCheck() {
       return;
     }
 
-    // Inverter TEAM_ASANA para buscar GID pelo nome
-    const nameToGid = {};
-    for (const [name, gid] of Object.entries(TEAM_ASANA)) {
-      nameToGid[name.toLowerCase()] = gid;
+    // Inverter TEAM_ASANA para buscar GID pelo nome (suporta match parcial: "Bruno Faccin" → "bruno")
+    const teamEntries = Object.entries(TEAM_ASANA); // [["gui","123"], ["bruno","456"], ...]
+    function findTeamGid(fullName) {
+      if (!fullName) return null;
+      const lower = fullName.toLowerCase();
+      // Match exato primeiro
+      for (const [name, gid] of teamEntries) {
+        if (lower === name) return gid;
+      }
+      // Match pelo primeiro nome
+      const firstName = lower.split(/\s+/)[0];
+      for (const [name, gid] of teamEntries) {
+        if (firstName === name) return gid;
+      }
+      // Match parcial (nome do time contido no nome completo)
+      for (const [name, gid] of teamEntries) {
+        if (lower.includes(name)) return gid;
+      }
+      return null;
     }
 
     // Claude para gerar comentários contextualizados
@@ -999,7 +1014,7 @@ export async function runOverdueCheck() {
       if (t.assignee && t.assignee !== 'Sem responsável') allInvolved.add(t.assignee);
       for (const f of followers) {
         // Só adicionar se é da equipe (tem GID no TEAM_ASANA)
-        if (nameToGid[f.toLowerCase()]) allInvolved.add(f);
+        if (findTeamGid(f)) allInvolved.add(f);
       }
 
       let commentText = '';
@@ -1039,7 +1054,7 @@ REGRAS ABSOLUTAS:
       let mentionsHtml = '';
       const mentionedNames = [];
       for (const person of allInvolved) {
-        const gid = nameToGid[person.toLowerCase()];
+        const gid = findTeamGid(person);
         if (gid) {
           mentionsHtml += `<a data-asana-gid="${gid}"/> `;
           mentionedNames.push(person);
