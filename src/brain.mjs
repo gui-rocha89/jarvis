@@ -1245,16 +1245,45 @@ export async function runOverdueCheck() {
         // Writer gera a mensagem no tom certo
         const whatsappMsg = await agentWriter(person, results, { anthropic, teamList });
 
-        // Resolver JID e enviar com menção real
+        // Resolver JID com 3 fallbacks: teamWhatsApp → teamPhones → banco de dados
         const firstName = person.split(/\s+/)[0].toLowerCase();
-        const whatsappJid = teamWhatsApp.get(firstName) || teamPhones.get(firstName);
+        let whatsappJid = teamWhatsApp.get(firstName) || teamPhones.get(firstName);
+
+        // Fallback: buscar no banco jarvis_contacts pelo push_name
+        if (!whatsappJid) {
+          try {
+            const { rows } = await pool.query(
+              `SELECT jid FROM jarvis_contacts WHERE LOWER(push_name) LIKE $1 AND jid LIKE '%@s.whatsapp.net' LIMIT 1`,
+              [`${firstName}%`]
+            );
+            if (rows.length > 0) {
+              whatsappJid = rows[0].jid;
+              teamPhones.set(firstName, whatsappJid); // Cache pra próxima vez
+              console.log(`[PIPELINE] JID encontrado no banco pra ${person}: ${whatsappJid}`);
+            }
+          } catch (e) {}
+        }
+
+        // Fallback 2: buscar por @lid no banco (participantes de grupo)
+        if (!whatsappJid) {
+          try {
+            const { rows } = await pool.query(
+              `SELECT jid FROM jarvis_contacts WHERE LOWER(push_name) LIKE $1 AND jid LIKE '%@lid' LIMIT 1`,
+              [`${firstName}%`]
+            );
+            if (rows.length > 0) {
+              whatsappJid = rows[0].jid;
+              console.log(`[PIPELINE] JID @lid encontrado pra ${person}: ${whatsappJid}`);
+            }
+          } catch (e) {}
+        }
 
         if (whatsappJid && sendWithMentions) {
           await sendWithMentions(CONFIG.GROUP_TAREFAS, whatsappMsg, [{ jid: whatsappJid }]);
-          console.log(`[PIPELINE] ✍️ WhatsApp enviado pra ${person} com menção real`);
+          console.log(`[PIPELINE] ✍️ WhatsApp enviado pra ${person} com menção real (${whatsappJid})`);
         } else {
           await sendFn(CONFIG.GROUP_TAREFAS, whatsappMsg);
-          console.log(`[PIPELINE] ✍️ WhatsApp enviado pra ${person} (sem menção)`);
+          console.log(`[PIPELINE] ✍️ WhatsApp enviado pra ${person} (sem menção — JID não encontrado)`);
         }
         await new Promise(r => setTimeout(r, 2000));
       }
