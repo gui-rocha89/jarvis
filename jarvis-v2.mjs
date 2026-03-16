@@ -2120,6 +2120,16 @@ async function startWhatsApp() {
               if (contact?.push_name) {
                 const firstName = contact.push_name.split(' ')[0].toLowerCase();
                 teamWhatsApp.set(firstName, p.id);
+                // Alias limpo (só letras): "bruSna" → "brusna", mas também mapear "bruna"
+                const cleanName = firstName.replace(/[^a-záàâãéêíóôõúç]/gi, '').toLowerCase();
+                if (cleanName !== firstName) {
+                  teamWhatsApp.set(cleanName, p.id);
+                }
+                // Mapeamento por push_name completo também (sem emojis)
+                const fullClean = contact.push_name.replace(/[^a-záàâãéêíóôõúç\s]/gi, '').trim().toLowerCase();
+                if (fullClean && fullClean !== firstName) {
+                  teamWhatsApp.set(fullClean, p.id);
+                }
                 if (p.id.includes('@s.whatsapp.net') && !teamPhones.has(firstName)) {
                   teamPhones.set(firstName, p.id);
                 }

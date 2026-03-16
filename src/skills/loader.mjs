@@ -754,16 +754,30 @@ export async function executeJarvisTool(toolName, input, context = {}) {
     if (input.mencoes && Array.isArray(input.mencoes) && input.mencoes.length > 0 && _sendTextWithMentionsFn) {
       for (const nome of input.mencoes) {
         const nomeLower = nome.toLowerCase().trim();
-        // 1. Buscar no map teamWhatsApp (equipe já mapeada)
-        const jidFromTeam = teamWhatsApp.get(nomeLower);
+        // Versão sem caracteres especiais (ex: "brusna" → "brusna", "bruna" → "bruna")
+        const nomeClean = nomeLower.replace(/[^a-záàâãéêíóôõúç]/gi, '').toLowerCase();
+
+        // 1. Buscar no map teamWhatsApp — match exato E fuzzy (sem acentos/chars especiais)
+        let jidFromTeam = teamWhatsApp.get(nomeLower);
+        if (!jidFromTeam) {
+          // Fuzzy: procurar chaves que contenham o nome ou vice-versa
+          for (const [key, jid] of teamWhatsApp) {
+            const keyClean = key.replace(/[^a-záàâãéêíóôõúç]/gi, '').toLowerCase();
+            if (keyClean.includes(nomeClean) || nomeClean.includes(keyClean)) {
+              jidFromTeam = jid;
+              break;
+            }
+          }
+        }
         if (jidFromTeam) {
           mentionJids.push(jidFromTeam);
           continue;
         }
-        // 2. Buscar na tabela jarvis_contacts por push_name
+
+        // 2. Buscar na tabela jarvis_contacts por push_name (aceita @lid e @s.whatsapp.net)
         try {
           const { rows } = await pool.query(
-            `SELECT jid FROM jarvis_contacts WHERE LOWER(push_name) LIKE $1 AND jid LIKE '%@s.whatsapp.net' LIMIT 1`,
+            `SELECT jid FROM jarvis_contacts WHERE LOWER(push_name) LIKE $1 AND (jid LIKE '%@s.whatsapp.net' OR jid LIKE '%@lid') LIMIT 1`,
             [`%${nomeLower}%`]
           );
           if (rows.length > 0) {
