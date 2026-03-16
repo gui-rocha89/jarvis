@@ -1509,25 +1509,10 @@ async function executeDashboardTool(toolName, input) {
   return await executeJarvisTool(toolName, input, { senderJid: CONFIG.GUI_JID, chatId: 'dashboard' });
 }
 
-app.post('/dashboard/chat', auth, async (req, res) => {
-  try {
-    const { message, clearHistory } = req.body;
-    if (clearHistory) { dashboardChatHistory.length = 0; return res.json({ response: 'Historico limpo.', cleared: true }); }
-    if (!message) return res.status(400).json({ error: 'Mensagem obrigatoria' });
-
-    const { MASTER_SYSTEM_PROMPT } = await import('./src/agents/master.mjs');
-    const memoryCtx = await getMemoryContext(CONFIG.GUI_JID, 'dashboard', message);
-
-    dashboardChatHistory.push({ role: 'user', content: message });
-    while (dashboardChatHistory.length > 30) dashboardChatHistory.shift();
-
-    const msgs = [...dashboardChatHistory];
-    if (msgs.length > 0 && msgs[0].role !== 'user') msgs.shift();
-
-    const Anthropic = (await import('@anthropic-ai/sdk')).default;
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
-
-    const dashboardSystemPrompt = MASTER_SYSTEM_PROMPT + `
+// ============================================
+// DASHBOARD CHAT — Lógica compartilhada (texto + voz)
+// ============================================
+const DASHBOARD_SYSTEM_SUFFIX = `
 
 CONTEXTO DO DASHBOARD:
 Você está falando pelo Dashboard (guardiaolab.com.br) diretamente com o Gui (seu chefe).
@@ -1559,89 +1544,160 @@ REGRAS ABSOLUTAS DO DASHBOARD:
 ANTI-ALUCINAÇÃO: Você é PROIBIDO de inventar conteúdo de mensagens, horários ou eventos.
 Se alguém perguntar "o que o Doug mandou no grupo Minner?" — você DEVE usar buscar_mensagens primeiro.
 Se a tool não retornar dados, diga honestamente que não encontrou. NUNCA fabrique uma resposta com dados fictícios.
-` + memoryCtx;
+`;
 
-    // Agent Loop real (mesmo padrão do WhatsApp) — até 10 iterações com Extended Thinking
-    const MAX_DASHBOARD_ITERATIONS = 10;
-    let currentMessages = [...msgs];
-    let finalText = '';
-    let iterations = 0;
-    const toolsUsed = new Set(); // Rastrear quais tools foram usadas (anti-alucinação)
+async function processDashboardChat(message, isVoice = false) {
+  const { MASTER_SYSTEM_PROMPT } = await import('./src/agents/master.mjs');
+  const memoryCtx = await getMemoryContext(CONFIG.GUI_JID, 'dashboard', message);
 
-    while (iterations < MAX_DASHBOARD_ITERATIONS) {
-      iterations++;
+  dashboardChatHistory.push({ role: 'user', content: message });
+  while (dashboardChatHistory.length > 30) dashboardChatHistory.shift();
 
-      const apiParams = {
-        model: CONFIG.AI_MODEL,
-        max_tokens: 8000,
-        system: dashboardSystemPrompt,
-        messages: currentMessages,
-        tools: DASHBOARD_TOOLS,
-        thinking: { type: 'enabled', budget_tokens: 4096 },
-      };
+  const msgs = [...dashboardChatHistory];
+  if (msgs.length > 0 && msgs[0].role !== 'user') msgs.shift();
 
-      const response = await anthropic.messages.create(apiParams, {
-        headers: { 'anthropic-beta': 'interleaved-thinking-2025-05-14' },
-      });
+  const Anthropic = (await import('@anthropic-ai/sdk')).default;
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 
-      let hasToolUse = false;
-      const toolResults = [];
-      const assistantContent = [];
+  const voiceHint = isVoice ? `\n\nMODO VOZ ATIVO: O Gui está falando por voz. Responda de forma CONVERSACIONAL e CONCISA — como se estivesse falando, não escrevendo. Evite listas longas, formatação complexa e *negrito*. Seja direto e natural, como o Jarvis do Tony Stark responderia verbalmente.` : '';
+  const dashboardSystemPrompt = MASTER_SYSTEM_PROMPT + DASHBOARD_SYSTEM_SUFFIX + voiceHint + memoryCtx;
 
-      for (const block of response.content) {
-        assistantContent.push(block);
-        if (block.type === 'text') {
-          finalText += block.text;
-        } else if (block.type === 'tool_use') {
-          hasToolUse = true;
-          toolsUsed.add(block.name); // Rastrear tool usada
-          console.log(`[DASHBOARD-CHAT] Iteração ${iterations} — tool: ${block.name}`, JSON.stringify(block.input).substring(0, 150));
-          try {
-            const result = await executeDashboardTool(block.name, block.input);
-            console.log(`[DASHBOARD-CHAT] Tool ${block.name} OK:`, JSON.stringify(result).substring(0, 200));
-            toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
-          } catch (toolErr) {
-            console.error(`[DASHBOARD-CHAT] Tool ${block.name} erro:`, toolErr.message);
-            toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify({ erro: toolErr.message }), is_error: true });
-          }
+  // Agent Loop real — até 10 iterações com Extended Thinking
+  const MAX_ITERATIONS = 10;
+  let currentMessages = [...msgs];
+  let finalText = '';
+  let iterations = 0;
+  const toolsUsed = new Set();
+
+  while (iterations < MAX_ITERATIONS) {
+    iterations++;
+
+    const apiParams = {
+      model: CONFIG.AI_MODEL,
+      max_tokens: 8000,
+      system: dashboardSystemPrompt,
+      messages: currentMessages,
+      tools: DASHBOARD_TOOLS,
+      thinking: { type: 'enabled', budget_tokens: 4096 },
+    };
+
+    const response = await anthropic.messages.create(apiParams, {
+      headers: { 'anthropic-beta': 'interleaved-thinking-2025-05-14' },
+    });
+
+    let hasToolUse = false;
+    const toolResults = [];
+    const assistantContent = [];
+
+    for (const block of response.content) {
+      assistantContent.push(block);
+      if (block.type === 'text') {
+        finalText += block.text;
+      } else if (block.type === 'tool_use') {
+        hasToolUse = true;
+        toolsUsed.add(block.name);
+        console.log(`[DASHBOARD-CHAT] Iteração ${iterations} — tool: ${block.name}`, JSON.stringify(block.input).substring(0, 150));
+        try {
+          const result = await executeDashboardTool(block.name, block.input);
+          console.log(`[DASHBOARD-CHAT] Tool ${block.name} OK:`, JSON.stringify(result).substring(0, 200));
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
+        } catch (toolErr) {
+          console.error(`[DASHBOARD-CHAT] Tool ${block.name} erro:`, toolErr.message);
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify({ erro: toolErr.message }), is_error: true });
         }
       }
-
-      // Se não houve tool_use ou stop_reason não é tool_use, terminamos
-      if (!hasToolUse || response.stop_reason !== 'tool_use') break;
-
-      // Continua o loop com resultados das tools
-      currentMessages = [...currentMessages, { role: 'assistant', content: assistantContent }, { role: 'user', content: toolResults }];
-      finalText = ''; // Reset — a resposta final vem da última iteração
     }
 
-    if (iterations > 1) console.log(`[DASHBOARD-CHAT] Agent Loop concluído em ${iterations} iterações`);
+    if (!hasToolUse || response.stop_reason !== 'tool_use') break;
+    currentMessages = [...currentMessages, { role: 'assistant', content: assistantContent }, { role: 'user', content: toolResults }];
+    finalText = '';
+  }
 
-    if (!finalText) finalText = 'Desculpe, não consegui processar a consulta. Tente reformular a pergunta.';
+  if (iterations > 1) console.log(`[DASHBOARD-CHAT] Agent Loop concluído em ${iterations} iterações`);
+  if (!finalText) finalText = 'Desculpe, não consegui processar a consulta. Tente reformular a pergunta.';
 
-    // SALVAGUARDA ANTI-ALUCINAÇÃO: verificar se a resposta contém dados específicos sem ter usado tools
-    const { antiHallucinationCheck } = await import('./src/brain.mjs');
-    const hallucinationCheck = antiHallucinationCheck(finalText, toolsUsed);
-    if (!hallucinationCheck.safe) {
-      console.warn(`[ANTI-HALLUCINATION] Resposta bloqueada! Tools usadas: [${[...toolsUsed].join(', ')}]. Razão: ${hallucinationCheck.reason}`);
-      console.warn(`[ANTI-HALLUCINATION] Texto original: ${finalText.substring(0, 200)}`);
-      finalText = '⚠️ Detectei que ia te dar uma resposta com dados que não verifiquei nas minhas ferramentas. Deixa eu buscar os dados reais primeiro.\n\nPode repetir o que precisa? Dessa vez vou consultar as mensagens/tarefas antes de responder.';
-    }
+  // Anti-alucinação
+  const { antiHallucinationCheck } = await import('./src/brain.mjs');
+  const hallucinationCheck = antiHallucinationCheck(finalText, toolsUsed);
+  if (!hallucinationCheck.safe) {
+    console.warn(`[ANTI-HALLUCINATION] Resposta bloqueada! Tools: [${[...toolsUsed].join(', ')}]. Razão: ${hallucinationCheck.reason}`);
+    finalText = '⚠️ Detectei que ia te dar uma resposta com dados que não verifiquei. Pode repetir? Dessa vez vou consultar os dados antes de responder.';
+  }
 
-    dashboardChatHistory.push({ role: 'assistant', content: finalText });
+  dashboardChatHistory.push({ role: 'assistant', content: finalText });
 
-    // Auto-salvar instruções como homework (regex ampliado — captura comandos operacionais)
-    const lower = message.toLowerCase();
-    if (/a partir de agora|lembr[ea]|regra|nunca mais|sempre que|aprenda|importante|n[aã]o (fa[cç]a|chame|use|mande|envie|fale)|pode me chamar|me chame de|entendeu\??|compreende\??|entendi[ds]?[ot]?|quero que voc[eê]|preciso que|fa[cç]a isso|resolv[ea]|oper[ea]|autoriz|cuide|monitore|fique de olho|preste aten[cç][aã]o|tom[ea] conta|assuma|gerencie|acompanhe/i.test(lower)) {
-      await pool.query('INSERT INTO homework (type, content, source) VALUES ($1, $2, $3)', ['chat_instruction', message, 'dashboard_chat']).catch(() => {});
-      console.log(`[HOMEWORK] Instrução do dashboard salva: "${message.substring(0, 60)}..."`);
-    }
+  // Homework
+  const lower = message.toLowerCase();
+  if (/a partir de agora|lembr[ea]|regra|nunca mais|sempre que|aprenda|importante|n[aã]o (fa[cç]a|chame|use|mande|envie|fale)|pode me chamar|me chame de|entendeu\??|compreende\??|entendi[ds]?[ot]?|quero que voc[eê]|preciso que|fa[cç]a isso|resolv[ea]|oper[ea]|autoriz|cuide|monitore|fique de olho|preste aten[cç][aã]o|tom[ea] conta|assuma|gerencie|acompanhe/i.test(lower)) {
+    await pool.query('INSERT INTO homework (type, content, source) VALUES ($1, $2, $3)', ['chat_instruction', message, isVoice ? 'dashboard_voice' : 'dashboard_chat']).catch(() => {});
+    console.log(`[HOMEWORK] Instrução do dashboard salva: "${message.substring(0, 60)}..."`);
+  }
 
-    // Processar memória em background
-    processMemory(message, 'Gui', CONFIG.GUI_JID, 'dashboard', false).catch(() => {});
+  // Memória em background
+  processMemory(message, 'Gui', CONFIG.GUI_JID, 'dashboard', false).catch(() => {});
 
+  return finalText;
+}
+
+// --- Chat por texto ---
+app.post('/dashboard/chat', auth, async (req, res) => {
+  try {
+    const { message, clearHistory } = req.body;
+    if (clearHistory) { dashboardChatHistory.length = 0; return res.json({ response: 'Historico limpo.', cleared: true }); }
+    if (!message) return res.status(400).json({ error: 'Mensagem obrigatoria' });
+
+    const finalText = await processDashboardChat(message, false);
     res.json({ response: finalText });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- Chat por voz (Modo Conversa) ---
+app.post('/dashboard/chat/voice', auth, express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '10mb' }), async (req, res) => {
+  try {
+    const audioBuffer = req.body;
+    if (!audioBuffer || audioBuffer.length < 100) return res.status(400).json({ error: 'Áudio vazio ou inválido' });
+
+    console.log(`[VOICE-CHAT] Áudio recebido: ${(audioBuffer.length / 1024).toFixed(1)}KB`);
+
+    // 1. Transcrever via Whisper
+    const { transcribeAudio, generateAudio } = await import('./src/audio.mjs');
+    const transcription = await transcribeAudio(audioBuffer);
+
+    if (!transcription || transcription.trim().length < 2) {
+      return res.json({ transcription: '', response: '', audioBase64: null, skipped: true });
+    }
+
+    console.log(`[VOICE-CHAT] Transcrição: "${transcription.substring(0, 80)}..."`);
+
+    // 2. Processar pelo chat (mesma lógica do texto, com hint de voz)
+    const finalText = await processDashboardChat(transcription, true);
+
+    // 3. Gerar TTS da resposta (truncar se muito longo para não gerar áudio enorme)
+    let ttsText = finalText;
+    if (ttsText.length > 1500) {
+      ttsText = ttsText.substring(0, 1500) + '... veja o texto completo no chat.';
+    }
+
+    let audioBase64 = null;
+    try {
+      const audioOut = await generateAudio(ttsText);
+      audioBase64 = audioOut.toString('base64');
+    } catch (ttsErr) {
+      console.error('[VOICE-CHAT] Erro no TTS:', ttsErr.message);
+    }
+
+    console.log(`[VOICE-CHAT] Resposta: ${finalText.length} chars, áudio: ${audioBase64 ? (audioBase64.length / 1024).toFixed(0) + 'KB' : 'N/A'}`);
+
+    res.json({
+      transcription,
+      response: finalText,
+      audioBase64,
+      audioMimeType: 'audio/ogg',
+    });
+  } catch (err) {
+    console.error('[VOICE-CHAT] Erro:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // --- Team mapping ---

@@ -124,6 +124,13 @@
       to { opacity: 1; transform: translateY(0); }
     }
 
+    /* Voice Mode */
+    .voice-active { border-color: #ff3b3b !important; color: #ff3b3b !important; animation: voice-pulse 1.5s ease-in-out infinite; }
+    .voice-listening { border-color: #00ff88 !important; color: #00ff88 !important; animation: voice-pulse 1.5s ease-in-out infinite; }
+    .voice-processing { border-color: #ffd700 !important; color: #ffd700 !important; }
+    @keyframes voice-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(0,255,136,0.4); } 50% { box-shadow: 0 0 0 10px rgba(0,255,136,0); } }
+    .voice-bar { transition: height 0.08s ease; }
+
     /* Tab active */
     .tab-active {
       color: #00d4ff;
@@ -578,6 +585,22 @@
             </div>
           </div>
 
+          <!-- Voice Status Bar -->
+          <div id="voice-status" class="hidden mb-2 flex items-center gap-3 px-4 py-2.5 rounded-lg bg-stark-green/5 border border-stark-green/20">
+            <div id="voice-status-dot" class="w-2.5 h-2.5 rounded-full bg-stark-green animate-pulse"></div>
+            <span id="voice-status-text" class="text-xs text-stark-green font-mono flex-1">Ouvindo...</span>
+            <div id="voice-level" class="flex gap-0.5 items-end h-5">
+              <div class="voice-bar w-1 bg-stark-green/60 rounded-full" style="height:3px"></div>
+              <div class="voice-bar w-1 bg-stark-green/60 rounded-full" style="height:3px"></div>
+              <div class="voice-bar w-1 bg-stark-green/60 rounded-full" style="height:3px"></div>
+              <div class="voice-bar w-1 bg-stark-green/60 rounded-full" style="height:3px"></div>
+              <div class="voice-bar w-1 bg-stark-green/60 rounded-full" style="height:3px"></div>
+              <div class="voice-bar w-1 bg-stark-green/60 rounded-full" style="height:3px"></div>
+              <div class="voice-bar w-1 bg-stark-green/60 rounded-full" style="height:3px"></div>
+            </div>
+            <button onclick="stopVoiceMode()" class="text-xs text-stark-dim hover:text-stark-red transition-colors ml-2">✕ Parar</button>
+          </div>
+
           <!-- Chat Input -->
           <div class="flex gap-2">
             <textarea id="chat-input" placeholder="Fale com o Jarvis..." rows="1"
@@ -585,6 +608,12 @@
               style="min-height:44px;max-height:160px"
               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"
               oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,160)+'px'"></textarea>
+            <button onclick="toggleVoiceMode()" id="voice-toggle-btn" title="Modo Conversa por Voz"
+              class="bg-stark-panel border border-stark-border text-stark-dim px-3 rounded-lg hover:border-stark-green hover:text-stark-green transition-all relative">
+              <svg id="voice-mic-icon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-14 0m7 7v4m-4 0h8m-4-16a3 3 0 00-3 3v4a3 3 0 006 0V7a3 3 0 00-3-3z"/>
+              </svg>
+            </button>
             <button onclick="sendChat()" id="chat-send-btn" class="bg-stark-blue/20 border border-stark-blue text-stark-blue px-5 rounded-lg hover:bg-stark-blue/30 transition-colors">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
             </button>
@@ -1389,6 +1418,285 @@
         container.innerHTML = '<div class="flex justify-center"><span class="text-xs text-stark-dim bg-stark-bg/50 px-3 py-1 rounded-full font-mono">Canal seguro estabelecido</span></div>';
         notify('Histórico limpo', 'success');
       } catch (e) { notify('Erro ao limpar', 'error'); }
+    }
+
+    // ============================================
+    // VOICE MODE — Conversa por voz com o Jarvis
+    // ============================================
+    let voiceModeActive = false;
+    let voiceMediaRecorder = null;
+    let voiceAudioContext = null;
+    let voiceAnalyser = null;
+    let voiceStream = null;
+    let voiceSilenceTimer = null;
+    let voiceChunks = [];
+    let voiceIsProcessing = false;
+    let voiceHasSpoken = false;
+    let voiceAnimFrame = null;
+    let voiceCurrentAudio = null;
+
+    async function toggleVoiceMode() {
+      if (voiceModeActive) {
+        stopVoiceMode();
+        return;
+      }
+
+      // Verificar suporte do navegador
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        notify('Navegador não suporta gravação de áudio. Use Chrome ou Edge.', 'error');
+        return;
+      }
+
+      try {
+        voiceStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+        voiceModeActive = true;
+        updateVoiceUI('listening');
+        notify('Modo voz ativado! Fale com o Jarvis.', 'success');
+        startListening();
+      } catch (err) {
+        console.error('Mic error:', err);
+        notify('Erro ao acessar microfone. Verifique as permissões.', 'error');
+      }
+    }
+
+    function startListening() {
+      if (!voiceModeActive || !voiceStream) return;
+
+      voiceChunks = [];
+      voiceHasSpoken = false;
+      voiceIsProcessing = false;
+
+      // Escolher mimeType suportado
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm'
+        : 'audio/ogg';
+
+      voiceMediaRecorder = new MediaRecorder(voiceStream, { mimeType });
+      voiceMediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) voiceChunks.push(e.data); };
+      voiceMediaRecorder.onstop = () => { if (voiceModeActive && !voiceIsProcessing) processVoiceRecording(); };
+
+      voiceMediaRecorder.start(250); // chunks a cada 250ms
+      updateVoiceUI('listening');
+      startVAD();
+    }
+
+    function startVAD() {
+      if (!voiceStream) return;
+
+      voiceAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const source = voiceAudioContext.createMediaStreamSource(voiceStream);
+      voiceAnalyser = voiceAudioContext.createAnalyser();
+      voiceAnalyser.fftSize = 512;
+      voiceAnalyser.smoothingTimeConstant = 0.8;
+      source.connect(voiceAnalyser);
+
+      const dataArray = new Uint8Array(voiceAnalyser.frequencyBinCount);
+      const bars = document.querySelectorAll('#voice-level .voice-bar');
+      const SILENCE_THRESHOLD = 12;
+      const SILENCE_DURATION = 1800; // 1.8s de silêncio = auto-stop
+      let silenceStart = null;
+
+      function detectVoice() {
+        if (!voiceModeActive || voiceIsProcessing) return;
+
+        voiceAnalyser.getByteFrequencyData(dataArray);
+
+        // Calcular volume médio (foco nas frequências de voz: 80-4000Hz)
+        let sum = 0;
+        const startBin = Math.floor(80 / (voiceAudioContext.sampleRate / voiceAnalyser.fftSize));
+        const endBin = Math.min(Math.floor(4000 / (voiceAudioContext.sampleRate / voiceAnalyser.fftSize)), dataArray.length);
+        for (let i = startBin; i < endBin; i++) sum += dataArray[i];
+        const avg = sum / (endBin - startBin);
+
+        // Atualizar barras de nível
+        bars.forEach((bar, i) => {
+          const barHeight = Math.max(3, Math.min(20, (avg / 255) * 25 + Math.random() * (avg > SILENCE_THRESHOLD ? 5 : 0)));
+          bar.style.height = barHeight + 'px';
+          bar.style.backgroundColor = avg > SILENCE_THRESHOLD ? '#00ff88' : 'rgba(0,255,136,0.3)';
+        });
+
+        if (avg > SILENCE_THRESHOLD) {
+          voiceHasSpoken = true;
+          silenceStart = null;
+        } else if (voiceHasSpoken) {
+          if (!silenceStart) silenceStart = Date.now();
+          else if (Date.now() - silenceStart > SILENCE_DURATION) {
+            // Silêncio detectado após fala — auto-parar
+            voiceIsProcessing = true;
+            if (voiceMediaRecorder && voiceMediaRecorder.state === 'recording') {
+              voiceMediaRecorder.stop();
+            }
+            return; // Sai do loop — processVoiceRecording() será chamado pelo onstop
+          }
+        }
+
+        voiceAnimFrame = requestAnimationFrame(detectVoice);
+      }
+
+      voiceAnimFrame = requestAnimationFrame(detectVoice);
+    }
+
+    async function processVoiceRecording() {
+      if (voiceChunks.length === 0) {
+        if (voiceModeActive) startListening();
+        return;
+      }
+
+      updateVoiceUI('processing');
+
+      const blob = new Blob(voiceChunks, { type: voiceMediaRecorder?.mimeType || 'audio/webm' });
+      voiceChunks = [];
+
+      // Parar VAD temporariamente
+      if (voiceAnimFrame) { cancelAnimationFrame(voiceAnimFrame); voiceAnimFrame = null; }
+      if (voiceAudioContext && voiceAudioContext.state !== 'closed') {
+        voiceAudioContext.close().catch(() => {});
+        voiceAudioContext = null;
+      }
+
+      try {
+        const res = await fetch(`${API_BASE}/dashboard/chat/voice`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${AUTH_TOKEN}`,
+            'Content-Type': blob.type || 'audio/webm',
+          },
+          body: blob,
+        });
+
+        if (res.status === 401) {
+          AUTH_TOKEN = '';
+          localStorage.removeItem('jarvis_token');
+          stopVoiceMode();
+          notify('Sessão expirada', 'error');
+          return;
+        }
+
+        const data = await res.json();
+
+        if (data.skipped || !data.transcription) {
+          notify('Não entendi, tente novamente.', 'warning');
+          if (voiceModeActive) { voiceIsProcessing = false; startListening(); }
+          return;
+        }
+
+        // Mostrar transcrição e resposta no chat
+        appendChat('user', '🎙️ ' + data.transcription);
+        appendChat('assistant', data.response);
+
+        // Tocar áudio da resposta
+        if (data.audioBase64) {
+          updateVoiceUI('speaking');
+          voiceCurrentAudio = new Audio(`data:${data.audioMimeType || 'audio/ogg'};base64,${data.audioBase64}`);
+          voiceCurrentAudio.onended = () => {
+            voiceCurrentAudio = null;
+            if (voiceModeActive) { voiceIsProcessing = false; startListening(); }
+          };
+          voiceCurrentAudio.onerror = () => {
+            console.error('Erro ao tocar áudio');
+            voiceCurrentAudio = null;
+            if (voiceModeActive) { voiceIsProcessing = false; startListening(); }
+          };
+          voiceCurrentAudio.play().catch(() => {
+            // Autoplay bloqueado — continua sem áudio
+            voiceCurrentAudio = null;
+            if (voiceModeActive) { voiceIsProcessing = false; startListening(); }
+          });
+        } else {
+          // Sem áudio — volta a ouvir
+          if (voiceModeActive) { voiceIsProcessing = false; startListening(); }
+        }
+
+      } catch (err) {
+        console.error('Voice chat error:', err);
+        appendChat('error', 'Erro ao processar áudio.');
+        if (voiceModeActive) { voiceIsProcessing = false; startListening(); }
+      }
+    }
+
+    function stopVoiceMode() {
+      voiceModeActive = false;
+      voiceIsProcessing = false;
+
+      // Parar gravação
+      if (voiceMediaRecorder && voiceMediaRecorder.state === 'recording') {
+        voiceMediaRecorder.onstop = null; // Evitar processamento
+        voiceMediaRecorder.stop();
+      }
+      voiceMediaRecorder = null;
+
+      // Parar stream do microfone
+      if (voiceStream) {
+        voiceStream.getTracks().forEach(t => t.stop());
+        voiceStream = null;
+      }
+
+      // Parar AudioContext e VAD
+      if (voiceAnimFrame) { cancelAnimationFrame(voiceAnimFrame); voiceAnimFrame = null; }
+      if (voiceAudioContext && voiceAudioContext.state !== 'closed') {
+        voiceAudioContext.close().catch(() => {});
+      }
+      voiceAudioContext = null;
+      voiceAnalyser = null;
+
+      // Parar áudio
+      if (voiceCurrentAudio) { voiceCurrentAudio.pause(); voiceCurrentAudio = null; }
+
+      updateVoiceUI('off');
+    }
+
+    function updateVoiceUI(state) {
+      const btn = document.getElementById('voice-toggle-btn');
+      const statusBar = document.getElementById('voice-status');
+      const statusDot = document.getElementById('voice-status-dot');
+      const statusText = document.getElementById('voice-status-text');
+      const bars = document.querySelectorAll('#voice-level .voice-bar');
+
+      // Reset classes
+      btn.classList.remove('voice-active', 'voice-listening', 'voice-processing');
+
+      switch (state) {
+        case 'listening':
+          btn.classList.add('voice-listening');
+          statusBar.classList.remove('hidden');
+          statusBar.className = statusBar.className.replace(/bg-stark-\w+\/\d+/g, '').replace(/border-stark-\w+\/\d+/g, '');
+          statusBar.classList.add('flex', 'items-center', 'gap-3', 'px-4', 'py-2.5', 'rounded-lg', 'mb-2');
+          statusBar.style.background = 'rgba(0,255,136,0.05)';
+          statusBar.style.borderColor = 'rgba(0,255,136,0.2)';
+          statusDot.className = 'w-2.5 h-2.5 rounded-full bg-stark-green animate-pulse';
+          statusText.textContent = '🎙️ Ouvindo... fale agora';
+          statusText.style.color = '#00ff88';
+          bars.forEach(b => { b.style.backgroundColor = 'rgba(0,255,136,0.6)'; b.style.height = '3px'; });
+          break;
+
+        case 'processing':
+          btn.classList.add('voice-processing');
+          statusDot.className = 'w-2.5 h-2.5 rounded-full bg-stark-gold animate-pulse';
+          statusText.textContent = '⚡ Processando...';
+          statusText.style.color = '#ffd700';
+          statusBar.style.background = 'rgba(255,215,0,0.05)';
+          statusBar.style.borderColor = 'rgba(255,215,0,0.2)';
+          bars.forEach(b => { b.style.height = '3px'; b.style.backgroundColor = 'rgba(255,215,0,0.4)'; });
+          break;
+
+        case 'speaking':
+          btn.classList.add('voice-active');
+          statusDot.className = 'w-2.5 h-2.5 rounded-full bg-stark-blue animate-pulse';
+          statusText.textContent = '🔊 Jarvis falando...';
+          statusText.style.color = '#00d4ff';
+          statusBar.style.background = 'rgba(0,212,255,0.05)';
+          statusBar.style.borderColor = 'rgba(0,212,255,0.2)';
+          bars.forEach(b => { b.style.backgroundColor = 'rgba(0,212,255,0.6)'; });
+          break;
+
+        case 'off':
+        default:
+          statusBar.classList.add('hidden');
+          statusBar.style.background = '';
+          statusBar.style.borderColor = '';
+          bars.forEach(b => { b.style.height = '3px'; });
+          break;
+      }
     }
 
     // ============================================
