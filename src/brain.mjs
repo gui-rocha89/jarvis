@@ -1109,15 +1109,23 @@ REGRAS ABSOLUTAS:
         const firstName = person.split(/\s+/)[0].toLowerCase();
         const whatsappJid = teamWhatsApp.get(firstName) || teamPhones.get(firstName);
 
-        let msg = `📋 *Cobrança automática — @${person}*\n\n`;
-        msg += `Comentei nas seguintes tasks no Asana:\n\n`;
+        // Saudações variadas pra não ficar repetitivo
+        const greetings = [
+          `Fala @${person}! 👋 Passei no Asana e vi algumas tasks que precisam da sua atenção:`,
+          `E aí @${person}, tudo certo? Dei uma olhada no Asana e separei umas tasks pra você dar uma verificada:`,
+          `Opa @${person}! 🙂 Passando pra te lembrar de algumas tasks que estão pendentes:`,
+          `@${person}, bora dar uma movimentada nessas tasks? Deixei uns comentários no Asana pra te ajudar:`,
+          `Fala @${person}! Tem algumas tasks que precisam de um retorno seu, dá uma olhada:`,
+        ];
+        let msg = greetings[Math.floor(Math.random() * greetings.length)] + '\n\n';
         for (const { task: t, comment, daysLate, section } of results) {
           const url = `https://app.asana.com/0/${t.projectGid}/${t.gid}`;
-          msg += `• *${t.name}*${section ? ` (${section})` : ''} — ${daysLate}d atraso\n`;
+          const atrasoLabel = daysLate === 1 ? '1 dia' : `${daysLate} dias`;
+          msg += `• *${t.name}*${section ? ` (${section})` : ''} — ${atrasoLabel} de atraso\n`;
           msg += `  💬 _"${comment.substring(0, 120)}${comment.length > 120 ? '...' : ''}"_\n`;
           msg += `  ${url}\n\n`;
         }
-        msg += `⚠️ Verifica no Asana e responde nos comentários das tasks.`;
+        msg += `Qualquer coisa responde lá nos comentários das tasks! 💪`;
 
         // Enviar com menção real no WhatsApp (a pessoa recebe notificação)
         if (whatsappJid && sendWithMentions) {
