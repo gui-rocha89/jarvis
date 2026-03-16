@@ -886,7 +886,7 @@ export async function runOverdueCheck() {
     }
 
     const now = new Date();
-    const { asanaWrite } = await import('./skills/loader.mjs');
+    const { asanaRequest, asanaWrite } = await import('./skills/loader.mjs');
     const { TEAM_ASANA } = await import('./config.mjs');
 
     // Inverter TEAM_ASANA para buscar GID pelo nome
@@ -895,44 +895,114 @@ export async function runOverdueCheck() {
       nameToGid[name.toLowerCase()] = gid;
     }
 
+    // Claude para gerar comentários contextualizados
+    const Anthropic = (await import('@anthropic-ai/sdk')).default;
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
+
     for (const [assignee, tasks] of Object.entries(byAssignee)) {
       if (assignee === 'Sem responsavel' || assignee === 'Sem responsável') continue;
 
       const assigneeGid = nameToGid[assignee.toLowerCase()];
+      const commentResults = []; // pra montar o resumo do WhatsApp
 
-      // 1. PRIMEIRO: Comentar DE VERDADE em cada task no Asana (com @mention)
+      // 1. PARA CADA TASK: consultar contexto completo → gerar comentário inteligente → postar
       for (const t of tasks.slice(0, 5)) {
         const daysLate = Math.floor((now - new Date(t.due_on)) / (1000 * 60 * 60 * 24));
-        const commentBody = assigneeGid
-          ? { html_text: `<body><a data-asana-gid="${assigneeGid}"/> Essa task está com ${daysLate} dia(s) de atraso (prazo: ${new Date(t.due_on).toLocaleDateString('pt-BR')}). Pode dar um retorno sobre o andamento?</body>` }
-          : { text: `${assignee}, essa task está com ${daysLate} dia(s) de atraso (prazo: ${new Date(t.due_on).toLocaleDateString('pt-BR')}). Pode dar um retorno sobre o andamento?` };
 
-        const commentResult = await asanaWrite('POST', `/tasks/${t.gid}/stories`, commentBody);
-        if (commentResult.success) {
-          console.log(`[COBRANCA] Comentário real no Asana: task ${t.gid} (${t.name})`);
-        } else {
-          console.error(`[COBRANCA] Erro ao comentar task ${t.gid}:`, commentResult.error);
+        // Buscar detalhes completos da task (nome, notas, seção, comentários recentes)
+        let taskContext = `Task: ${t.name}\nPrazo: ${t.due_on} (${daysLate} dias de atraso)\nResponsável: ${assignee}`;
+        try {
+          const taskDetail = await asanaRequest(`/tasks/${t.gid}?opt_fields=name,notes,memberships.section.name,memberships.project.name,custom_fields.name,custom_fields.display_value`);
+          if (taskDetail?.data) {
+            const td = taskDetail.data;
+            if (td.notes) taskContext += `\nDescrição: ${td.notes.substring(0, 500)}`;
+            if (td.memberships?.[0]?.section?.name) taskContext += `\nSeção atual: ${td.memberships[0].section.name}`;
+            if (td.memberships?.[0]?.project?.name) taskContext += `\nProjeto: ${td.memberships[0].project.name}`;
+            const customFields = (td.custom_fields || []).filter(cf => cf.display_value);
+            if (customFields.length) taskContext += `\nCampos: ${customFields.map(cf => `${cf.name}: ${cf.display_value}`).join(', ')}`;
+          }
+
+          // Buscar últimos 5 comentários
+          const stories = await asanaRequest(`/tasks/${t.gid}/stories?opt_fields=text,created_by.name,created_at,type&limit=10`);
+          if (stories?.data) {
+            const comments = stories.data.filter(s => s.type === 'comment').slice(-5);
+            if (comments.length > 0) {
+              taskContext += `\n\nÚltimos comentários:`;
+              for (const c of comments) {
+                const date = new Date(c.created_at).toLocaleDateString('pt-BR');
+                taskContext += `\n- ${c.created_by?.name || 'Alguém'} (${date}): ${(c.text || '').substring(0, 200)}`;
+              }
+            } else {
+              taskContext += `\n\nNenhum comentário na task.`;
+            }
+          }
+        } catch (ctxErr) {
+          console.error(`[COBRANCA] Erro ao buscar contexto da task ${t.gid}:`, ctxErr.message);
         }
 
-        // Rate limit: 1 req/s pra não bater no limite da API Asana
-        await new Promise(r => setTimeout(r, 1000));
-      }
+        // Gerar comentário contextualizado via Claude
+        let commentText = '';
+        try {
+          const aiResponse = await anthropic.messages.create({
+            model: CONFIG.AI_MODEL,
+            max_tokens: 300,
+            system: `Você é o Jarvis, gerente de projetos da agência Stream Lab. Gere um comentário CURTO (2-3 frases) para cobrar o responsável sobre essa task atrasada.
 
-      // 2. DEPOIS: Mandar resumo no WhatsApp
-      let msg = `@${assignee}, te mencionei nessas tasks no Asana:\n\n`;
-      for (const t of tasks.slice(0, 5)) {
-        const daysLate = Math.floor((now - new Date(t.due_on)) / (1000 * 60 * 60 * 24));
-        const url = `https://app.asana.com/0/${t.projectGid}/${t.gid}`;
-        msg += `• *${t.name}* (prazo: ${new Date(t.due_on).toLocaleDateString('pt-BR')}, ${daysLate} dia(s) de atraso)\n  ${url}\n\n`;
+REGRAS:
+- Analise o contexto da task (nome, descrição, seção, comentários anteriores) pra entender DO QUE SE TRATA
+- Faça uma cobrança INTELIGENTE e ESPECÍFICA sobre o conteúdo da task — NUNCA genérica
+- Se já tem comentários recentes com atualização, reconheça e pergunte sobre o próximo passo
+- Se a task parece estar em progresso (ex: seção "Em andamento"), pergunte o que falta pra finalizar
+- Se não tem nenhum comentário, pergunte se já foi iniciada
+- Tom profissional mas direto — como uma gestora de projetos eficiente
+- NÃO use "Pode dar um retorno sobre o andamento?" — isso é genérico demais
+- NÃO comece com "Olá" ou "Oi"
+- Responda SOMENTE o texto do comentário, sem aspas nem prefixo`,
+            messages: [{ role: 'user', content: taskContext }],
+          });
+          commentText = aiResponse.content[0]?.text?.trim() || '';
+        } catch (aiErr) {
+          console.error(`[COBRANCA] Erro no Claude ao gerar comentário:`, aiErr.message);
+          // Fallback: comentário simples mas não mentiroso
+          commentText = `${t.name} está com ${daysLate} dia(s) de atraso. Qual o status atual?`;
+        }
+
+        if (!commentText) commentText = `${t.name} está com ${daysLate} dia(s) de atraso. Qual o status atual?`;
+
+        // Postar comentário no Asana com @mention
+        const commentBody = assigneeGid
+          ? { html_text: `<body><a data-asana-gid="${assigneeGid}"/> ${commentText}</body>` }
+          : { text: `${assignee}, ${commentText}` };
+
+        const result = await asanaWrite('POST', `/tasks/${t.gid}/stories`, commentBody);
+        if (result.success) {
+          console.log(`[COBRANCA] Comentário contextualizado no Asana: task ${t.gid} — "${commentText.substring(0, 80)}..."`);
+          commentResults.push({ task: t, comment: commentText, daysLate });
+        } else {
+          console.error(`[COBRANCA] Erro ao comentar task ${t.gid}:`, result.error);
+        }
+
         notified[t.gid] = today;
-      }
-      if (tasks.length > 5) {
-        msg += `_...e mais ${tasks.length - 5} task(s)_\n\n`;
-      }
-      msg += 'Pode verificar? 🙏';
 
-      await sendFn(CONFIG.GROUP_TAREFAS, msg);
-      console.log(`[COBRANCA] Cobrado ${assignee}: ${tasks.length} tasks (comentou no Asana + avisou no WhatsApp)`);
+        // Rate limit: ~1.5s entre tasks (API Asana + Claude)
+        await new Promise(r => setTimeout(r, 1500));
+      }
+
+      // 2. Mandar resumo no WhatsApp (só se comentou pelo menos 1)
+      if (commentResults.length > 0) {
+        let msg = `@${assignee}, te marquei nessas tasks no Asana:\n\n`;
+        for (const { task: t, comment, daysLate } of commentResults) {
+          const url = `https://app.asana.com/0/${t.projectGid}/${t.gid}`;
+          msg += `• *${t.name}* (${daysLate}d atraso)\n  _"${comment.substring(0, 100)}${comment.length > 100 ? '...' : ''}"_\n  ${url}\n\n`;
+        }
+        if (tasks.length > 5) {
+          msg += `_...e mais ${tasks.length - 5} task(s)_\n\n`;
+        }
+        msg += 'Dá uma olhada? 🙏';
+
+        await sendFn(CONFIG.GROUP_TAREFAS, msg);
+        console.log(`[COBRANCA] ${assignee}: ${commentResults.length} tasks cobradas com contexto`);
+      }
 
       // Delay entre responsáveis
       await new Promise(r => setTimeout(r, 2000));
