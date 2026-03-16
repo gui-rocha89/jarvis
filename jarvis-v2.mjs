@@ -1701,6 +1701,17 @@ app.post('/dashboard/chat/voice', auth, express.raw({ type: ['audio/*', 'applica
 });
 
 // --- Team mapping ---
+// --- Disparar cobrança manual ---
+app.post('/dashboard/cobranca', auth, async (req, res) => {
+  try {
+    // Limpar cache anti-spam pra rodar de novo
+    await pool.query("DELETE FROM jarvis_config WHERE key = 'overdue_notified'").catch(() => {});
+    console.log('[COBRANCA] Disparo manual via dashboard');
+    runOverdueCheck().catch(err => console.error('[COBRANCA] Erro manual:', err.message));
+    res.json({ success: true, message: 'Cobrança disparada! Acompanhe no grupo Tarefas Diárias.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.get('/team', auth, (req, res) => {
   res.json({ whatsapp_lid: Object.fromEntries(teamWhatsApp), whatsapp_phones: Object.fromEntries(teamPhones) });
 });
