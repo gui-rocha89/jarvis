@@ -16,6 +16,13 @@ export const CONFIG = {
   ASANA_WORKSPACE: process.env.ASANA_WORKSPACE || '',
   JARVIS_VERSION: '3.0.0',
   JWT_SECRET: process.env.JWT_SECRET || '',
+  // Meta Ads (Facebook/Instagram)
+  META_APP_ID: process.env.META_APP_ID || '',
+  META_APP_SECRET: process.env.META_APP_SECRET || '',
+  META_ACCESS_TOKEN: process.env.META_ACCESS_TOKEN || '',
+  META_AD_ACCOUNT_ID: process.env.META_AD_ACCOUNT_ID || '',
+  META_PAGE_ID: process.env.META_PAGE_ID || '',
+  META_API_VERSION: process.env.META_API_VERSION || 'v25.0',
   // IMAP (Asana Email Monitor)
   IMAP_HOST: process.env.IMAP_HOST || '',
   IMAP_PORT: parseInt(process.env.IMAP_PORT) || 993,
@@ -41,6 +48,9 @@ export const ASANA_CLIENTE_MAP = parseJsonEnv('ASANA_CLIENTE_MAP');
 export const ASANA_URGENCIA_MAP = parseJsonEnv('ASANA_URGENCIA_MAP');
 export const ASANA_TIER_MAP = parseJsonEnv('ASANA_TIER_MAP');
 export const ASANA_TIPO_DEMANDA_MAP = parseJsonEnv('ASANA_TIPO_DEMANDA_MAP');
+
+// Meta Ads — mapeamento cliente → Page ID do Facebook
+export const META_PAGES_MAP = parseJsonEnv('META_PAGES_MAP');
 
 export const PUBLIC_ASANA_PROJECTS = new Set(
   (process.env.PUBLIC_ASANA_PROJECTS || '').split(',').filter(Boolean)

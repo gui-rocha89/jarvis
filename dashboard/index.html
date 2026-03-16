@@ -1517,10 +1517,14 @@
         });
         const data = await res.json();
         removeLoading();
-        appendChat('assistant', data.response || 'Sem resposta.');
+        if (data.error) {
+          appendChat('error', '⚠️ ' + data.error);
+        } else {
+          appendChat('assistant', data.response || 'Sem resposta.');
+        }
       } catch (e) {
         removeLoading();
-        appendChat('error', 'Erro ao comunicar com o Jarvis.');
+        appendChat('error', 'Erro ao comunicar com o Jarvis: ' + (e.message || 'timeout/conexão'));
       } finally {
         btn.disabled = false;
         btn.classList.remove('opacity-50');

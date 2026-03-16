@@ -1554,7 +1554,9 @@ const DASHBOARD_EXTRA_TOOLS = [
 ];
 
 // Dashboard tem TODAS as tools: exclusivas + JARVIS_TOOLS (mesmo poder que WhatsApp)
-const DASHBOARD_TOOLS = [...DASHBOARD_EXTRA_TOOLS, ...JARVIS_TOOLS];
+// Deduplica por nome (DASHBOARD_EXTRA_TOOLS tem prioridade — descrições mais detalhadas)
+const _dashExtraNames = new Set(DASHBOARD_EXTRA_TOOLS.map(t => t.name));
+const DASHBOARD_TOOLS = [...DASHBOARD_EXTRA_TOOLS, ...JARVIS_TOOLS.filter(t => !_dashExtraNames.has(t.name))];
 
 async function executeDashboardTool(toolName, input) {
   console.log(`[DASHBOARD-TOOL] Executando: ${toolName}`, JSON.stringify(input));
@@ -1807,9 +1809,15 @@ app.post('/dashboard/chat', auth, async (req, res) => {
     if (clearHistory) { dashboardChatHistory.length = 0; return res.json({ response: 'Historico limpo.', cleared: true }); }
     if (!message) return res.status(400).json({ error: 'Mensagem obrigatoria' });
 
+    console.log(`[DASHBOARD-CHAT] Mensagem recebida: "${message.substring(0, 80)}..."`);
+    const startTime = Date.now();
     const finalText = await processDashboardChat(message, false);
+    console.log(`[DASHBOARD-CHAT] Resposta gerada em ${((Date.now() - startTime) / 1000).toFixed(1)}s (${finalText.length} chars)`);
     res.json({ response: finalText });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    console.error(`[DASHBOARD-CHAT] ERRO:`, err.message, err.stack?.substring(0, 300));
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // --- Chat por voz (Modo Conversa) ---

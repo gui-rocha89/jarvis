@@ -3,6 +3,7 @@
 // Carrega e gerencia skills dinâmicamente
 // ============================================
 import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, ASANA_CUSTOM_FIELDS, ASANA_CLIENTE_MAP, ASANA_URGENCIA_MAP, ASANA_TIER_MAP, ASANA_TIPO_DEMANDA_MAP, GCAL_KEY_PATH, GCAL_CALENDAR_ID, managedClients, saveManagedClients, teamWhatsApp } from '../config.mjs';
+import { listCampaigns, getCampaignInsights, createCampaign, updateCampaignStatus, getAccountInsights, publishPagePost, getPagePosts, resolvePageId, listAvailablePages } from './meta-ads.mjs';
 import { pool } from '../database.mjs';
 import { searchMemories } from '../memory.mjs';
 import { readFile, readdir, stat } from 'fs/promises';
@@ -505,6 +506,99 @@ export const JARVIS_TOOLS = [
       required: ['query'],
     },
   },
+  // ============================================
+  // TOOLS — Tráfego Pago (Meta Ads)
+  // ============================================
+  {
+    name: 'criar_campanha',
+    description: 'Criar uma campanha de anúncios no Meta Ads (Facebook/Instagram). A campanha é SEMPRE criada como PAUSADA por segurança — o Gui ativa manualmente.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        nome: { type: 'string', description: 'Nome da campanha (ex: "[ROSSATO] Tráfego Usados MT")' },
+        objetivo: { type: 'string', enum: ['trafego', 'leads', 'engajamento', 'vendas', 'alcance'], description: 'Objetivo da campanha' },
+        orcamento_diario: { type: 'number', description: 'Orçamento diário em reais (ex: 50 = R$50/dia)' },
+      },
+      required: ['nome', 'objetivo', 'orcamento_diario'],
+    },
+  },
+  {
+    name: 'relatorio_ads',
+    description: 'Gerar relatório de desempenho de campanhas do Meta Ads com métricas reais (CPC, CTR, CPM, impressões, cliques, gasto, alcance). USE SEMPRE antes de opinar sobre performance.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        campanha_id: { type: 'string', description: 'ID da campanha específica (opcional — se omitido, mostra métricas gerais da conta)' },
+        periodo: { type: 'string', enum: ['hoje', 'ontem', '7dias', '30dias', 'mes'], description: 'Período do relatório' },
+      },
+      required: ['periodo'],
+    },
+  },
+  {
+    name: 'pausar_campanha',
+    description: 'Pausar ou retomar uma campanha no Meta Ads.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        campanha_id: { type: 'string', description: 'ID da campanha no Meta Ads' },
+        acao: { type: 'string', enum: ['pausar', 'retomar'], description: 'Ação a executar' },
+      },
+      required: ['campanha_id', 'acao'],
+    },
+  },
+  {
+    name: 'otimizar_campanha',
+    description: 'Analisar métricas de uma campanha e sugerir otimizações inteligentes (ajuste de verba, segmentação, criativos). Puxa os dados reais e gera recomendações.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        campanha_id: { type: 'string', description: 'ID da campanha para analisar' },
+      },
+      required: ['campanha_id'],
+    },
+  },
+  // ============================================
+  // TOOLS — Social Media (Publicações)
+  // ============================================
+  {
+    name: 'agendar_post',
+    description: 'Publicar ou agendar um post no Facebook/Instagram de um cliente. Resolve automaticamente a página pelo nome do cliente. NUNCA publique sem aprovação do Gui.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        cliente: { type: 'string', description: 'Nome do cliente (ex: "minner", "rossato", "pippi", "carrion"). Resolve automaticamente a página do Facebook.' },
+        texto: { type: 'string', description: 'Legenda/texto do post' },
+        link: { type: 'string', description: 'Link para incluir no post (opcional)' },
+        imagem_url: { type: 'string', description: 'URL pública da imagem para o post (opcional)' },
+        agendar_para: { type: 'string', description: 'Data/hora para agendar no formato YYYY-MM-DDTHH:mm (fuso de Brasília). Se omitido, publica imediatamente.' },
+      },
+      required: ['cliente', 'texto'],
+    },
+  },
+  {
+    name: 'calendario_editorial',
+    description: 'Consultar posts publicados recentemente ou planejar calendário editorial de um cliente.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        cliente: { type: 'string', description: 'Nome do cliente (ex: "minner", "rossato"). Resolve a página automaticamente.' },
+        acao: { type: 'string', enum: ['consultar', 'planejar'], description: 'Consultar posts recentes ou planejar novos' },
+        limite: { type: 'number', description: 'Número de posts para consultar (default: 10)' },
+      },
+      required: ['acao'],
+    },
+  },
+  {
+    name: 'metricas_post',
+    description: 'Consultar posts recentes da página de um cliente com suas métricas orgânicas. Resolve automaticamente a página pelo nome do cliente.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        cliente: { type: 'string', description: 'Nome do cliente (ex: "minner", "rossato", "pippi"). Resolve automaticamente a página do Facebook.' },
+        limite: { type: 'number', description: 'Número de posts recentes para consultar (default: 10)' },
+      },
+    },
+  },
 ];
 
 export async function executeJarvisTool(toolName, input, context = {}) {
@@ -938,6 +1032,169 @@ export async function executeJarvisTool(toolName, input, context = {}) {
       };
     } catch (err) {
       return { error: `Erro ao buscar memórias: ${err.message}` };
+    }
+  }
+
+  // ============================================
+  // TOOLS — Tráfego Pago (Meta Ads)
+  // ============================================
+  if (toolName === 'criar_campanha') {
+    if (!input.nome) return { error: 'nome é obrigatório' };
+    if (!input.objetivo) return { error: 'objetivo é obrigatório' };
+    if (!input.orcamento_diario) return { error: 'orcamento_diario é obrigatório' };
+
+    try {
+      const result = await createCampaign({
+        name: input.nome,
+        objective: input.objetivo,
+        dailyBudget: input.orcamento_diario,
+        status: 'PAUSED', // SEMPRE pausada por segurança
+      });
+      return {
+        sucesso: true,
+        campanha_id: result.id,
+        nome: result.name,
+        objetivo: result.objective,
+        orcamento_diario: `R$ ${parseFloat(input.orcamento_diario).toFixed(2)}`,
+        status: 'PAUSADA (ativar manualmente)',
+        mensagem: `Campanha "${input.nome}" criada com sucesso! Status: PAUSADA. O Gui precisa ativar manualmente quando estiver pronto.`,
+      };
+    } catch (err) {
+      return { error: `Erro ao criar campanha: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'relatorio_ads') {
+    if (!input.periodo) return { error: 'periodo é obrigatório' };
+
+    try {
+      if (input.campanha_id) {
+        // Relatório de campanha específica
+        const insights = await getCampaignInsights(input.campanha_id, input.periodo);
+        return { sucesso: true, tipo: 'campanha', ...insights };
+      } else {
+        // Relatório geral da conta + lista de campanhas
+        const [insights, campanhas] = await Promise.all([
+          getAccountInsights(input.periodo),
+          listCampaigns(),
+        ]);
+        return {
+          sucesso: true,
+          tipo: 'conta_geral',
+          ...insights,
+          campanhas: campanhas.slice(0, 10),
+          total_campanhas: campanhas.length,
+        };
+      }
+    } catch (err) {
+      return { error: `Erro ao gerar relatório: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'pausar_campanha') {
+    if (!input.campanha_id) return { error: 'campanha_id é obrigatório' };
+    if (!input.acao) return { error: 'acao é obrigatória (pausar ou retomar)' };
+
+    try {
+      const status = input.acao === 'retomar' ? 'ACTIVE' : 'PAUSED';
+      const result = await updateCampaignStatus(input.campanha_id, status);
+      return {
+        sucesso: true,
+        campanha_id: result.id,
+        novo_status: result.status === 'ACTIVE' ? 'ATIVA' : 'PAUSADA',
+        mensagem: `Campanha ${input.acao === 'retomar' ? 'retomada' : 'pausada'} com sucesso.`,
+      };
+    } catch (err) {
+      return { error: `Erro ao ${input.acao} campanha: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'otimizar_campanha') {
+    if (!input.campanha_id) return { error: 'campanha_id é obrigatório' };
+
+    try {
+      // Puxa métricas de 7 dias e 30 dias pra comparar
+      const [insights7d, insights30d] = await Promise.all([
+        getCampaignInsights(input.campanha_id, '7dias'),
+        getCampaignInsights(input.campanha_id, '30dias'),
+      ]);
+      return {
+        sucesso: true,
+        campanha_id: input.campanha_id,
+        ultimos_7_dias: insights7d,
+        ultimos_30_dias: insights30d,
+        instrucao: 'Analise as métricas acima e sugira otimizações baseadas nos dados reais: ajustes de verba, segmentação, criativos, horários.',
+      };
+    } catch (err) {
+      return { error: `Erro ao analisar campanha: ${err.message}` };
+    }
+  }
+
+  // ============================================
+  // TOOLS — Social Media
+  // ============================================
+  if (toolName === 'agendar_post') {
+    if (!input.texto) return { error: 'texto é obrigatório' };
+
+    try {
+      const result = await publishPagePost({
+        message: input.texto,
+        link: input.link,
+        imageUrl: input.imagem_url,
+        scheduledTime: input.agendar_para,
+        cliente: input.cliente,
+      });
+      return {
+        sucesso: true,
+        post_id: result.id,
+        agendado: result.agendado,
+        mensagem: result.agendado
+          ? `Post agendado com sucesso para ${input.agendar_para}!`
+          : 'Post publicado com sucesso!',
+      };
+    } catch (err) {
+      return { error: `Erro ao publicar post: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'calendario_editorial') {
+    if (!input.acao) return { error: 'acao é obrigatória (consultar ou planejar)' };
+
+    try {
+      if (input.acao === 'consultar') {
+        const posts = await getPagePosts(input.limite || 10, input.cliente);
+        return {
+          sucesso: true,
+          posts_recentes: posts,
+          total: posts.length,
+          mensagem: posts.length > 0
+            ? `${posts.length} posts recentes encontrados.`
+            : 'Nenhum post encontrado na página.',
+        };
+      } else {
+        // Planejar: retorna posts recentes como base
+        const posts = await getPagePosts(input.limite || 20, input.cliente);
+        return {
+          sucesso: true,
+          posts_existentes: posts,
+          instrucao: 'Baseado nos posts recentes acima, sugira um calendário editorial para as próximas semanas. Considere frequência, formatos e temas que tiveram melhor performance.',
+        };
+      }
+    } catch (err) {
+      return { error: `Erro no calendário editorial: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'metricas_post') {
+    try {
+      const posts = await getPagePosts(input.limite || 10, input.cliente);
+      return {
+        sucesso: true,
+        posts: posts,
+        total: posts.length,
+      };
+    } catch (err) {
+      return { error: `Erro ao buscar métricas: ${err.message}` };
     }
   }
 
