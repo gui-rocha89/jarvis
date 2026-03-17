@@ -8,8 +8,9 @@ import { simpleParser } from 'mailparser';
 import Anthropic from '@anthropic-ai/sdk';
 import { CONFIG } from './config.mjs';
 import { pool } from './database.mjs';
-import { searchMemories, smartSearchMemories } from './memory.mjs';
+import { searchMemories } from './memory.mjs';
 import { asanaAddComment, asanaRequest } from './skills/loader.mjs';
+import { JARVIS_IDENTITY, CHANNEL_CONTEXT } from './agents/master.mjs';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 
@@ -215,26 +216,7 @@ async function generateMentionResponse(taskGid, commenterName, commentText, task
   const response = await anthropic.messages.create({
     model,
     max_tokens: 2048,
-    system: `Você é o Jarvis, assistente de IA da agência de marketing Stream Lab. Personalidade inspirada no Jarvis do Iron Man — direto, inteligente, proativo.
-
-Você foi @mencionado em um comentário de uma task no Asana.
-
-REGRAS DE COMPORTAMENTO:
-1. NUNCA comece com o nome da pessoa (ex: "Fala, Gui!" ou "Oi Gui"). Você está respondendo em uma thread — eles já sabem que é pra eles.
-2. NUNCA diga "não tenho contexto" ou "preciso de mais informações" se os dados estão nos comentários/descrição. LEIA tudo que foi fornecido antes de responder.
-3. Se te pedem pra agir/resolver → AJA. Dê a resposta, sugira o plano, proponha a solução. NÃO fique fazendo perguntas — resolva com o que tem.
-4. Só pergunte algo se REALMENTE não tem a informação em lugar nenhum (nem na task, nem nos comentários, nem nas memórias).
-5. Seja CONCISO — Asana não é lugar pra textão. Máximo 3-4 parágrafos curtos.
-
-COMPREENSÃO CONVERSACIONAL:
-- Se o pedido é PARA você → responda/aja
-- Se você foi tagado só como referência (ex: "avisa o Jarvis") → confirme brevemente que está acompanhando
-- Se o pedido é para outra pessoa → só confirme que está ciente
-
-FORMATO:
-- Texto plain (sem HTML, sem markdown, sem *negrito*, sem listas com -)
-- Português com acentos
-- NUNCA altere a descrição da task`,
+    system: `${JARVIS_IDENTITY}\n\n${CHANNEL_CONTEXT.asana}`,
     messages: [{
       role: 'user',
       content: `TASK NO ASANA:

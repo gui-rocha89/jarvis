@@ -1587,16 +1587,17 @@ app.get('/dashboard/homework', auth, async (req, res) => {
 // --- System Prompt (leitura + edicao via dashboard) ---
 app.get('/dashboard/prompt', auth, async (req, res) => {
   try {
-    const { MASTER_SYSTEM_PROMPT, AGENT_PROMPTS } = await import('./src/agents/master.mjs');
+    const { JARVIS_IDENTITY, AGENT_EXPERTISE, CHANNEL_CONTEXT } = await import('./src/agents/master.mjs');
     res.json({
-      master: MASTER_SYSTEM_PROMPT,
+      master: JARVIS_IDENTITY,
       agents: {
-        creative: AGENT_PROMPTS.creative || '',
-        manager: AGENT_PROMPTS.manager || '',
-        researcher: AGENT_PROMPTS.researcher || '',
-        traffic: AGENT_PROMPTS.traffic || '',
-        social: AGENT_PROMPTS.social || '',
-      }
+        creative: AGENT_EXPERTISE.creative || '',
+        manager: AGENT_EXPERTISE.manager || '',
+        researcher: AGENT_EXPERTISE.researcher || '',
+        traffic: AGENT_EXPERTISE.traffic || '',
+        social: AGENT_EXPERTISE.social || '',
+      },
+      channels: CHANNEL_CONTEXT,
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1852,7 +1853,7 @@ Se a tool não retornar dados, diga honestamente que não encontrou. NUNCA fabri
 `;
 
 async function processDashboardChat(message, isVoice = false) {
-  const { MASTER_SYSTEM_PROMPT } = await import('./src/agents/master.mjs');
+  const { JARVIS_IDENTITY, CHANNEL_CONTEXT } = await import('./src/agents/master.mjs');
   const memoryCtx = await getMemoryContext(CONFIG.GUI_JID, 'dashboard', message);
 
   dashboardChatHistory.push({ role: 'user', content: message });
@@ -1864,8 +1865,8 @@ async function processDashboardChat(message, isVoice = false) {
   const Anthropic = (await import('@anthropic-ai/sdk')).default;
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 
-  const voiceHint = isVoice ? `\n\nMODO VOZ ATIVO: O Gui está falando por voz. Responda de forma CONVERSACIONAL e CONCISA — como se estivesse falando, não escrevendo. Evite listas longas, formatação complexa e *negrito*. Seja direto e natural, como o Jarvis do Tony Stark responderia verbalmente.` : '';
-  const dashboardSystemPrompt = MASTER_SYSTEM_PROMPT + DASHBOARD_SYSTEM_SUFFIX + voiceHint + memoryCtx;
+  const channelCtx = isVoice ? CHANNEL_CONTEXT.dashboard_voice : CHANNEL_CONTEXT.dashboard;
+  const dashboardSystemPrompt = JARVIS_IDENTITY + '\n\n' + channelCtx + '\n\n' + DASHBOARD_SYSTEM_SUFFIX + memoryCtx;
 
   // Agent Loop real — até 10 iterações com Extended Thinking
   const MAX_ITERATIONS = 10;
@@ -2005,7 +2006,7 @@ app.post('/dashboard/chat/voice', auth, express.raw({ type: ['audio/*', 'applica
 
     // 2. Claude — Sonnet pra velocidade, sem tools, prompt curto
     send('status', { phase: 'thinking' });
-    const { MASTER_SYSTEM_PROMPT } = await import('./src/agents/master.mjs');
+    const { JARVIS_IDENTITY, CHANNEL_CONTEXT } = await import('./src/agents/master.mjs');
     const memoryCtx = await getMemoryContext(CONFIG.GUI_JID, 'dashboard', transcription);
 
     dashboardChatHistory.push({ role: 'user', content: transcription });
@@ -2017,7 +2018,7 @@ app.post('/dashboard/chat/voice', auth, express.raw({ type: ['audio/*', 'applica
     const Anthropic = (await import('@anthropic-ai/sdk')).default;
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 
-    const voiceSystemPrompt = MASTER_SYSTEM_PROMPT + `\n\nMODO VOZ: Responda como se estivesse FALANDO, não escrevendo. Seja CONCISO (máximo 3-4 frases). Nada de listas, *negrito*, markdown. Fale naturalmente como o Jarvis do Tony Stark. Se precisar dar informações longas, resuma verbalmente.` + memoryCtx;
+    const voiceSystemPrompt = JARVIS_IDENTITY + '\n\n' + CHANNEL_CONTEXT.dashboard_voice + memoryCtx;
 
     // Usar Sonnet pra velocidade máxima no voice
     const voiceModel = CONFIG.AI_MODEL || 'claude-sonnet-4-20250514';

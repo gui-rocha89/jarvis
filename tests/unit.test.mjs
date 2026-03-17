@@ -383,20 +383,35 @@ describe('Colaboração Multi-Agente', () => {
     );
   });
 
-  it('AGENT_PROMPTS contém seção de colaboração', async () => {
-    const { AGENT_PROMPTS } = await import('../src/agents/master.mjs');
-    for (const agent of ['creative', 'manager', 'researcher', 'traffic', 'social']) {
-      assert.ok(
-        AGENT_PROMPTS[agent].includes('consultar_especialista'),
-        `Agente ${agent} não menciona consultar_especialista no prompt`
-      );
-    }
+  it('JARVIS_IDENTITY menciona colaboração', async () => {
+    const { JARVIS_IDENTITY } = await import('../src/agents/master.mjs');
+    assert.ok(JARVIS_IDENTITY.includes('consultar_especialista'), 'Identidade não menciona consultar_especialista');
+    assert.ok(JARVIS_IDENTITY.includes('COLABORAÇÃO'), 'Identidade não menciona COLABORAÇÃO');
   });
 
-  it('MASTER_SYSTEM_PROMPT menciona colaboração', async () => {
-    const { MASTER_SYSTEM_PROMPT } = await import('../src/agents/master.mjs');
-    assert.ok(MASTER_SYSTEM_PROMPT.includes('consultar_especialista'), 'Master prompt não menciona consultar_especialista');
-    assert.ok(MASTER_SYSTEM_PROMPT.includes('COLABORAÇÃO'), 'Master prompt não menciona COLABORAÇÃO');
+  it('Arquitetura unificada: JARVIS_IDENTITY + CHANNEL_CONTEXT + AGENT_EXPERTISE', async () => {
+    const { JARVIS_IDENTITY, CHANNEL_CONTEXT, AGENT_EXPERTISE, MASTER_SYSTEM_PROMPT, AGENT_PROMPTS } = await import('../src/agents/master.mjs');
+
+    // Identidade única existe
+    assert.ok(JARVIS_IDENTITY.length > 500, 'JARVIS_IDENTITY muito curta');
+
+    // Canais existem
+    assert.ok(CHANNEL_CONTEXT.whatsapp_internal, 'Canal whatsapp_internal ausente');
+    assert.ok(CHANNEL_CONTEXT.whatsapp_client, 'Canal whatsapp_client ausente');
+    assert.ok(CHANNEL_CONTEXT.asana, 'Canal asana ausente');
+    assert.ok(CHANNEL_CONTEXT.dashboard, 'Canal dashboard ausente');
+    assert.ok(CHANNEL_CONTEXT.dashboard_voice, 'Canal dashboard_voice ausente');
+
+    // Expertises existem
+    for (const agent of ['creative', 'manager', 'researcher', 'traffic', 'social']) {
+      assert.ok(AGENT_EXPERTISE[agent], `Expertise ${agent} ausente`);
+    }
+
+    // Compatibilidade mantida
+    assert.ok(MASTER_SYSTEM_PROMPT.includes('JARVIS'), 'MASTER_SYSTEM_PROMPT não contém identidade');
+    for (const agent of ['creative', 'manager', 'researcher', 'traffic', 'social']) {
+      assert.ok(AGENT_PROMPTS[agent].includes('JARVIS'), `AGENT_PROMPTS.${agent} não contém identidade`);
+    }
   });
 });
 
