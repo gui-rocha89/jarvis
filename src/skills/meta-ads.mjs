@@ -223,6 +223,7 @@ export async function createCampaign({ name, objective, dailyBudget, status = 'P
     name,
     objective: objectiveApi,
     daily_budget: budgetCents,
+    bid_strategy: 'LOWEST_COST_WITHOUT_CAP', // OBRIGATÓRIO: sem isso a conta usa LOWEST_COST_WITH_BID_CAP que exige bid_amount
     status: status === 'ACTIVE' ? 'ACTIVE' : 'PAUSED', // Segurança: default PAUSED
     special_ad_categories: [],
   };
