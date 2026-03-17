@@ -176,16 +176,22 @@ async function generateMentionResponse(taskGid, commenterName, commentText, task
   let allComments = [];
   let recentComments = '';
   try {
-    const taskData = await asanaRequest(`/tasks/${taskGid}?opt_fields=name,notes,assignee.name,due_on,completed,memberships.project.name,custom_fields.name,custom_fields.display_value`);
-    taskDetails = taskData?.data || null;
+    // asanaRequest() já retorna o .data do envelope — é o objeto direto da task
+    taskDetails = await asanaRequest(`/tasks/${taskGid}?opt_fields=name,notes,assignee.name,due_on,completed,memberships.project.name,custom_fields.name,custom_fields.display_value`);
 
     // TODOS os comentários via API — COM PAGINAÇÃO
+    // NOTA: asanaRequest() retorna data.data (só o array), mas precisamos do
+    // envelope completo pra acessar next_page. Usamos fetch direto.
     let allStories = [];
-    let storiesUrl = `/tasks/${taskGid}/stories?opt_fields=text,created_by.name,created_at,type&limit=100`;
+    let storiesUrl = `https://app.asana.com/api/1.0/tasks/${taskGid}/stories?opt_fields=text,created_by.name,created_at,type&limit=100`;
     while (storiesUrl) {
-      const storiesPage = await asanaRequest(storiesUrl);
-      if (storiesPage?.data) allStories.push(...storiesPage.data);
-      storiesUrl = storiesPage?.next_page?.path || null;
+      const resp = await fetch(storiesUrl, {
+        headers: { Authorization: `Bearer ${CONFIG.ASANA_PAT}`, Accept: 'application/json' },
+      });
+      if (!resp.ok) { console.error(`[EMAIL] Stories API erro: ${resp.status}`); break; }
+      const json = await resp.json();
+      if (json.data) allStories.push(...json.data);
+      storiesUrl = json.next_page?.uri || null; // URI completa para próxima página
     }
     console.log(`[EMAIL] ${allStories.length} stories encontradas na task`);
 
