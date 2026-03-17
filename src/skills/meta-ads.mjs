@@ -333,11 +333,13 @@ export async function createAdSet({
   // Buscar objetivo E bid_strategy da campanha pai
   let campaignObjective = null;
   let campaignBidStrategy = null;
+  let campaignHasBudget = false; // CBO = orçamento na campanha, ABO = orçamento no ad set
   try {
-    const campaign = await metaRequest(`/${campaignId}?fields=objective,bid_strategy`);
+    const campaign = await metaRequest(`/${campaignId}?fields=objective,bid_strategy,daily_budget,lifetime_budget`);
     campaignObjective = campaign?.objective;
     campaignBidStrategy = campaign?.bid_strategy;
-    console.log(`[META-ADS] Campanha ${campaignId} objetivo: ${campaignObjective}, bid_strategy: ${campaignBidStrategy}`);
+    campaignHasBudget = !!(campaign?.daily_budget || campaign?.lifetime_budget);
+    console.log(`[META-ADS] Campanha ${campaignId} objetivo: ${campaignObjective}, bid_strategy: ${campaignBidStrategy}, CBO: ${campaignHasBudget} (daily: ${campaign?.daily_budget}, lifetime: ${campaign?.lifetime_budget})`);
 
     // AUTO-CORREÇÃO: se a campanha tem bid_strategy que exige bid_amount, corrigir automaticamente
     if (campaignBidStrategy && campaignBidStrategy !== 'LOWEST_COST_WITHOUT_CAP') {
@@ -380,13 +382,21 @@ export async function createAdSet({
   const body = {
     campaign_id: campaignId,
     name,
-    daily_budget: budgetCents,
     optimization_goal: optimizationGoal,
     billing_event: billingEvent,
-    bid_strategy: 'LOWEST_COST_WITHOUT_CAP', // OBRIGATÓRIO no Ad Set — sem isso herda da campanha (que pode exigir bid_amount)
+    bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
     targeting: targetingSpec,
     status: status === 'ACTIVE' ? 'ACTIVE' : 'PAUSED',
   };
+
+  // CBO vs ABO: se a campanha JÁ tem orçamento (CBO), NÃO mandar daily_budget no Ad Set
+  // Se a campanha NÃO tem orçamento (ABO), o Ad Set precisa ter o seu próprio
+  if (campaignHasBudget) {
+    console.log(`[META-ADS] Campanha é CBO (orçamento na campanha) — Ad Set sem daily_budget`);
+  } else {
+    body.daily_budget = budgetCents;
+    console.log(`[META-ADS] Campanha é ABO (orçamento no ad set) — daily_budget: ${budgetCents}`);
+  }
 
   // promoted_object é OBRIGATÓRIO para a maioria dos objetivos de campanha
   // Se não foi passado manualmente, resolver automaticamente pelo objetivo
