@@ -125,11 +125,15 @@
     }
 
     /* Voice Mode */
-    .voice-active { border-color: #ff3b3b !important; color: #ff3b3b !important; animation: voice-pulse 1.5s ease-in-out infinite; }
+    .voice-active { border-color: #00d4ff !important; color: #00d4ff !important; animation: voice-pulse-blue 1.5s ease-in-out infinite; }
     .voice-listening { border-color: #00ff88 !important; color: #00ff88 !important; animation: voice-pulse 1.5s ease-in-out infinite; }
-    .voice-processing { border-color: #ffd700 !important; color: #ffd700 !important; }
+    .voice-processing { border-color: #ffd700 !important; color: #ffd700 !important; animation: voice-pulse-gold 2s ease-in-out infinite; }
     @keyframes voice-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(0,255,136,0.4); } 50% { box-shadow: 0 0 0 10px rgba(0,255,136,0); } }
-    .voice-bar { transition: height 0.08s ease; }
+    @keyframes voice-pulse-blue { 0%, 100% { box-shadow: 0 0 0 0 rgba(0,212,255,0.4); } 50% { box-shadow: 0 0 0 10px rgba(0,212,255,0); } }
+    @keyframes voice-pulse-gold { 0%, 100% { box-shadow: 0 0 0 0 rgba(255,215,0,0.3); } 50% { box-shadow: 0 0 0 8px rgba(255,215,0,0); } }
+    #voice-orb { transition: all 0.5s ease; }
+    #voice-orb-ping { animation-duration: 2s; }
+    #voice-canvas { pointer-events: none; }
 
     /* Tab active */
     .tab-active {
@@ -323,7 +327,12 @@
           <input id="auth-2fa-code" type="text" placeholder="000000" maxlength="6"
             class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-2xl font-mono text-white text-center tracking-[0.5em] focus:border-stark-blue focus:outline-none transition-colors"
             onkeydown="if(event.key==='Enter')authVerify()">
-          <button onclick="authVerify()" id="auth-verify-btn" class="w-full mt-4 bg-stark-green/20 border border-stark-green text-stark-green font-orbitron text-sm py-3 rounded hover:bg-stark-green/30 transition-colors tracking-wider">
+          <label class="flex items-center gap-2 mt-4 cursor-pointer select-none">
+            <input type="checkbox" id="auth-trust-device" checked
+              class="w-4 h-4 rounded border-stark-border bg-stark-bg accent-stark-blue cursor-pointer">
+            <span class="text-xs text-stark-dim">Confiar neste dispositivo por 30 dias</span>
+          </label>
+          <button onclick="authVerify()" id="auth-verify-btn" class="w-full mt-3 bg-stark-green/20 border border-stark-green text-stark-green font-orbitron text-sm py-3 rounded hover:bg-stark-green/30 transition-colors tracking-wider">
             VERIFICAR
           </button>
           <button onclick="authResend()" id="auth-resend-btn" class="w-full mt-2 text-stark-dim text-xs hover:text-stark-blue transition-colors py-2">
@@ -590,20 +599,24 @@
             </div>
           </div>
 
-          <!-- Voice Status Bar -->
-          <div id="voice-status" class="hidden mb-2 flex items-center gap-3 px-4 py-2.5 rounded-lg bg-stark-green/5 border border-stark-green/20">
-            <div id="voice-status-dot" class="w-2.5 h-2.5 rounded-full bg-stark-green animate-pulse"></div>
-            <span id="voice-status-text" class="text-xs text-stark-green font-mono flex-1">Ouvindo...</span>
-            <div id="voice-level" class="flex gap-0.5 items-end h-5">
-              <div class="voice-bar w-1 bg-stark-green/60 rounded-full" style="height:3px"></div>
-              <div class="voice-bar w-1 bg-stark-green/60 rounded-full" style="height:3px"></div>
-              <div class="voice-bar w-1 bg-stark-green/60 rounded-full" style="height:3px"></div>
-              <div class="voice-bar w-1 bg-stark-green/60 rounded-full" style="height:3px"></div>
-              <div class="voice-bar w-1 bg-stark-green/60 rounded-full" style="height:3px"></div>
-              <div class="voice-bar w-1 bg-stark-green/60 rounded-full" style="height:3px"></div>
-              <div class="voice-bar w-1 bg-stark-green/60 rounded-full" style="height:3px"></div>
+          <!-- Voice Mode Overlay -->
+          <div id="voice-status" class="hidden mb-3">
+            <div class="relative flex flex-col items-center py-6 rounded-xl bg-gradient-to-b from-stark-panel to-stark-bg border border-stark-border/30 overflow-hidden">
+              <!-- Canvas waveform background -->
+              <canvas id="voice-canvas" width="600" height="120" class="absolute inset-0 w-full h-full opacity-60"></canvas>
+              <!-- Arc reactor glow -->
+              <div id="voice-orb" class="relative z-10 w-20 h-20 rounded-full flex items-center justify-center mb-3 voice-orb-listening">
+                <div class="absolute inset-0 rounded-full animate-ping opacity-20" id="voice-orb-ping" style="background:radial-gradient(circle,#00ff88 0%,transparent 70%)"></div>
+                <div class="absolute inset-1 rounded-full" id="voice-orb-ring" style="border:2px solid rgba(0,255,136,0.4)"></div>
+                <div class="absolute inset-3 rounded-full" id="voice-orb-inner" style="border:1px solid rgba(0,255,136,0.2)"></div>
+                <svg id="voice-orb-mic" class="w-8 h-8 text-stark-green relative z-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11a7 7 0 01-14 0m7 7v4m-4 0h8m-4-16a3 3 0 00-3 3v4a3 3 0 006 0V7a3 3 0 00-3-3z"/>
+                </svg>
+              </div>
+              <span id="voice-status-text" class="text-sm font-orbitron tracking-wider relative z-10" style="color:#00ff88">OUVINDO</span>
+              <span id="voice-status-sub" class="text-[10px] text-stark-dim mt-1 relative z-10 font-mono">Fale naturalmente...</span>
+              <button onclick="stopVoiceMode()" class="mt-3 text-[10px] text-stark-dim hover:text-stark-red transition-colors relative z-10 font-mono tracking-wider border border-stark-border/30 px-4 py-1 rounded-full hover:border-stark-red/50">DESCONECTAR</button>
             </div>
-            <button onclick="stopVoiceMode()" class="text-xs text-stark-dim hover:text-stark-red transition-colors ml-2">✕ Parar</button>
           </div>
 
           <!-- Chat Input -->
@@ -891,33 +904,72 @@
         <p class="text-[10px] text-stark-dim mt-2">Nota: Apos salvar, reinicie o Jarvis para aplicar as mudanças.</p>
       </div>
 
-      <!-- Agent Prompts (read-only view) -->
+      <!-- Agent Prompts (editáveis individualmente) -->
       <div class="panel p-5">
-        <h3 class="font-orbitron text-sm text-stark-blue mb-4 tracking-wider">PROMPTS DOS AGENTES</h3>
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-orbitron text-sm text-stark-blue tracking-wider">PROMPTS DOS AGENTES</h3>
+          <p class="text-[10px] text-stark-dim">Clique em SALVAR no agente desejado. Reinicie o Jarvis para aplicar.</p>
+        </div>
         <div class="space-y-4">
+          <!-- CREATIVE -->
           <div>
-            <div class="flex items-center gap-2 mb-2">
-              <div class="w-2 h-2 rounded-full bg-stark-green"></div>
-              <span class="text-xs font-orbitron text-stark-green tracking-wider">CREATIVE</span>
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full bg-stark-green"></div>
+                <span class="text-xs font-orbitron text-stark-green tracking-wider">CREATIVE</span>
+              </div>
+              <button onclick="saveAgentPrompt('creative')" class="text-[10px] bg-stark-bg border border-stark-border text-stark-dim px-2 py-1 rounded hover:border-stark-green hover:text-stark-green transition-colors font-mono">SALVAR</button>
             </div>
-            <textarea id="prompt-creative" rows="6" readonly
-              class="w-full bg-stark-bg/50 border border-stark-border/50 rounded px-4 py-3 text-xs text-gray-400 font-mono leading-relaxed resize-none cursor-default"></textarea>
+            <textarea id="prompt-creative" rows="8"
+              class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-xs text-white font-mono leading-relaxed focus:border-stark-green focus:outline-none transition-colors resize-y"></textarea>
           </div>
+          <!-- MANAGER -->
           <div>
-            <div class="flex items-center gap-2 mb-2">
-              <div class="w-2 h-2 rounded-full bg-stark-orange" style="background:#ff8a00"></div>
-              <span class="text-xs font-orbitron text-stark-orange tracking-wider" style="color:#ff8a00">MANAGER</span>
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full" style="background:#ff8a00"></div>
+                <span class="text-xs font-orbitron tracking-wider" style="color:#ff8a00">MANAGER</span>
+              </div>
+              <button onclick="saveAgentPrompt('manager')" class="text-[10px] bg-stark-bg border border-stark-border text-stark-dim px-2 py-1 rounded hover:border-[#ff8a00] hover:text-[#ff8a00] transition-colors font-mono">SALVAR</button>
             </div>
-            <textarea id="prompt-manager" rows="6" readonly
-              class="w-full bg-stark-bg/50 border border-stark-border/50 rounded px-4 py-3 text-xs text-gray-400 font-mono leading-relaxed resize-none cursor-default"></textarea>
+            <textarea id="prompt-manager" rows="8"
+              class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-xs text-white font-mono leading-relaxed focus:border-[#ff8a00] focus:outline-none transition-colors resize-y"></textarea>
           </div>
+          <!-- RESEARCHER -->
           <div>
-            <div class="flex items-center gap-2 mb-2">
-              <div class="w-2 h-2 rounded-full" style="background:#7b61ff"></div>
-              <span class="text-xs font-orbitron tracking-wider" style="color:#7b61ff">RESEARCHER</span>
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full" style="background:#7b61ff"></div>
+                <span class="text-xs font-orbitron tracking-wider" style="color:#7b61ff">RESEARCHER</span>
+              </div>
+              <button onclick="saveAgentPrompt('researcher')" class="text-[10px] bg-stark-bg border border-stark-border text-stark-dim px-2 py-1 rounded hover:border-[#7b61ff] hover:text-[#7b61ff] transition-colors font-mono">SALVAR</button>
             </div>
-            <textarea id="prompt-researcher" rows="6" readonly
-              class="w-full bg-stark-bg/50 border border-stark-border/50 rounded px-4 py-3 text-xs text-gray-400 font-mono leading-relaxed resize-none cursor-default"></textarea>
+            <textarea id="prompt-researcher" rows="8"
+              class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-xs text-white font-mono leading-relaxed focus:border-[#7b61ff] focus:outline-none transition-colors resize-y"></textarea>
+          </div>
+          <!-- TRAFFIC -->
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full" style="background:#f59e0b"></div>
+                <span class="text-xs font-orbitron tracking-wider" style="color:#f59e0b">TRAFFIC</span>
+              </div>
+              <button onclick="saveAgentPrompt('traffic')" class="text-[10px] bg-stark-bg border border-stark-border text-stark-dim px-2 py-1 rounded hover:border-[#f59e0b] hover:text-[#f59e0b] transition-colors font-mono">SALVAR</button>
+            </div>
+            <textarea id="prompt-traffic" rows="8"
+              class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-xs text-white font-mono leading-relaxed focus:border-[#f59e0b] focus:outline-none transition-colors resize-y"></textarea>
+          </div>
+          <!-- SOCIAL -->
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full" style="background:#ec4899"></div>
+                <span class="text-xs font-orbitron tracking-wider" style="color:#ec4899">SOCIAL</span>
+              </div>
+              <button onclick="saveAgentPrompt('social')" class="text-[10px] bg-stark-bg border border-stark-border text-stark-dim px-2 py-1 rounded hover:border-[#ec4899] hover:text-[#ec4899] transition-colors font-mono">SALVAR</button>
+            </div>
+            <textarea id="prompt-social" rows="8"
+              class="w-full bg-stark-bg border border-stark-border rounded px-4 py-3 text-xs text-white font-mono leading-relaxed focus:border-[#ec4899] focus:outline-none transition-colors resize-y"></textarea>
           </div>
         </div>
       </div>
@@ -1201,15 +1253,24 @@
       const btn = document.getElementById('auth-login-btn');
       btn.textContent = 'VERIFICANDO...'; btn.disabled = true;
       try {
+        const deviceToken = localStorage.getItem('jarvis_device_token') || '';
         const res = await fetch(`${API_BASE}/dashboard/auth/login`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password }),
+          body: JSON.stringify({ email, password, device_token: deviceToken }),
         });
         const data = await res.json();
         if (!res.ok) {
           let msg = data.error;
           if (data.attemptsLeft !== undefined) msg += ` (${data.attemptsLeft} tentativa(s) restante(s))`;
           errEl.textContent = msg; errEl.classList.remove('hidden'); return;
+        }
+        if (data.trusted && data.token) {
+          // Dispositivo confiável — login direto sem 2FA
+          AUTH_TOKEN = data.token;
+          localStorage.setItem('jarvis_token', data.token);
+          document.getElementById('auth-modal').classList.add('hidden');
+          init();
+          return;
         }
         if (data.requires_2fa) {
           AUTH_EMAIL = email;
@@ -1245,15 +1306,20 @@
       const btn = document.getElementById('auth-verify-btn');
       btn.textContent = 'VERIFICANDO...'; btn.disabled = true;
       try {
+        const trustDevice = document.getElementById('auth-trust-device').checked;
         const res = await fetch(`${API_BASE}/dashboard/auth/verify`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: AUTH_EMAIL, code }),
+          body: JSON.stringify({ email: AUTH_EMAIL, code, trust_device: trustDevice }),
         });
         const data = await res.json();
         if (!res.ok) { errEl.textContent = data.error; errEl.classList.remove('hidden'); return; }
         // Sucesso — salvar token
         AUTH_TOKEN = data.token;
         localStorage.setItem('jarvis_token', data.token);
+        // Salvar device_token se foi confiado
+        if (data.device_token) {
+          localStorage.setItem('jarvis_device_token', data.device_token);
+        }
         if (twoFATimerInterval) clearInterval(twoFATimerInterval);
         document.getElementById('auth-modal').classList.add('hidden');
         init();
@@ -1617,7 +1683,7 @@
 
       voiceMediaRecorder = new MediaRecorder(voiceStream, { mimeType });
       voiceMediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) voiceChunks.push(e.data); };
-      voiceMediaRecorder.onstop = () => { if (voiceModeActive && !voiceIsProcessing) processVoiceRecording(); };
+      voiceMediaRecorder.onstop = () => { if (voiceModeActive) processVoiceRecording(); };
 
       voiceMediaRecorder.start(250); // chunks a cada 250ms
       updateVoiceUI('listening');
@@ -1635,7 +1701,6 @@
       source.connect(voiceAnalyser);
 
       const dataArray = new Uint8Array(voiceAnalyser.frequencyBinCount);
-      const bars = document.querySelectorAll('#voice-level .voice-bar');
       const SILENCE_THRESHOLD = 12;
       const SILENCE_DURATION = 1800; // 1.8s de silêncio = auto-stop
       let silenceStart = null;
@@ -1652,12 +1717,8 @@
         for (let i = startBin; i < endBin; i++) sum += dataArray[i];
         const avg = sum / (endBin - startBin);
 
-        // Atualizar barras de nível
-        bars.forEach((bar, i) => {
-          const barHeight = Math.max(3, Math.min(20, (avg / 255) * 25 + Math.random() * (avg > SILENCE_THRESHOLD ? 5 : 0)));
-          bar.style.height = barHeight + 'px';
-          bar.style.backgroundColor = avg > SILENCE_THRESHOLD ? '#00ff88' : 'rgba(0,255,136,0.3)';
-        });
+        // Alimentar o canvas waveform com nível de áudio normalizado
+        voiceCanvasLevel = Math.min(1, avg / 80);
 
         if (avg > SILENCE_THRESHOLD) {
           voiceHasSpoken = true;
@@ -1789,56 +1850,138 @@
       updateVoiceUI('off');
     }
 
+    // Canvas waveform animator
+    let voiceCanvasAnim = null;
+    let voiceCanvasLevel = 0;
+
+    function drawVoiceCanvas(state) {
+      const canvas = document.getElementById('voice-canvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width, H = canvas.height;
+      let frame = 0;
+
+      const colors = {
+        listening: { r: 0, g: 255, b: 136 },
+        processing: { r: 255, g: 215, b: 0 },
+        speaking: { r: 0, g: 212, b: 255 },
+      };
+      const c = colors[state] || colors.listening;
+
+      function draw() {
+        ctx.clearRect(0, 0, W, H);
+        frame++;
+        const level = Math.max(0.05, voiceCanvasLevel);
+
+        // Waveform central
+        const centerY = H / 2;
+        const waves = state === 'processing' ? 2 : 3;
+
+        for (let w = 0; w < waves; w++) {
+          ctx.beginPath();
+          ctx.strokeStyle = `rgba(${c.r},${c.g},${c.b},${0.15 + w * 0.1})`;
+          ctx.lineWidth = 1.5 - w * 0.3;
+
+          for (let x = 0; x < W; x++) {
+            const freq = state === 'processing' ? 0.02 : (0.015 + level * 0.01);
+            const amp = state === 'processing'
+              ? 8 + Math.sin(frame * 0.05) * 5
+              : 5 + level * 35 + w * 3;
+            const speed = state === 'speaking' ? 0.06 : 0.03;
+            const y = centerY + Math.sin(x * freq + frame * speed + w * 1.2) * amp
+              + Math.sin(x * freq * 2.3 + frame * speed * 1.7) * amp * 0.3;
+            if (x === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.stroke();
+        }
+
+        // Glow particles
+        if (state !== 'processing') {
+          for (let i = 0; i < 3; i++) {
+            const px = (frame * 2 + i * 200) % W;
+            const py = centerY + Math.sin(px * 0.02 + frame * 0.03) * (10 + level * 30);
+            const size = 1 + level * 2;
+            ctx.beginPath();
+            ctx.arc(px, py, size, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(${c.r},${c.g},${c.b},${0.3 + level * 0.4})`;
+            ctx.fill();
+          }
+        }
+
+        voiceCanvasAnim = requestAnimationFrame(draw);
+      }
+      if (voiceCanvasAnim) cancelAnimationFrame(voiceCanvasAnim);
+      draw();
+    }
+
+    function stopVoiceCanvas() {
+      if (voiceCanvasAnim) { cancelAnimationFrame(voiceCanvasAnim); voiceCanvasAnim = null; }
+      const canvas = document.getElementById('voice-canvas');
+      if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    }
+
     function updateVoiceUI(state) {
       const btn = document.getElementById('voice-toggle-btn');
       const statusBar = document.getElementById('voice-status');
-      const statusDot = document.getElementById('voice-status-dot');
       const statusText = document.getElementById('voice-status-text');
-      const bars = document.querySelectorAll('#voice-level .voice-bar');
+      const statusSub = document.getElementById('voice-status-sub');
+      const orb = document.getElementById('voice-orb');
+      const orbPing = document.getElementById('voice-orb-ping');
+      const orbRing = document.getElementById('voice-orb-ring');
+      const orbInner = document.getElementById('voice-orb-inner');
+      const orbMic = document.getElementById('voice-orb-mic');
 
-      // Reset classes
       btn.classList.remove('voice-active', 'voice-listening', 'voice-processing');
 
       switch (state) {
         case 'listening':
           btn.classList.add('voice-listening');
           statusBar.classList.remove('hidden');
-          statusBar.className = statusBar.className.replace(/bg-stark-\w+\/\d+/g, '').replace(/border-stark-\w+\/\d+/g, '');
-          statusBar.classList.add('flex', 'items-center', 'gap-3', 'px-4', 'py-2.5', 'rounded-lg', 'mb-2');
-          statusBar.style.background = 'rgba(0,255,136,0.05)';
-          statusBar.style.borderColor = 'rgba(0,255,136,0.2)';
-          statusDot.className = 'w-2.5 h-2.5 rounded-full bg-stark-green animate-pulse';
-          statusText.textContent = '🎙️ Ouvindo... fale agora';
+          statusText.textContent = 'OUVINDO';
           statusText.style.color = '#00ff88';
-          bars.forEach(b => { b.style.backgroundColor = 'rgba(0,255,136,0.6)'; b.style.height = '3px'; });
+          statusSub.textContent = 'Fale naturalmente...';
+          orbPing.style.background = 'radial-gradient(circle,#00ff88 0%,transparent 70%)';
+          orbRing.style.borderColor = 'rgba(0,255,136,0.4)';
+          orbInner.style.borderColor = 'rgba(0,255,136,0.2)';
+          orbMic.style.color = '#00ff88';
+          orbMic.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11a7 7 0 01-14 0m7 7v4m-4 0h8m-4-16a3 3 0 00-3 3v4a3 3 0 006 0V7a3 3 0 00-3-3z"/>';
+          drawVoiceCanvas('listening');
           break;
 
         case 'processing':
           btn.classList.add('voice-processing');
-          statusDot.className = 'w-2.5 h-2.5 rounded-full bg-stark-gold animate-pulse';
-          statusText.textContent = '⚡ Processando...';
+          statusText.textContent = 'PROCESSANDO';
           statusText.style.color = '#ffd700';
-          statusBar.style.background = 'rgba(255,215,0,0.05)';
-          statusBar.style.borderColor = 'rgba(255,215,0,0.2)';
-          bars.forEach(b => { b.style.height = '3px'; b.style.backgroundColor = 'rgba(255,215,0,0.4)'; });
+          statusSub.textContent = 'Analisando sua mensagem...';
+          orbPing.style.background = 'radial-gradient(circle,#ffd700 0%,transparent 70%)';
+          orbRing.style.borderColor = 'rgba(255,215,0,0.4)';
+          orbInner.style.borderColor = 'rgba(255,215,0,0.2)';
+          orbMic.style.color = '#ffd700';
+          orbMic.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"/>';
+          voiceCanvasLevel = 0.3;
+          drawVoiceCanvas('processing');
           break;
 
         case 'speaking':
           btn.classList.add('voice-active');
-          statusDot.className = 'w-2.5 h-2.5 rounded-full bg-stark-blue animate-pulse';
-          statusText.textContent = '🔊 Jarvis falando...';
+          statusText.textContent = 'JARVIS';
           statusText.style.color = '#00d4ff';
-          statusBar.style.background = 'rgba(0,212,255,0.05)';
-          statusBar.style.borderColor = 'rgba(0,212,255,0.2)';
-          bars.forEach(b => { b.style.backgroundColor = 'rgba(0,212,255,0.6)'; });
+          statusSub.textContent = 'Respondendo...';
+          orbPing.style.background = 'radial-gradient(circle,#00d4ff 0%,transparent 70%)';
+          orbRing.style.borderColor = 'rgba(0,212,255,0.4)';
+          orbInner.style.borderColor = 'rgba(0,212,255,0.2)';
+          orbMic.style.color = '#00d4ff';
+          orbMic.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15.536a5 5 0 010-7.072M2.758 17.364a9 9 0 010-12.728"/>';
+          voiceCanvasLevel = 0.5;
+          drawVoiceCanvas('speaking');
           break;
 
         case 'off':
         default:
           statusBar.classList.add('hidden');
-          statusBar.style.background = '';
-          statusBar.style.borderColor = '';
-          bars.forEach(b => { b.style.height = '3px'; });
+          stopVoiceCanvas();
+          voiceCanvasLevel = 0;
           break;
       }
     }
@@ -2440,6 +2583,8 @@
         document.getElementById('prompt-creative').value = data.agents?.creative || '';
         document.getElementById('prompt-manager').value = data.agents?.manager || '';
         document.getElementById('prompt-researcher').value = data.agents?.researcher || '';
+        document.getElementById('prompt-traffic').value = data.agents?.traffic || '';
+        document.getElementById('prompt-social').value = data.agents?.social || '';
         notify('Prompt carregado', 'success');
       } catch (e) { notify('Erro ao carregar prompt', 'error'); }
     }
@@ -2455,11 +2600,29 @@
         });
         const data = await res.json();
         if (data.success) {
-          notify('Prompt salvo! Reinicie o Jarvis para aplicar.', 'success');
+          notify('Prompt Master salvo! Reinicie o Jarvis para aplicar.', 'success');
         } else {
           notify(data.error || 'Erro ao salvar', 'error');
         }
       } catch (e) { notify('Erro ao salvar prompt', 'error'); }
+    }
+
+    async function saveAgentPrompt(agentName) {
+      const prompt = document.getElementById(`prompt-${agentName}`).value.trim();
+      if (!prompt) return notify('Prompt não pode estar vazio', 'warn');
+
+      try {
+        const res = await api('/dashboard/prompt', {
+          method: 'POST',
+          body: JSON.stringify({ prompt, agent: agentName }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          notify(`Prompt ${agentName.toUpperCase()} salvo! Reinicie o Jarvis para aplicar.`, 'success');
+        } else {
+          notify(data.error || 'Erro ao salvar', 'error');
+        }
+      } catch (e) { notify(`Erro ao salvar prompt ${agentName}`, 'error'); }
     }
 
     // ============================================
@@ -2511,6 +2674,7 @@
     // ============================================
     function logout() {
       localStorage.removeItem('jarvis_token');
+      // Manter jarvis_device_token — dispositivo continua confiável mesmo após logout
       AUTH_TOKEN = '';
       location.reload();
     }

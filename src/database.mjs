@@ -133,6 +133,20 @@ export async function initDB() {
       )
     `);
 
+    // Dispositivos confiáveis (pula 2FA)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS dashboard_trusted_devices (
+        id SERIAL PRIMARY KEY,
+        email TEXT NOT NULL,
+        device_token TEXT UNIQUE NOT NULL,
+        ip TEXT,
+        user_agent TEXT,
+        label TEXT,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
     // Tabela de perfis sintetizados (clientes, equipe, processos)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS jarvis_profiles (

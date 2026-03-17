@@ -599,6 +599,29 @@ export const JARVIS_TOOLS = [
       },
     },
   },
+  {
+    name: 'consultar_especialista',
+    description: 'Consultar outro agente especialista do time do Jarvis para obter ajuda em uma área diferente. Use quando sua tarefa precisa de conhecimento de outra especialidade (ex: agente de tráfego precisa de uma legenda → consulta o criativo; gestor precisa de análise de dados → consulta o pesquisador). O especialista responde com sua análise e você integra na sua resposta final.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        especialista: {
+          type: 'string',
+          enum: ['creative', 'manager', 'researcher', 'traffic', 'social'],
+          description: 'Qual especialista consultar: creative (copy, legendas, roteiros), manager (tarefas, Asana, prazos), researcher (pesquisa, dados, tendências), traffic (campanhas, métricas pagas, Meta Ads), social (publicação, calendário editorial, métricas orgânicas)',
+        },
+        pedido: {
+          type: 'string',
+          description: 'O que você precisa que o especialista faça. Seja específico: inclua contexto do cliente, objetivo, restrições.',
+        },
+        contexto_adicional: {
+          type: 'string',
+          description: 'Dados ou resultados que você já coletou que podem ajudar o especialista (ex: métricas de campanha, briefing do cliente, etc.)',
+        },
+      },
+      required: ['especialista', 'pedido'],
+    },
+  },
 ];
 
 /**
@@ -1256,6 +1279,60 @@ export async function executeJarvisTool(toolName, input, context = {}) {
       };
     } catch (err) {
       return { error: `Erro ao buscar métricas: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'consultar_especialista') {
+    try {
+      const { AGENT_PROMPTS } = await import('../agents/master.mjs');
+      const Anthropic = (await import('@anthropic-ai/sdk')).default;
+      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
+
+      const agentPrompt = AGENT_PROMPTS[input.especialista];
+      if (!agentPrompt) {
+        return { error: `Especialista "${input.especialista}" não encontrado. Disponíveis: creative, manager, researcher, traffic, social` };
+      }
+
+      // Carregar cérebro persistente pra dar contexto ao especialista
+      let brainContext = '';
+      try {
+        const { loadBrainDocument } = await import('../brain-document.mjs');
+        brainContext = await loadBrainDocument();
+      } catch {}
+
+      const specialistSystem = `${agentPrompt}
+
+${brainContext ? '\n\n' + brainContext : ''}
+
+CONTEXTO: Você está sendo consultado por outro agente do time do Jarvis. Ele precisa da sua expertise. Responda de forma direta e acionável — ele vai integrar sua resposta na conversa com o usuário.
+NÃO cumprimente, NÃO faça introdução. Vá direto ao ponto.`;
+
+      const userMsg = input.contexto_adicional
+        ? `${input.pedido}\n\nCONTEXTO/DADOS DISPONÍVEIS:\n${input.contexto_adicional}`
+        : input.pedido;
+
+      console.log(`[MULTI-AGENT] 🤝 Agente consultando especialista "${input.especialista}": "${input.pedido.substring(0, 80)}..."`);
+
+      // Usar Sonnet pro especialista consultado (rápido e bom o suficiente pra sub-tasks)
+      const response = await anthropic.messages.create({
+        model: CONFIG.AI_MODEL || 'claude-sonnet-4-6',
+        max_tokens: 4000,
+        system: specialistSystem,
+        messages: [{ role: 'user', content: userMsg }],
+      });
+
+      const resposta = response.content[0]?.text || '';
+      console.log(`[MULTI-AGENT] ✅ Especialista "${input.especialista}" respondeu (${resposta.length} chars)`);
+
+      return {
+        sucesso: true,
+        especialista: input.especialista,
+        resposta: resposta,
+        nota: `Resposta do agente ${input.especialista}. Integre esse conteúdo na sua resposta final ao usuário.`,
+      };
+    } catch (err) {
+      console.error(`[MULTI-AGENT] Erro ao consultar especialista:`, err.message);
+      return { error: `Erro ao consultar especialista: ${err.message}` };
     }
   }
 

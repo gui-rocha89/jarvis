@@ -620,9 +620,26 @@ app.post('/dashboard/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Credenciais inválidas', attemptsLeft: 5 - attempts });
     }
 
-    // Senha correta — resetar tentativas e gerar código 2FA
+    // Senha correta — resetar tentativas
     await pool.query('UPDATE dashboard_users SET failed_attempts = 0, locked_until = NULL WHERE id = $1', [user.id]);
 
+    // Verificar se tem device_token confiável (pula 2FA)
+    const { device_token } = req.body;
+    if (device_token) {
+      const { rows: trustedRows } = await pool.query(
+        "SELECT * FROM dashboard_trusted_devices WHERE device_token = $1 AND email = $2 AND expires_at > NOW()",
+        [device_token, email.toLowerCase()]
+      );
+      if (trustedRows.length > 0) {
+        // Dispositivo confiável — emitir JWT direto sem 2FA
+        if (!CONFIG.JWT_SECRET) return res.status(500).json({ error: 'JWT_SECRET não configurado' });
+        const token = jwt.sign({ email: email.toLowerCase() }, CONFIG.JWT_SECRET, { expiresIn: '8h' });
+        await logAccess(email, ip, ua, 'login_trusted_device', true);
+        return res.json({ token, expiresIn: '8h', trusted: true });
+      }
+    }
+
+    // Sem device confiável — gerar código 2FA
     const code = String(randomInt(100000, 999999));
     await pool.query(
       "INSERT INTO dashboard_2fa_codes (email, code, expires_at) VALUES ($1, $2, NOW() + INTERVAL '5 minutes')",
@@ -693,7 +710,24 @@ app.post('/dashboard/auth/verify', async (req, res) => {
     // Limpar códigos antigos
     pool.query("DELETE FROM dashboard_2fa_codes WHERE expires_at < NOW() OR used = true").catch(() => {});
 
-    res.json({ token, expiresIn: '8h' });
+    // Se pediu para confiar no dispositivo, gerar device_token (30 dias)
+    const { trust_device } = req.body;
+    let deviceToken = null;
+    if (trust_device) {
+      const { randomBytes } = await import('crypto');
+      deviceToken = randomBytes(32).toString('hex');
+      const browserLabel = ua.includes('Chrome') ? 'Chrome' : ua.includes('Firefox') ? 'Firefox' : ua.includes('Safari') ? 'Safari' : 'Navegador';
+      await pool.query(
+        "INSERT INTO dashboard_trusted_devices (email, device_token, ip, user_agent, label, expires_at) VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '30 days')",
+        [email.toLowerCase(), deviceToken, ip, ua, browserLabel]
+      );
+      // Limpar dispositivos expirados
+      pool.query("DELETE FROM dashboard_trusted_devices WHERE expires_at < NOW()").catch(() => {});
+    }
+
+    const response = { token, expiresIn: '8h' };
+    if (deviceToken) response.device_token = deviceToken;
+    res.json(response);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1133,7 +1167,15 @@ app.post('/send/audio', auth, async (req, res) => {
 });
 
 // --- Dashboard ---
-app.use('/dashboard', express.static(path.join(__dirname, 'dashboard')));
+app.use('/dashboard', express.static(path.join(__dirname, 'dashboard'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  }
+}));
 
 app.get('/groups', auth, async (req, res) => {
   try {
@@ -1552,6 +1594,8 @@ app.get('/dashboard/prompt', auth, async (req, res) => {
         creative: AGENT_PROMPTS.creative || '',
         manager: AGENT_PROMPTS.manager || '',
         researcher: AGENT_PROMPTS.researcher || '',
+        traffic: AGENT_PROMPTS.traffic || '',
+        social: AGENT_PROMPTS.social || '',
       }
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1566,12 +1610,34 @@ app.post('/dashboard/prompt', auth, async (req, res) => {
     const filePath = path.join(__dirname, 'src', 'agents', 'master.mjs');
     let content = await readFile(filePath, 'utf-8');
 
-    if (!agent || agent === 'master') {
+    const validAgents = ['master', 'creative', 'manager', 'researcher', 'traffic', 'social'];
+    const targetAgent = agent || 'master';
+    if (!validAgents.includes(targetAgent)) return res.status(400).json({ error: `Agente inválido. Válidos: ${validAgents.join(', ')}` });
+
+    const escaped = prompt.replace(/`/g, '\\`').replace(/\$/g, '\\$');
+
+    if (targetAgent === 'master') {
       // Substituir o MASTER_SYSTEM_PROMPT
       const start = content.indexOf('export const MASTER_SYSTEM_PROMPT = `');
       const end = content.indexOf('`;', start) + 2;
       if (start === -1 || end === 1) return res.status(500).json({ error: 'Nao encontrou MASTER_SYSTEM_PROMPT no arquivo' });
-      content = content.substring(0, start) + 'export const MASTER_SYSTEM_PROMPT = `' + prompt.replace(/`/g, '\\`').replace(/\$/g, '\\$') + '`;' + content.substring(end);
+      content = content.substring(0, start) + 'export const MASTER_SYSTEM_PROMPT = `' + escaped + '`;' + content.substring(end);
+    } else {
+      // Substituir prompt de agente específico dentro de AGENT_PROMPTS
+      const marker = `${targetAgent}: \``;
+      const start = content.indexOf(marker);
+      if (start === -1) return res.status(500).json({ error: `Nao encontrou prompt do agente ${targetAgent} no arquivo` });
+      const promptStart = start + marker.length;
+      // Encontrar o fechamento do template literal (backtick seguido de vírgula ou fechamento)
+      let depth = 0;
+      let promptEnd = promptStart;
+      while (promptEnd < content.length) {
+        if (content[promptEnd] === '\\') { promptEnd += 2; continue; }
+        if (content[promptEnd] === '`') break;
+        promptEnd++;
+      }
+      if (promptEnd >= content.length) return res.status(500).json({ error: `Nao encontrou fim do prompt do agente ${targetAgent}` });
+      content = content.substring(0, promptStart) + escaped + content.substring(promptEnd);
     }
 
     await writeFile(filePath, content, 'utf-8');

@@ -367,6 +367,40 @@ describe('Cérebro Persistente', () => {
 });
 
 // ============================================
+// TESTES: Colaboração Multi-Agente
+// ============================================
+describe('Colaboração Multi-Agente', () => {
+  it('JARVIS_TOOLS inclui consultar_especialista', async () => {
+    const { JARVIS_TOOLS } = await import('../src/skills/loader.mjs');
+    const tool = JARVIS_TOOLS.find(t => t.name === 'consultar_especialista');
+    assert.ok(tool, 'Tool consultar_especialista não encontrada');
+    assert.ok(tool.input_schema.properties.especialista, 'Campo especialista ausente');
+    assert.ok(tool.input_schema.properties.pedido, 'Campo pedido ausente');
+    assert.deepEqual(
+      tool.input_schema.properties.especialista.enum,
+      ['creative', 'manager', 'researcher', 'traffic', 'social'],
+      'Enum de especialistas incorreto'
+    );
+  });
+
+  it('AGENT_PROMPTS contém seção de colaboração', async () => {
+    const { AGENT_PROMPTS } = await import('../src/agents/master.mjs');
+    for (const agent of ['creative', 'manager', 'researcher', 'traffic', 'social']) {
+      assert.ok(
+        AGENT_PROMPTS[agent].includes('consultar_especialista'),
+        `Agente ${agent} não menciona consultar_especialista no prompt`
+      );
+    }
+  });
+
+  it('MASTER_SYSTEM_PROMPT menciona colaboração', async () => {
+    const { MASTER_SYSTEM_PROMPT } = await import('../src/agents/master.mjs');
+    assert.ok(MASTER_SYSTEM_PROMPT.includes('consultar_especialista'), 'Master prompt não menciona consultar_especialista');
+    assert.ok(MASTER_SYSTEM_PROMPT.includes('COLABORAÇÃO'), 'Master prompt não menciona COLABORAÇÃO');
+  });
+});
+
+// ============================================
 // TESTES: Validação de estrutura
 // ============================================
 describe('Estrutura do projeto', () => {

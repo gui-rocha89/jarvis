@@ -225,7 +225,7 @@ async function generateMentionResponse(taskGid, commenterName, commentText, task
   const model = CONFIG.AI_MODEL_STRONG || CONFIG.AI_MODEL;
   const response = await anthropic.messages.create({
     model,
-    max_tokens: 2048,
+    max_tokens: 16384,
     thinking: { type: 'enabled', budget_tokens: 4096 },
     system: `Você é o Jarvis, assistente de IA da agência de marketing Stream Lab. Estilo: direto, útil, personalidade inspirada no Jarvis do Tony Stark mas profissional.
 
