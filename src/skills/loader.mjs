@@ -468,13 +468,13 @@ export const JARVIS_TOOLS = [
   },
   {
     name: 'comentar_task',
-    description: 'Adicionar um comentario em uma task do Asana. Use para registrar informacoes, cobrar responsaveis, ou dar atualizacoes. Pode mencionar pessoas da equipe com @.',
+    description: 'Adicionar um comentario em uma task do Asana. Use para registrar informacoes, cobrar responsaveis, ou dar atualizacoes. IMPORTANTE: quando usar "mencionar", NAO repita o nome da pessoa no inicio do texto — a menção já aparece automaticamente como @NomePessoa. Exemplo CORRETO: mencionar="gui", texto="essa task está atrasada". Exemplo ERRADO: mencionar="gui", texto="Gui, essa task está atrasada" (nome apareceria duplicado).',
     input_schema: {
       type: 'object',
       properties: {
         task_gid: { type: 'string', description: 'GID da task no Asana' },
-        texto: { type: 'string', description: 'Texto do comentario' },
-        mencionar: { type: 'string', description: 'Nome da pessoa para mencionar no comentario (ex: "bruna", "bruno"). Sera convertido em @menção real do Asana.' },
+        texto: { type: 'string', description: 'Texto do comentario. NAO comece com o nome da pessoa se usar "mencionar" — a menção já inclui o nome automaticamente.' },
+        mencionar: { type: 'string', description: 'Nome da pessoa para mencionar (ex: "gui", "bruna"). A menção aparece como @NomePessoa antes do texto automaticamente — NAO repita o nome no texto.' },
       },
       required: ['task_gid', 'texto'],
     },

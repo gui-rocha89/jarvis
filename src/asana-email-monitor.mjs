@@ -183,25 +183,19 @@ async function generateMentionResponse(taskGid, commenterName, commentText, task
     console.error('[EMAIL] Erro ao buscar task:', e.message);
   }
 
-  // 2. Buscar memórias relevantes via RAG (busca inteligente)
+  // 2. Buscar memórias relevantes (rápido — limite reduzido pra velocidade)
   let memories = [];
   try {
     const searchTerms = [taskName, commenterName, commentText].filter(Boolean).join(' ');
-    memories = await smartSearchMemories(searchTerms, null, null, 15);
-  } catch (e) {
-    // Fallback para busca simples
-    try {
-      const searchTerms = [taskName, commenterName, commentText].filter(Boolean).join(' ');
-      memories = await searchMemories(searchTerms, null, null, 10);
-    } catch {}
-  }
+    memories = await searchMemories(searchTerms, null, null, 5);
+  } catch {}
 
-  // Também trazer memórias de alta importância (conhecimento fundamental)
+  // Top memórias (conhecimento fundamental — limite reduzido)
   let topMemories = [];
   try {
     const { pool: dbPool } = await import('./database.mjs');
     const { rows } = await dbPool.query(
-      `SELECT content, category FROM jarvis_memories WHERE importance >= 8 ORDER BY importance DESC LIMIT 15`
+      `SELECT content, category FROM jarvis_memories WHERE importance >= 9 ORDER BY importance DESC LIMIT 5`
     );
     topMemories = rows;
   } catch {}
@@ -221,12 +215,11 @@ async function generateMentionResponse(taskGid, commenterName, commentText, task
     taskDetails.notes ? `Descrição: ${taskDetails.notes.substring(0, 300)}` : null,
   ].filter(Boolean).join('\n') : `Task: ${taskName || 'desconhecida'}`;
 
-  // 4. Chamar Claude (Opus pra compreensão conversacional máxima)
-  const model = CONFIG.AI_MODEL_STRONG || CONFIG.AI_MODEL;
+  // 4. Chamar Claude (Sonnet pra velocidade — resposta em Asana precisa ser rápida)
+  const model = CONFIG.AI_MODEL || 'claude-sonnet-4-20250514';
   const response = await anthropic.messages.create({
     model,
-    max_tokens: 16384,
-    thinking: { type: 'enabled', budget_tokens: 4096 },
+    max_tokens: 4096,
     system: `Você é o Jarvis, assistente de IA da agência de marketing Stream Lab. Estilo: direto, útil, personalidade inspirada no Jarvis do Tony Stark mas profissional.
 
 Você foi @mencionado em um comentário de uma task no Asana.
