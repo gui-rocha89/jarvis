@@ -1972,52 +1972,105 @@ app.post('/dashboard/chat', auth, async (req, res) => {
 });
 
 // --- Chat por voz (Modo Conversa) ---
+// Voice Stream — experiência Tony Stark: streaming NDJSON com áudio por frases
 app.post('/dashboard/chat/voice', auth, express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '10mb' }), async (req, res) => {
+  res.setHeader('Content-Type', 'application/x-ndjson');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Transfer-Encoding', 'chunked');
+
+  const send = (type, data = {}) => { try { res.write(JSON.stringify({ type, ...data }) + '\n'); } catch(e) {} };
+
   try {
     const audioBuffer = req.body;
-    if (!audioBuffer || audioBuffer.length < 100) return res.status(400).json({ error: 'Áudio vazio ou inválido' });
+    if (!audioBuffer || audioBuffer.length < 100) {
+      send('error', { message: 'Áudio vazio' });
+      return res.end();
+    }
 
-    console.log(`[VOICE-CHAT] Áudio recebido: ${(audioBuffer.length / 1024).toFixed(1)}KB`);
+    const startTime = Date.now();
+    console.log(`[VOICE] Áudio recebido: ${(audioBuffer.length / 1024).toFixed(1)}KB`);
 
-    // 1. Transcrever via Whisper
+    // 1. Transcrever — Whisper (~1-2s)
+    send('status', { phase: 'listening' });
     const { transcribeAudio, generateAudio } = await import('./src/audio.mjs');
     const transcription = await transcribeAudio(audioBuffer);
 
     if (!transcription || transcription.trim().length < 2) {
-      return res.json({ transcription: '', response: '', audioBase64: null, skipped: true });
+      send('skipped', {});
+      return res.end();
     }
 
-    console.log(`[VOICE-CHAT] Transcrição: "${transcription.substring(0, 80)}..."`);
+    console.log(`[VOICE] Transcrição (${Date.now() - startTime}ms): "${transcription.substring(0, 80)}"`);
+    send('transcription', { text: transcription });
 
-    // 2. Processar pelo chat (mesma lógica do texto, com hint de voz)
-    const finalText = await processDashboardChat(transcription, true);
+    // 2. Claude — Sonnet pra velocidade, sem tools, prompt curto
+    send('status', { phase: 'thinking' });
+    const { MASTER_SYSTEM_PROMPT } = await import('./src/agents/master.mjs');
+    const memoryCtx = await getMemoryContext(CONFIG.GUI_JID, 'dashboard', transcription);
 
-    // 3. Gerar TTS da resposta (truncar se muito longo para não gerar áudio enorme)
-    let ttsText = finalText;
-    if (ttsText.length > 1500) {
-      ttsText = ttsText.substring(0, 1500) + '... veja o texto completo no chat.';
-    }
+    dashboardChatHistory.push({ role: 'user', content: transcription });
+    while (dashboardChatHistory.length > 20) dashboardChatHistory.shift();
 
-    let audioBase64 = null;
-    try {
-      const audioOut = await generateAudio(ttsText);
-      audioBase64 = audioOut.toString('base64');
-    } catch (ttsErr) {
-      console.error('[VOICE-CHAT] Erro no TTS:', ttsErr.message);
-    }
+    const msgs = [...dashboardChatHistory];
+    if (msgs.length > 0 && msgs[0].role !== 'user') msgs.shift();
 
-    console.log(`[VOICE-CHAT] Resposta: ${finalText.length} chars, áudio: ${audioBase64 ? (audioBase64.length / 1024).toFixed(0) + 'KB' : 'N/A'}`);
+    const Anthropic = (await import('@anthropic-ai/sdk')).default;
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 
-    res.json({
-      transcription,
-      response: finalText,
-      audioBase64,
-      audioMimeType: 'audio/ogg',
+    const voiceSystemPrompt = MASTER_SYSTEM_PROMPT + `\n\nMODO VOZ: Responda como se estivesse FALANDO, não escrevendo. Seja CONCISO (máximo 3-4 frases). Nada de listas, *negrito*, markdown. Fale naturalmente como o Jarvis do Tony Stark. Se precisar dar informações longas, resuma verbalmente.` + memoryCtx;
+
+    // Usar Sonnet pra velocidade máxima no voice
+    const voiceModel = CONFIG.AI_MODEL || 'claude-sonnet-4-20250514';
+    const response = await anthropic.messages.create({
+      model: voiceModel,
+      max_tokens: 1024, // Respostas curtas pra voz
+      system: voiceSystemPrompt,
+      messages: msgs,
     });
+
+    const finalText = response.content.find(b => b.type === 'text')?.text || '';
+    console.log(`[VOICE] Claude (${Date.now() - startTime}ms): ${finalText.length} chars`);
+
+    dashboardChatHistory.push({ role: 'assistant', content: finalText });
+    send('response', { text: finalText });
+
+    // 3. TTS streaming por frases — começa a falar rápido
+    send('status', { phase: 'speaking' });
+
+    // Dividir em frases naturais
+    const sentences = finalText.match(/[^.!?…]+[.!?…]+|[^.!?…]+$/g) || [finalText];
+    const chunks = [];
+    let currentChunk = '';
+    for (const s of sentences) {
+      currentChunk += s;
+      // Enviar chunks de ~80-200 chars (frases naturais)
+      if (currentChunk.length >= 60) {
+        chunks.push(currentChunk.trim());
+        currentChunk = '';
+      }
+    }
+    if (currentChunk.trim()) chunks.push(currentChunk.trim());
+
+    for (let i = 0; i < chunks.length; i++) {
+      try {
+        const audioOut = await generateAudio(chunks[i]);
+        send('audio', { data: audioOut.toString('base64'), index: i, total: chunks.length });
+      } catch (ttsErr) {
+        console.error(`[VOICE] TTS erro chunk ${i}:`, ttsErr.message);
+      }
+    }
+
+    console.log(`[VOICE] Completo em ${((Date.now() - startTime) / 1000).toFixed(1)}s — ${chunks.length} chunks de áudio`);
+    send('done', { duration: Date.now() - startTime });
+
+    // Memória em background
+    processMemory(transcription, 'Gui', CONFIG.GUI_JID, 'dashboard', false).catch(() => {});
+
   } catch (err) {
-    console.error('[VOICE-CHAT] Erro:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[VOICE] Erro:', err.message);
+    send('error', { message: err.message });
   }
+  res.end();
 });
 
 // --- Team mapping ---

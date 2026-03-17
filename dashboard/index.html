@@ -1760,83 +1760,94 @@
       voiceAnimFrame = requestAnimationFrame(detectVoice);
     }
 
-    async function processVoiceRecording() {
-      console.log('[VOICE] processVoiceRecording chamado, chunks:', voiceChunks.length);
-      if (voiceChunks.length === 0) {
-        console.log('[VOICE] Sem chunks, voltando a ouvir');
-        if (voiceModeActive) startListening();
+    // Fila de áudio pra tocar chunks sequencialmente (streaming TTS)
+    const voiceAudioQueue = [];
+    let voiceIsPlaying = false;
+
+    function playNextAudioChunk() {
+      if (voiceAudioQueue.length === 0) {
+        voiceIsPlaying = false;
+        if (voiceModeActive && !voiceIsProcessing) { startListening(); updateVoiceUI('listening'); }
         return;
       }
+      voiceIsPlaying = true;
+      updateVoiceUI('speaking');
+      const base64 = voiceAudioQueue.shift();
+      voiceCurrentAudio = new Audio('data:audio/ogg;base64,' + base64);
+      voiceCurrentAudio.onended = () => { voiceCurrentAudio = null; playNextAudioChunk(); };
+      voiceCurrentAudio.onerror = () => { voiceCurrentAudio = null; playNextAudioChunk(); };
+      voiceCurrentAudio.play().catch(() => { voiceCurrentAudio = null; playNextAudioChunk(); });
+    }
+
+    async function processVoiceRecording() {
+      if (voiceChunks.length === 0) { if (voiceModeActive) startListening(); return; }
 
       updateVoiceUI('processing');
-
       const blob = new Blob(voiceChunks, { type: voiceMediaRecorder?.mimeType || 'audio/webm' });
-      console.log('[VOICE] Blob criado:', (blob.size/1024).toFixed(1), 'KB, tipo:', blob.type);
       voiceChunks = [];
 
-      // Parar VAD temporariamente
+      // Parar VAD
       if (voiceAnimFrame) { cancelAnimationFrame(voiceAnimFrame); voiceAnimFrame = null; }
-      if (voiceAudioContext && voiceAudioContext.state !== 'closed') {
-        voiceAudioContext.close().catch(() => {});
-        voiceAudioContext = null;
-      }
+      if (voiceAudioContext && voiceAudioContext.state !== 'closed') { voiceAudioContext.close().catch(() => {}); voiceAudioContext = null; }
 
       try {
         const res = await fetch(`${API_BASE}/dashboard/chat/voice`, {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${AUTH_TOKEN}`,
-            'Content-Type': blob.type || 'audio/webm',
-          },
+          headers: { 'Authorization': `Bearer ${AUTH_TOKEN}`, 'Content-Type': blob.type || 'audio/webm' },
           body: blob,
         });
 
-        if (res.status === 401) {
-          AUTH_TOKEN = '';
-          localStorage.removeItem('jarvis_token');
-          stopVoiceMode();
-          notify('Sessão expirada', 'error');
-          return;
-        }
+        if (res.status === 401) { AUTH_TOKEN = ''; localStorage.removeItem('jarvis_token'); stopVoiceMode(); return; }
 
-        const data = await res.json();
+        // Ler stream NDJSON — áudio começa a tocar conforme chega
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        voiceAudioQueue.length = 0;
+        let gotResponse = false;
 
-        if (data.skipped || !data.transcription) {
-          notify('Não entendi, tente novamente.', 'warning');
-          if (voiceModeActive) { voiceIsProcessing = false; startListening(); }
-          return;
-        }
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
 
-        // Mostrar transcrição e resposta no chat
-        appendChat('user', '🎙️ ' + data.transcription);
-        appendChat('assistant', data.response);
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
 
-        // Tocar áudio da resposta
-        if (data.audioBase64) {
-          updateVoiceUI('speaking');
-          voiceCurrentAudio = new Audio(`data:${data.audioMimeType || 'audio/ogg'};base64,${data.audioBase64}`);
-          voiceCurrentAudio.onended = () => {
-            voiceCurrentAudio = null;
-            if (voiceModeActive) { voiceIsProcessing = false; startListening(); }
-          };
-          voiceCurrentAudio.onerror = () => {
-            console.error('Erro ao tocar áudio');
-            voiceCurrentAudio = null;
-            if (voiceModeActive) { voiceIsProcessing = false; startListening(); }
-          };
-          voiceCurrentAudio.play().catch(() => {
-            // Autoplay bloqueado — continua sem áudio
-            voiceCurrentAudio = null;
-            if (voiceModeActive) { voiceIsProcessing = false; startListening(); }
-          });
-        } else {
-          // Sem áudio — volta a ouvir
-          if (voiceModeActive) { voiceIsProcessing = false; startListening(); }
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const msg = JSON.parse(line);
+
+              if (msg.type === 'status') {
+                if (msg.phase === 'thinking') updateVoiceUI('processing');
+                else if (msg.phase === 'speaking') updateVoiceUI('speaking');
+              }
+              if (msg.type === 'skipped') {
+                if (voiceModeActive) { voiceIsProcessing = false; startListening(); updateVoiceUI('listening'); }
+              }
+              if (msg.type === 'audio') {
+                voiceAudioQueue.push(msg.data);
+                if (!voiceIsPlaying) playNextAudioChunk();
+              }
+              if (msg.type === 'response') { appendChat('assistant', msg.text); gotResponse = true; }
+              if (msg.type === 'transcription') { appendChat('user', msg.text); }
+              if (msg.type === 'error') {
+                console.error('[VOICE]', msg.message);
+                if (voiceModeActive) { voiceIsProcessing = false; startListening(); }
+              }
+              if (msg.type === 'done') {
+                voiceIsProcessing = false;
+                if (!voiceIsPlaying && voiceAudioQueue.length === 0) {
+                  if (voiceModeActive) { startListening(); updateVoiceUI('listening'); }
+                }
+              }
+            } catch (e) { /* JSON incompleto */ }
+          }
         }
 
       } catch (err) {
-        console.error('Voice chat error:', err);
-        appendChat('error', 'Erro ao processar áudio.');
+        console.error('[VOICE] Erro:', err);
         if (voiceModeActive) { voiceIsProcessing = false; startListening(); }
       }
     }
