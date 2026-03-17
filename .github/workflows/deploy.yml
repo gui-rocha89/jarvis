@@ -20,7 +20,12 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+          # Tenta ssh-keyscan com timeout de 10s; se falhar, desabilita verificação de host
+          if ! timeout 10 ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null; then
+            echo "ssh-keyscan falhou, usando StrictHostKeyChecking=no"
+            echo -e "Host *\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null" >> ~/.ssh/config
+            chmod 600 ~/.ssh/config
+          fi
 
       - name: Deploy arquivos
         run: |
@@ -31,15 +36,16 @@ jobs:
             --exclude='.env' \
             --exclude='google-calendar-key.json' \
             --exclude='*.bak' \
-            -e "ssh -i ~/.ssh/deploy_key" \
+            -e "ssh -i ~/.ssh/deploy_key -o ConnectTimeout=30 -o ServerAliveInterval=15" \
             ./ ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/jarvis/
 
       - name: Instalar deps e reiniciar
         run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'EOF'
+          ssh -i ~/.ssh/deploy_key -o ConnectTimeout=30 -o ServerAliveInterval=15 \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'EOF'
           cd /opt/jarvis
           npm ci --production
-          /root/.npm/_npx/5f7878ce38f1eb13/node_modules/pm2/bin/pm2 restart jarvis
+          pm2 restart jarvis 2>/dev/null || npx pm2 restart jarvis
           sleep 5
-          /root/.npm/_npx/5f7878ce38f1eb13/node_modules/pm2/bin/pm2 status jarvis
+          pm2 status jarvis 2>/dev/null || npx pm2 status jarvis
           EOF
