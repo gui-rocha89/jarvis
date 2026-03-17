@@ -625,6 +625,8 @@ export const JARVIS_TOOLS = [
           items: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } } },
         },
         otimizacao: { type: 'string', enum: ['LINK_CLICKS', 'REACH', 'IMPRESSIONS', 'LANDING_PAGE_VIEWS'], description: 'Objetivo de otimização (default: LINK_CLICKS)' },
+        destino: { type: 'string', enum: ['WEBSITE', 'MESSENGER', 'WHATSAPP', 'APP'], description: 'Tipo de destino para campanhas de tráfego (default: WEBSITE). Use WHATSAPP se o CTA for "Enviar mensagem no WhatsApp".' },
+        cliente: { type: 'string', description: 'Nome do cliente (resolve Page ID automaticamente pro promoted_object). OBRIGATÓRIO para campanhas de tráfego.' },
       },
       required: ['campanha_id', 'nome', 'orcamento_diario'],
     },
@@ -1429,12 +1431,19 @@ export async function executeJarvisTool(toolName, input, context = {}) {
       if (input.idade_min) targeting.ageMin = input.idade_min;
       if (input.idade_max) targeting.ageMax = input.idade_max;
 
+      // Resolver Page ID do cliente pra usar no promoted_object
+      if (input.cliente) {
+        const pageId = resolvePageId(input.cliente);
+        if (pageId) targeting.pageId = pageId;
+      }
+
       const result = await createAdSet({
         campaignId: input.campanha_id,
         name: input.nome,
         dailyBudget: input.orcamento_diario,
         targeting,
         optimizationGoal: input.otimizacao || 'LINK_CLICKS',
+        destinationType: input.destino || null,
         status: 'PAUSED',
       });
 

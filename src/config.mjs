@@ -22,6 +22,7 @@ export const CONFIG = {
   META_ACCESS_TOKEN: process.env.META_ACCESS_TOKEN || '',
   META_AD_ACCOUNT_ID: process.env.META_AD_ACCOUNT_ID || '',
   META_PAGE_ID: process.env.META_PAGE_ID || '',
+  META_PIXEL_ID: process.env.META_PIXEL_ID || '',
   META_API_VERSION: process.env.META_API_VERSION || 'v25.0',
   // IMAP (Asana Email Monitor)
   IMAP_HOST: process.env.IMAP_HOST || '',

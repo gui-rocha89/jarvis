@@ -295,13 +295,24 @@ export async function publishPagePost({ message, link, imageUrl, scheduledTime, 
 export async function createAdSet({
   campaignId, name, dailyBudget, targeting = {},
   optimizationGoal = 'LINK_CLICKS', billingEvent = 'IMPRESSIONS',
-  status = 'PAUSED', startTime = null,
+  status = 'PAUSED', startTime = null, promotedObject = null,
+  destinationType = null,
 }) {
   const adAccount = CONFIG.META_AD_ACCOUNT_ID;
   if (!adAccount) throw new Error('META_AD_ACCOUNT_ID não configurado');
   if (!campaignId) throw new Error('campaignId é obrigatório');
 
   const budgetCents = Math.round(parseFloat(dailyBudget) * 100);
+
+  // Buscar objetivo da campanha pai pra determinar promoted_object automaticamente
+  let campaignObjective = null;
+  try {
+    const campaign = await metaRequest(`/${campaignId}?fields=objective`);
+    campaignObjective = campaign?.objective;
+    console.log(`[META-ADS] Campanha ${campaignId} objetivo: ${campaignObjective}`);
+  } catch (err) {
+    console.warn(`[META-ADS] Não conseguiu buscar objetivo da campanha: ${err.message}`);
+  }
 
   // Montar targeting padrão se não especificado
   const targetingSpec = {
@@ -335,9 +346,52 @@ export async function createAdSet({
     status: status === 'ACTIVE' ? 'ACTIVE' : 'PAUSED',
   };
 
+  // promoted_object é OBRIGATÓRIO para a maioria dos objetivos de campanha
+  // Se não foi passado manualmente, resolver automaticamente pelo objetivo
+  if (promotedObject) {
+    body.promoted_object = promotedObject;
+  } else if (campaignObjective) {
+    const pixelId = CONFIG.META_PIXEL_ID;
+    const pageId = targeting.pageId || CONFIG.META_PAGE_ID;
+
+    // Mapear objetivo → promoted_object correto
+    if (['OUTCOME_TRAFFIC', 'OUTCOME_ENGAGEMENT'].includes(campaignObjective)) {
+      if (pixelId) {
+        body.promoted_object = { pixel_id: pixelId, custom_event_type: 'CONTENT_VIEW' };
+      } else if (pageId) {
+        body.promoted_object = { page_id: pageId };
+      }
+    } else if (campaignObjective === 'OUTCOME_LEADS') {
+      if (pixelId) {
+        body.promoted_object = { pixel_id: pixelId, custom_event_type: 'LEAD' };
+      } else if (pageId) {
+        body.promoted_object = { page_id: pageId };
+      }
+    } else if (campaignObjective === 'OUTCOME_SALES') {
+      if (pixelId) {
+        body.promoted_object = { pixel_id: pixelId, custom_event_type: 'PURCHASE' };
+      }
+    } else if (campaignObjective === 'OUTCOME_AWARENESS') {
+      // Awareness não precisa de promoted_object obrigatoriamente
+    }
+  }
+
+  // destination_type para campanhas de tráfego (WEBSITE, MESSENGER, WHATSAPP, etc.)
+  if (destinationType) {
+    body.destination_type = destinationType;
+  } else if (campaignObjective === 'OUTCOME_TRAFFIC' && !body.destination_type) {
+    body.destination_type = 'WEBSITE';
+  }
+
   if (startTime) {
     body.start_time = new Date(startTime).toISOString();
   }
+
+  console.log(`[META-ADS] Criando Ad Set com body:`, JSON.stringify({
+    ...body,
+    targeting: '(omitted)',
+    access_token: '(omitted)',
+  }));
 
   const data = await metaRequest(`/${adAccount}/adsets`, 'POST', body);
   console.log(`[META-ADS] Ad Set criado: ${data.id} "${name}" (campanha: ${campaignId})`);
