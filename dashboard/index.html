@@ -615,7 +615,10 @@
               </div>
               <span id="voice-status-text" class="text-sm font-orbitron tracking-wider relative z-10" style="color:#00ff88">OUVINDO</span>
               <span id="voice-status-sub" class="text-[10px] text-stark-dim mt-1 relative z-10 font-mono">Fale naturalmente...</span>
-              <button onclick="stopVoiceMode()" class="mt-3 text-[10px] text-stark-dim hover:text-stark-red transition-colors relative z-10 font-mono tracking-wider border border-stark-border/30 px-4 py-1 rounded-full hover:border-stark-red/50">DESCONECTAR</button>
+              <div class="flex gap-3 mt-3 relative z-10">
+                <button onclick="sendVoiceNow()" class="text-[10px] text-stark-green hover:text-white transition-colors font-mono tracking-wider border border-stark-green/40 px-4 py-1.5 rounded-full hover:border-stark-green hover:bg-stark-green/10">▶ ENVIAR</button>
+                <button onclick="stopVoiceMode()" class="text-[10px] text-stark-dim hover:text-stark-red transition-colors font-mono tracking-wider border border-stark-border/30 px-4 py-1.5 rounded-full hover:border-stark-red/50">✕ SAIR</button>
+              </div>
             </div>
           </div>
 
@@ -1647,7 +1650,12 @@
 
     async function toggleVoiceMode() {
       if (voiceModeActive) {
-        stopVoiceMode();
+        // Se já está gravando e tem fala, envia. Se não, desconecta.
+        if (voiceHasSpoken && !voiceIsProcessing) {
+          sendVoiceNow();
+        } else {
+          stopVoiceMode();
+        }
         return;
       }
 
@@ -1701,9 +1709,11 @@
       source.connect(voiceAnalyser);
 
       const dataArray = new Uint8Array(voiceAnalyser.frequencyBinCount);
-      const SILENCE_THRESHOLD = 12;
-      const SILENCE_DURATION = 1800; // 1.8s de silêncio = auto-stop
+      const SILENCE_THRESHOLD = 25; // Nível mínimo pra considerar "fala" (ajustado pra ruído ambiente)
+      const SILENCE_DURATION = 2000; // 2s de silêncio após falar = auto-envia
+      const MAX_RECORDING = 30000; // Máximo 30s de gravação — auto-envia
       let silenceStart = null;
+      const recordStart = Date.now();
 
       function detectVoice() {
         if (!voiceModeActive || voiceIsProcessing) return;
@@ -1720,18 +1730,27 @@
         // Alimentar o canvas waveform com nível de áudio normalizado
         voiceCanvasLevel = Math.min(1, avg / 80);
 
+        // Tempo máximo de gravação — auto-envia
+        if (Date.now() - recordStart > MAX_RECORDING && voiceHasSpoken) {
+          console.log('[VAD] Tempo máximo atingido, enviando...');
+          voiceIsProcessing = true;
+          if (voiceMediaRecorder && voiceMediaRecorder.state === 'recording') voiceMediaRecorder.stop();
+          return;
+        }
+
         if (avg > SILENCE_THRESHOLD) {
           voiceHasSpoken = true;
           silenceStart = null;
         } else if (voiceHasSpoken) {
           if (!silenceStart) silenceStart = Date.now();
           else if (Date.now() - silenceStart > SILENCE_DURATION) {
-            // Silêncio detectado após fala — auto-parar
+            // Silêncio detectado após fala — auto-envia
+            console.log('[VAD] Silêncio detectado após fala, enviando...');
             voiceIsProcessing = true;
             if (voiceMediaRecorder && voiceMediaRecorder.state === 'recording') {
               voiceMediaRecorder.stop();
             }
-            return; // Sai do loop — processVoiceRecording() será chamado pelo onstop
+            return;
           }
         }
 
@@ -1742,7 +1761,9 @@
     }
 
     async function processVoiceRecording() {
+      console.log('[VOICE] processVoiceRecording chamado, chunks:', voiceChunks.length);
       if (voiceChunks.length === 0) {
+        console.log('[VOICE] Sem chunks, voltando a ouvir');
         if (voiceModeActive) startListening();
         return;
       }
@@ -1750,6 +1771,7 @@
       updateVoiceUI('processing');
 
       const blob = new Blob(voiceChunks, { type: voiceMediaRecorder?.mimeType || 'audio/webm' });
+      console.log('[VOICE] Blob criado:', (blob.size/1024).toFixed(1), 'KB, tipo:', blob.type);
       voiceChunks = [];
 
       // Parar VAD temporariamente
@@ -1816,6 +1838,15 @@
         console.error('Voice chat error:', err);
         appendChat('error', 'Erro ao processar áudio.');
         if (voiceModeActive) { voiceIsProcessing = false; startListening(); }
+      }
+    }
+
+    function sendVoiceNow() {
+      if (!voiceModeActive || voiceIsProcessing) return;
+      console.log('[VOICE] Envio manual pelo botão ENVIAR');
+      voiceIsProcessing = true;
+      if (voiceMediaRecorder && voiceMediaRecorder.state === 'recording') {
+        voiceMediaRecorder.stop(); // onstop vai chamar processVoiceRecording()
       }
     }
 

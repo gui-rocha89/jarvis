@@ -54,7 +54,7 @@ export async function saveVoiceConfig() {
 }
 
 export async function transcribeAudio(buffer) {
-  const tmpFile = '/tmp/audio_' + randomUUID() + '.ogg';
+  const tmpFile = '/tmp/audio_' + randomUUID() + '.webm';
   await writeFile(tmpFile, buffer);
   try {
     const transcription = await openai.audio.transcriptions.create({
