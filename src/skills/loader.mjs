@@ -1284,12 +1284,12 @@ export async function executeJarvisTool(toolName, input, context = {}) {
 
   if (toolName === 'consultar_especialista') {
     try {
-      const { AGENT_PROMPTS } = await import('../agents/master.mjs');
+      const { JARVIS_IDENTITY, AGENT_EXPERTISE } = await import('../agents/master.mjs');
       const Anthropic = (await import('@anthropic-ai/sdk')).default;
       const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 
-      const agentPrompt = AGENT_PROMPTS[input.especialista];
-      if (!agentPrompt) {
+      const expertise = AGENT_EXPERTISE[input.especialista];
+      if (!expertise) {
         return { error: `Especialista "${input.especialista}" não encontrado. Disponíveis: creative, manager, researcher, traffic, social` };
       }
 
@@ -1300,12 +1300,13 @@ export async function executeJarvisTool(toolName, input, context = {}) {
         brainContext = await loadBrainDocument();
       } catch {}
 
-      const specialistSystem = `${agentPrompt}
+      // Identidade única + expertise específica + contexto de consulta
+      const specialistSystem = `${JARVIS_IDENTITY}
 
-${brainContext ? '\n\n' + brainContext : ''}
+${expertise}
 
-CONTEXTO: Você está sendo consultado por outro agente do time do Jarvis. Ele precisa da sua expertise. Responda de forma direta e acionável — ele vai integrar sua resposta na conversa com o usuário.
-NÃO cumprimente, NÃO faça introdução. Vá direto ao ponto.`;
+${brainContext ? brainContext + '\n\n' : ''}CONTEXTO: Você está sendo consultado por outro agente do time. Responda de forma direta e acionável — sua resposta será integrada na resposta final ao usuário.
+Vá direto ao ponto. Sem cumprimentos, sem introdução.`;
 
       const userMsg = input.contexto_adicional
         ? `${input.pedido}\n\nCONTEXTO/DADOS DISPONÍVEIS:\n${input.contexto_adicional}`
