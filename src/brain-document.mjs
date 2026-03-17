@@ -37,12 +37,19 @@ export async function generateBrainDocument() {
       configResult,
       statsResult,
     ] = await Promise.all([
-      // Todas as memórias, ordenadas por importância
+      // Memórias MAIS IMPORTANTES — limitar a 500 pra caber no contexto do Claude
+      // Prioriza: importância alta + mais acessadas + mais recentes
       pool.query(`
-        SELECT DISTINCT ON (content) content, category, importance, scope, scope_id,
-               access_count, created_at::date as data_criacao
-        FROM jarvis_memories
-        ORDER BY content, importance DESC
+        SELECT content, category, importance, scope, access_count
+        FROM (
+          SELECT DISTINCT ON (content) content, category, importance, scope, scope_id,
+                 access_count, updated_at
+          FROM jarvis_memories
+          WHERE importance >= 5
+          ORDER BY content, importance DESC
+        ) AS deduped
+        ORDER BY importance DESC, access_count DESC, updated_at DESC
+        LIMIT 500
       `),
       // Todos os perfis
       pool.query(`SELECT entity_type, entity_name, profile FROM jarvis_profiles ORDER BY entity_type, last_updated DESC`),
@@ -53,6 +60,7 @@ export async function generateBrainDocument() {
       // Stats gerais
       pool.query(`SELECT
         (SELECT COUNT(*) FROM jarvis_memories) as total_memorias,
+        (SELECT COUNT(*) FROM jarvis_memories WHERE importance >= 5) as memorias_importantes,
         (SELECT COUNT(DISTINCT scope_id) FROM jarvis_memories WHERE scope = 'user') as total_pessoas,
         (SELECT COUNT(DISTINCT scope_id) FROM jarvis_memories WHERE scope = 'chat') as total_chats,
         (SELECT COUNT(*) FROM jarvis_profiles) as total_perfis,
@@ -130,7 +138,8 @@ export async function generateBrainDocument() {
     }).join('\n\n');
 
     const inputText = `ESTATÍSTICAS:
-- Total de memórias: ${stats.total_memorias}
+- Total de memórias no banco: ${stats.total_memorias} (mostrando top ${memories.length} com importância >= 5)
+- Memórias importantes (imp >= 5): ${stats.memorias_importantes}
 - Pessoas conhecidas: ${stats.total_pessoas}
 - Chats/grupos: ${stats.total_chats}
 - Perfis sintetizados: ${stats.total_perfis}
@@ -148,16 +157,17 @@ ${homeworkText || '(nenhuma instrução)'}
 ============ CLIENTES GERENCIADOS (PROATIVO) ============
 ${managedText || '(nenhum cliente gerenciado)'}`;
 
-    // Dividir em chunks se necessário (Claude tem limite de ~200k tokens)
-    // Memórias muito grandes: truncar as de menor importância
-    const maxInputChars = 350000; // ~87k tokens, seguro
+    // Garantir que cabe no limite da API (~200k tokens ≈ 800k chars)
+    // Mas queremos ficar bem abaixo pra não estourar rate limit
+    const maxInputChars = 300000; // ~75k tokens — seguro pro Opus
     let finalInput = inputText;
     if (finalInput.length > maxInputChars) {
-      console.log(`[BRAIN-DOC] Input muito grande (${finalInput.length} chars), truncando memórias de baixa importância...`);
-      // Remover memórias de importância <= 3
+      console.log(`[BRAIN-DOC] Input muito grande (${finalInput.length} chars), truncando...`);
+      // Truncar: pegar só as memórias de importância mais alta
       const filteredCategories = {};
       for (const [cat, items] of Object.entries(byCategory)) {
-        filteredCategories[cat] = items.filter(i => i.importancia >= 4);
+        // Limitar cada categoria a 30 items mais importantes
+        filteredCategories[cat] = items.slice(0, 30);
       }
       const filteredText = Object.entries(filteredCategories).map(([cat, items]) => {
         const itemsStr = items.map(i => `  [imp:${i.importancia}] ${i.conteudo}`).join('\n');
@@ -165,11 +175,11 @@ ${managedText || '(nenhum cliente gerenciado)'}`;
       }).join('\n\n');
 
       finalInput = `ESTATÍSTICAS:
-- Total de memórias: ${stats.total_memorias} (mostrando importância >= 4)
+- Total de memórias no banco: ${stats.total_memorias} (mostrando top ${memories.length} mais importantes)
 - Pessoas conhecidas: ${stats.total_pessoas}
 - Chats/grupos: ${stats.total_chats}
 
-============ MEMÓRIAS POR CATEGORIA ============
+============ MEMÓRIAS POR CATEGORIA (TOP POR IMPORTÂNCIA) ============
 ${filteredText}
 
 ============ PERFIS SINTETIZADOS ============
@@ -180,6 +190,12 @@ ${homeworkText || '(nenhuma)'}
 
 ============ CLIENTES GERENCIADOS ============
 ${managedText || '(nenhum)'}`;
+
+      // Se AINDA estiver grande, cortar perfis e homework longo
+      if (finalInput.length > maxInputChars) {
+        console.log(`[BRAIN-DOC] Ainda grande (${finalInput.length} chars), corte agressivo...`);
+        finalInput = finalInput.substring(0, maxInputChars);
+      }
     }
 
     console.log(`[BRAIN-DOC] Enviando ${finalInput.length} chars pro Claude sintetizar...`);
