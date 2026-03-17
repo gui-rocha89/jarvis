@@ -192,10 +192,12 @@ async function generateMentionResponse(taskGid, commenterName, commentText, task
     allComments = allStories.filter(s => s.type === 'comment' && s.text);
     console.log(`[EMAIL] ${allComments.length} comentários encontrados`);
 
+    // Últimos 15 comentários com texto completo (até 1500 chars cada)
+    // O contexto completo é ESSENCIAL — Jarvis precisa ler TUDO que foi discutido
     recentComments = allComments
-      .slice(-20)
-      .map(s => `${s.created_by?.name || '?'}: ${s.text.substring(0, 500)}`)
-      .join('\n');
+      .slice(-15)
+      .map(s => `${s.created_by?.name || '?'}: ${s.text.substring(0, 1500)}`)
+      .join('\n\n');
   } catch (e) {
     console.error('[EMAIL] Erro ao buscar task:', e.message);
   }
@@ -255,18 +257,20 @@ async function generateMentionResponse(taskGid, commenterName, commentText, task
 
 ${taskContext}
 
-HISTÓRICO DE COMENTÁRIOS:
+HISTÓRICO COMPLETO DE COMENTÁRIOS (sua fonte PRINCIPAL — LEIA TUDO antes de responder):
 ${recentComments || '(sem comentários anteriores)'}
 
-COMENTÁRIO QUE TE MENCIONOU:
+ÚLTIMO COMENTÁRIO (o que disparou esta menção):
 ${commenterName}: ${actualComment}
 
 ${memoryContext ? `MEMÓRIAS RELEVANTES:\n${memoryContext}` : ''}
 
-IMPORTANTE: O GID desta task é ${taskGid}. Use este GID se precisar usar comentar_task ou outras tools do Asana.
-NÃO use comentar_task para postar sua resposta — ela será postada automaticamente. Use comentar_task SOMENTE se precisar comentar em OUTRA task.
-Se a pessoa pediu uma AÇÃO (criar campanha, consultar dados, etc.), USE AS TOOLS disponíveis para EXECUTAR.
-Responda de forma direta e útil.`;
+INSTRUÇÕES CRÍTICAS:
+- Você está DENTRO da task ${taskGid}. Todo o contexto está ACIMA no histórico de comentários. LEIA TUDO.
+- NUNCA diga "falta contexto", "comentário cortado", "preciso de mais informações" — você TEM tudo.
+- NÃO use comentar_task para postar sua resposta — ela é postada automaticamente. Use comentar_task SOMENTE para comentar em OUTRA task.
+- Se a pessoa pediu uma AÇÃO (criar campanha, consultar dados, etc.), USE AS TOOLS para EXECUTAR.
+- Responda de forma direta e acionável baseado no histórico completo.`;
 
   const { text: finalText, toolsUsed } = await agentLoop(
     model,
