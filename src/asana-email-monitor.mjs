@@ -183,7 +183,7 @@ async function generateMentionResponse(taskGid, commenterName, commentText, task
     let allStories = [];
     let storiesUrl = `/tasks/${taskGid}/stories?opt_fields=text,created_by.name,created_at,type&limit=100`;
     let pages = 0;
-    while (storiesUrl && pages < 5) { // máx 5 páginas (500 stories) para não travar
+    while (storiesUrl) { // busca TODAS as páginas — sem limite
       const storiesPage = await asanaRequest(storiesUrl);
       if (storiesPage?.data) allStories.push(...storiesPage.data);
       storiesUrl = storiesPage?.next_page?.path || null;
