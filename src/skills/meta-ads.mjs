@@ -384,18 +384,20 @@ export async function createAdSet({
     name,
     optimization_goal: optimizationGoal,
     billing_event: billingEvent,
-    bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
     targeting: targetingSpec,
     status: status === 'ACTIVE' ? 'ACTIVE' : 'PAUSED',
   };
 
-  // CBO vs ABO: se a campanha JÁ tem orçamento (CBO), NÃO mandar daily_budget no Ad Set
-  // Se a campanha NÃO tem orçamento (ABO), o Ad Set precisa ter o seu próprio
+  // CBO vs ABO (doc oficial: https://developers.facebook.com/docs/marketing-api/bidding/guides/campaign-budget-optimization)
+  // CBO: orçamento e bid_strategy na CAMPANHA — Ad Set NÃO tem daily_budget nem bid_strategy
+  // ABO: orçamento e bid_strategy no AD SET
   if (campaignHasBudget) {
-    console.log(`[META-ADS] Campanha é CBO (orçamento na campanha) — Ad Set sem daily_budget`);
+    console.log(`[META-ADS] Campanha é CBO — Ad Set sem daily_budget e sem bid_strategy (herdados da campanha)`);
+    // Em CBO, controles opcionais: daily_min_spend_target, daily_spend_cap
   } else {
     body.daily_budget = budgetCents;
-    console.log(`[META-ADS] Campanha é ABO (orçamento no ad set) — daily_budget: ${budgetCents}`);
+    body.bid_strategy = 'LOWEST_COST_WITHOUT_CAP';
+    console.log(`[META-ADS] Campanha é ABO — daily_budget: ${budgetCents}, bid_strategy: LOWEST_COST_WITHOUT_CAP`);
   }
 
   // promoted_object é OBRIGATÓRIO para a maioria dos objetivos de campanha
