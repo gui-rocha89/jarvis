@@ -49,16 +49,19 @@ function isAsanaMentionEmail(parsed) {
   if (!from.includes('asana')) return false;
 
   const subject = (parsed.subject || '').toLowerCase();
-  // Asana manda emails com patterns como:
-  // PT: "Gui Rocha te mencionou em [Task]" / "Gui Rocha comentou em [Task]"
-  // EN: "Gui Rocha mentioned you in [Task]" / "Gui Rocha commented on [Task]"
+  // Asana emails reais observados:
+  // "👋 Gui mencionou você: [ROSSATO] TRAFEGO PAGO [Cabine_De_Comando]"
+  // "💬 Novo comentário em: [MINNER] MARÇO"
+  // "Gui Rocha te mencionou em [Task]"
+  // "Gui Rocha mentioned you in [Task]"
   const mentionPatterns = [
-    /te mencionou/,
-    /mencionou voc/,
-    /mentioned you/,
-    /comentou em/,
-    /commented on/,
-    /replied to/,
+    /mencionou/,           // "Gui mencionou você" ou "te mencionou"
+    /mentioned/,           // EN: "mentioned you"
+    /novo coment[áa]rio/,  // "Novo comentário em:"
+    /new comment/,         // EN
+    /comentou/,            // "comentou em"
+    /commented/,           // EN: "commented on"
+    /replied/,
     /respondeu/,
   ];
   return mentionPatterns.some(p => p.test(subject));
@@ -73,45 +76,86 @@ function parseAsanaEmail(parsed) {
   const subject = parsed.subject || '';
 
   // Extrair Task GID da URL do Asana no email
-  // Formato: https://app.asana.com/0/PROJECT_GID/TASK_GID ou /0/TASK_GID/f
-  const taskGidMatch = html.match(/app\.asana\.com\/0\/\d+\/(\d+)/) || text.match(/app\.asana\.com\/0\/\d+\/(\d+)/);
+  // Formato antigo: https://app.asana.com/0/PROJECT_GID/TASK_GID
+  // Formato novo:   https://app.asana.com/1/WORKSPACE/project/PROJECT_GID/task/TASK_GID
+  const fullText = html + '\n' + text;
+  const taskGidMatch = fullText.match(/app\.asana\.com\/\d+\/\d+\/project\/\d+\/task\/(\d+)/)  // formato novo
+    || fullText.match(/app\.asana\.com\/0\/\d+\/(\d+)/);  // formato antigo
   const taskGid = taskGidMatch ? taskGidMatch[1] : null;
 
   // Extrair nome do comentarista do subject
-  // "Gui Rocha te mencionou em Task Name" → "Gui Rocha"
-  const commenterMatch = subject.match(/^(.+?)\s+(?:te mencionou|mencionou|mentioned|comentou|commented|replied|respondeu)/i);
+  // Formato antigo: "Gui Rocha te mencionou em Task Name"
+  // Formato novo:   "👋 Gui mencionou você: [ROSSATO] TRAFEGO PAGO"
+  //                 "💬 Novo comentário em: [MINNER] MARÇO"
+  const cleanSubject = subject.replace(/^[^\w\s]+\s*/, ''); // Remove emojis no começo
+  const commenterMatch = cleanSubject.match(/^(.+?)\s+(?:te mencionou|mencionou|mentioned|comentou|commented|replied|respondeu)/i);
   const commenterName = commenterMatch ? commenterMatch[1].trim() : (parsed.from?.text?.split('<')[0]?.trim() || 'Alguém');
 
   // Extrair o texto do comentário do corpo do email
-  // Asana coloca o comentário no corpo do email em texto plain
+  // Formato real do Asana (2026):
+  //   "Avatar de Gui Rocha\n\nGui adicionou um comentário\n\nstreamlab.com.br (URL)\n\nVer a tarefa: URL\n\nURL_PROFILE texto do comentário real\n\nTarefa: [NOME]: URL\n\n..."
   let commentText = '';
 
-  // Tentar extrair do texto plain (mais limpo)
   if (text) {
-    // O texto do Asana geralmente começa com o comentário e termina com links
-    const lines = text.split('\n').filter(l => l.trim());
+    const lines = text.split('\n');
     const commentLines = [];
+    let foundComment = false;
+
     for (const line of lines) {
-      // Parar quando chegar em links do Asana ou footers
-      if (line.includes('app.asana.com') || line.includes('Asana, Inc') || line.includes('unsubscribe') || line.includes('View task')) break;
-      // Pular header com nome do remetente (geralmente a primeira linha é o nome)
-      if (commentLines.length === 0 && line.trim() === commenterName) continue;
-      commentLines.push(line.trim());
+      const trimmed = line.trim();
+      // Pular headers do Asana
+      if (!foundComment) {
+        if (trimmed.startsWith('Avatar de ')) continue;
+        if (trimmed.includes('adicionou um coment') || trimmed.includes('added a comment')) continue;
+        if (trimmed.match(/^streamlab|^Ver a tarefa|^View task/)) continue;
+        if (trimmed === '') continue;
+        // URLs de profile no começo do comentário — indica início do texto real
+        if (trimmed.match(/^https:\/\/app\.asana\.com.*profile/)) {
+          // A parte após a URL é o começo do comentário
+          const afterUrl = trimmed.replace(/^https:\/\/app\.asana\.com\S+\s*/, '');
+          if (afterUrl) commentLines.push(afterUrl);
+          foundComment = true;
+          continue;
+        }
+        // Se a linha não é header e não é URL, é o comentário
+        if (!trimmed.includes('app.asana.com')) {
+          commentLines.push(trimmed);
+          foundComment = true;
+          continue;
+        }
+        continue;
+      }
+      // Já encontrou o comentário — parar em footers/links/repetições
+      if (trimmed.startsWith('Tarefa:') || trimmed.startsWith('Task:')) break;
+      if (trimmed.includes('Não quer receber') || trimmed.includes('unsubscribe')) break;
+      if (trimmed.match(/^\d+ .+ St .+, [A-Z]{2}/)) break; // Endereço Asana
+      // Ignorar URLs de profile dentro do texto (Asana coloca link do @mention)
+      const cleanLine = trimmed.replace(/https:\/\/app\.asana\.com\S+/g, '').trim();
+      if (cleanLine) commentLines.push(cleanLine);
     }
     commentText = commentLines.join(' ').trim();
+    // Limpar: remover duplicatas do texto que aparecem no final
+    if (commentText.length > 200) {
+      const half = commentText.substring(0, Math.floor(commentText.length / 2));
+      const secondHalf = commentText.substring(Math.floor(commentText.length / 2));
+      if (secondHalf.includes(half.substring(0, 50))) {
+        commentText = half.trim();
+      }
+    }
   }
 
   // Fallback: extrair do HTML se texto vazio
   if (!commentText && html) {
     const htmlClean = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    // Pegar primeiros 500 chars antes de links
     const beforeLink = htmlClean.split('app.asana.com')[0] || htmlClean;
     commentText = beforeLink.substring(0, 500).trim();
   }
 
   // Extrair nome da task do subject
-  // "Gui Rocha te mencionou em [CLIENTE] Task Name" → "[CLIENTE] Task Name"
-  const taskMatch = subject.match(/(?:em|in|on)\s+(.+)$/i);
+  // Formato antigo: "Gui Rocha te mencionou em [CLIENTE] Task Name"
+  // Formato novo:   "👋 Gui mencionou você: [ROSSATO] TRAFEGO PAGO [Cabine_De_Comando]"
+  //                 "💬 Novo comentário em: [MINNER] MARÇO"
+  const taskMatch = subject.match(/(?:em|in|on|você|you)[:\s]+(.+)$/i);
   const taskName = taskMatch ? taskMatch[1].trim() : '';
 
   return { taskGid, commenterName, commentText, taskName, subject };
@@ -211,9 +255,12 @@ async function processEmail(client, message) {
     const { rows } = await pool.query('SELECT 1 FROM asana_email_log WHERE email_uid = $1', [uid]);
     if (rows.length > 0) return; // Já processado
 
-    // Baixar e parsear o email
-    const download = await client.download(uid, { uid: true });
-    const parsed = await simpleParser(download.content);
+    // Baixar e parsear o email via fetch (download não funciona em alguns servidores IMAP)
+    let parsed = null;
+    for await (const msg of client.fetch(uid, { uid: true, source: true })) {
+      parsed = await simpleParser(msg.source);
+    }
+    if (!parsed) return;
 
     // Filtrar: só processar @mentions do Asana
     if (!isAsanaMentionEmail(parsed)) {
@@ -287,6 +334,8 @@ async function pollEmails() {
         pass: CONFIG.IMAP_PASSWORD,
       },
       logger: false,
+      socketTimeout: 30000,    // 30s timeout (default é muito curto)
+      greetingTimeout: 15000,  // 15s para o greeting
     });
 
     await client.connect();
@@ -294,12 +343,27 @@ async function pollEmails() {
 
     const lock = await client.getMailboxLock('INBOX');
     try {
-      // Buscar emails não lidos
-      let count = 0;
-      for await (const msg of client.fetch({ seen: false }, { uid: true, envelope: true, source: true })) {
-        await processEmail(client, msg);
-        count++;
-        if (count >= 20) break; // Limitar a 20 por poll pra não sobrecarregar
+      // 1. Buscar UIDs dos emails não lidos (sem baixar corpo — rápido)
+      const uids = [];
+      for await (const msg of client.fetch({ seen: false }, { uid: true, envelope: true })) {
+        uids.push(msg.uid);
+        if (uids.length >= 10) break; // Limitar a 10 por poll
+      }
+
+      if (uids.length === 0) {
+        emailMonitorState.lastCheck = new Date().toISOString();
+        return;
+      }
+
+      console.log(`[EMAIL] ${uids.length} emails não lidos encontrados`);
+
+      // 2. Processar cada email individualmente (download dentro do lock)
+      for (const uid of uids) {
+        try {
+          await processEmail(client, { uid });
+        } catch (err) {
+          console.error(`[EMAIL] Erro no email ${uid}:`, err.message);
+        }
       }
     } finally {
       lock.release();
@@ -307,6 +371,7 @@ async function pollEmails() {
 
     await client.logout();
     emailMonitorState.lastCheck = new Date().toISOString();
+    emailMonitorState.connectionStatus = 'idle';
 
   } catch (err) {
     emailMonitorState.errors++;
