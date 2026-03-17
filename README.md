@@ -1,6 +1,6 @@
-# Jarvis 3.0
+# Jarvis 4.0
 
-**Agente de IA autônomo no WhatsApp** para a [Stream Lab](https://streamlab.com.br) — agência de marketing digital.
+**Agente de IA multi-agente autônomo no WhatsApp** para a [Stream Lab](https://streamlab.com.br) — agência de marketing digital.
 
 Personalidade inspirada no J.A.R.V.I.S. do Tony Stark: elegante, eficiente, com humor inteligente.
 
@@ -10,30 +10,31 @@ Personalidade inspirada no J.A.R.V.I.S. do Tony Stark: elegante, eficiente, com 
 ![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
 ![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub_Actions-2088FF?logo=githubactions&logoColor=white)
+![Meta](https://img.shields.io/badge/Meta_Ads-Graph_API-1877F2?logo=meta&logoColor=white)
 
 ---
 
 ## Visão Geral
 
-Jarvis funciona como um **gerente de projetos virtual 24/7** — recebe mensagens no WhatsApp, entende contexto, responde com inteligência e executa ações em ferramentas externas (Asana, Google Calendar).
+Jarvis funciona como um **gerente de projetos virtual 24/7** — recebe mensagens no WhatsApp, entende contexto, responde com inteligência e executa ações em ferramentas externas (Asana, Google Calendar, Meta Ads).
 
-### Destaques v3.0
+### Destaques v4.0
 
+- **6 Agentes Especializados** — Master, Creative, Manager, Researcher, **Traffic** e **Social** — roteamento automático por intenção
+- **Meta Ads Multi-cliente** — Gerencia campanhas de tráfego pago para 15+ clientes via Graph API v25.0
+- **Menções Inteligentes** — Sistema de @menções no WhatsApp com resolução fuzzy (Levenshtein ≤ 2) e mapeamento massivo de contatos
+- **Anti-vazamento** — Filtro duplo (prompt reforçado + código) impede exposição de informações internas em grupos de clientes
 - **Agent Loop Real** — Executa tools em loop `while(tool_use)` até completar a tarefa (máx 10 iterações), igual à Claude Code
 - **Extended Thinking** — Raciocina profundamente antes de responder (4K-8K tokens de thinking)
 - **Interleaved Thinking** — Pensa entre cada tool call, não apenas no início
 - **Prompt Caching** — System prompts estáticos são cacheados para economia e velocidade
 - **Model Routing** — Seleciona automaticamente Opus (complexo) ou Sonnet (simples) por query
-- **Agente Proativo** — Opera autonomamente em grupos de clientes autorizados: detecta demandas, cria tasks no Asana, notifica a equipe e responde o cliente profissionalmente
-- **4 Agentes Especializados** — Roteamento automático por intenção (Master, Creative, Manager, Researcher)
+- **Agente Proativo** — Opera autonomamente em grupos de clientes autorizados: detecta demandas, cria tasks no Asana, notifica a equipe
 - **Memória Persistente** — Extração e consulta de fatos com 3 escopos (pessoas, conversas, operacional)
 - **Aprendizado Passivo** — Aprende de TODA mensagem recebida, mesmo quando não responde
-- **Inteligência Ativa** — Quando não sabe algo, pergunta pra equipe, aprende com a resposta e melhora
 - **Voz Premium** — TTS via ElevenLabs + STT via Whisper, configurável pelo dashboard
-- **Integrações Nativas** — Asana (gestão de projetos) + Google Calendar (captações)
 - **Dashboard Seguro** — SPA com autenticação 2FA via WhatsApp, score de inteligência e gestão de memórias
-- **Estudo Exaustivo** — Ingestão completa do Asana (projetos, tarefas, comentários) para base de conhecimento
-- **Homework via WhatsApp** — Instruções dadas pelo dono via chat são salvas e têm prioridade máxima
+- **13 Tools** — Asana, Google Calendar, Meta Ads, WhatsApp (envio com menções), memórias
 
 ---
 
@@ -56,11 +57,11 @@ Jarvis funciona como um **gerente de projetos virtual 24/7** — recebe mensagen
           │(Loop) │    │    ││TTS││   │       │ (Tools)  │
           └───┬───┘    └────┘└───┘└───┘       └──────────┘
               │              │                      │
-     ┌────────┼────────┐     │         ┌────────────┼────────────┐
-     ▼        ▼        ▼     ▼         ▼            ▼            ▼
- ┌───────┐┌───────┐┌──────┐┌─────┐┌────────┐┌──────────┐┌──────────┐
- │Master ││Creat. ││Manag.││Resr.││  Asana  ││  GCal    ││ Memórias │
- └───────┘└───────┘└──────┘└─────┘└────────┘└──────────┘└──────────┘
+     ┌────────┼────────┐     │    ┌─────────────────┼──────────────────┐
+     ▼        ▼        ▼     ▼    ▼        ▼        ▼        ▼        ▼
+ ┌──────┐┌──────┐┌──────┐┌─────┐┌──────┐┌──────┐┌──────┐┌──────┐┌──────┐
+ │Master││Creat.││Manag.││Resr.││Traff.││Social││ Asana││ GCal ││ Meta │
+ └──────┘└──────┘└──────┘└─────┘└──────┘└──────┘└──────┘└──────┘└──────┘
 ```
 
 ---
@@ -71,7 +72,7 @@ Jarvis funciona como um **gerente de projetos virtual 24/7** — recebe mensagen
 |--------|-----------|--------|
 | Runtime | Node.js (ESM) | 20+ |
 | WhatsApp | Baileys | v7 |
-| IA Principal | Claude API (Anthropic) | Sonnet + Opus |
+| IA Principal | Claude API (Anthropic) | Sonnet 4 + Opus 4 |
 | IA Extração | Claude Haiku | - |
 | TTS | ElevenLabs | v3 |
 | STT | Whisper (OpenAI) | v1 |
@@ -79,6 +80,7 @@ Jarvis funciona como um **gerente de projetos virtual 24/7** — recebe mensagen
 | Cache | Redis | 7 |
 | Gestão de Projetos | Asana API | v1 |
 | Calendário | Google Calendar API | v3 |
+| Tráfego Pago | Meta Graph API | v25.0 |
 | Processo | PM2 | - |
 | Containers | Docker Compose | v2 |
 | CI/CD | GitHub Actions | - |
@@ -89,28 +91,29 @@ Jarvis funciona como um **gerente de projetos virtual 24/7** — recebe mensagen
 ## Estrutura do Projeto
 
 ```
-jarvis-v2.mjs                  # Entry point — WhatsApp + Express + Cron
+jarvis-v2.mjs                     # Entry point — WhatsApp + Express + Cron + Mapeamento
 src/
-├── config.mjs                  # Configurações centrais (100% via .env)
-├── database.mjs                # PostgreSQL — pool, initDB, CRUD
-├── memory.mjs                  # Sistema de memória (Mem0-inspired)
-├── brain.mjs                   # Cérebro IA — Agent Loop + Extended Thinking
-├── audio.mjs                   # TTS (ElevenLabs/OpenAI) + STT (Whisper)
-├── profiles.mjs                # Síntese de perfis (clientes, equipe)
-├── batch-asana.mjs             # Estudo exaustivo do Asana
-├── helpers.mjs                 # Utilitários (getMediaType, extractSender)
+├── config.mjs                    # Configurações centrais (100% via .env)
+├── database.mjs                  # PostgreSQL — pool, initDB, CRUD
+├── memory.mjs                    # Sistema de memória (Mem0-inspired)
+├── brain.mjs                     # Cérebro IA — Agent Loop + Extended Thinking + Anti-leak
+├── audio.mjs                     # TTS (ElevenLabs/OpenAI) + STT (Whisper)
+├── profiles.mjs                  # Síntese de perfis (clientes, equipe, processos)
+├── batch-asana.mjs               # Estudo exaustivo do Asana (3 fases, resumível)
+├── helpers.mjs                   # Utilitários (getMediaType, extractSender)
 ├── agents/
-│   └── master.mjs              # Prompts dos 4 agentes + classificador
+│   └── master.mjs                # Prompts dos 6 agentes + classificador de intenção
 └── skills/
-    └── loader.mjs              # Tools do Claude (Asana + GCal)
+    ├── loader.mjs                # 13 Tools do Claude (Asana + GCal + Meta + WhatsApp)
+    └── meta-ads.mjs              # Meta Ads — Graph API wrapper multi-cliente
 dashboard/
-└── index.html                  # SPA do dashboard (Tailwind, Chart.js)
+└── index.html                    # SPA do dashboard (Tailwind, Chart.js)
 tests/
-└── unit.test.mjs               # Suite de testes (37 casos + scan de credenciais)
+└── unit.test.mjs                 # Suite de testes (47 casos + scan de credenciais)
 .github/workflows/
-├── ci.yml                      # CI — lint + testes
-└── deploy.yml                  # CD — rsync + PM2 restart via SSH
-docker-compose.yml              # PostgreSQL 16 + Redis 7
+├── ci.yml                        # CI — Node 20, npm ci, npm test
+└── deploy.yml                    # CD — rsync + PM2 restart via SSH
+docker-compose.yml                # PostgreSQL 16 + Redis 7
 ```
 
 ---
@@ -163,8 +166,11 @@ Copie `.env.example` e configure todas as variáveis. As principais:
 | `JWT_SECRET` | Secret para tokens JWT do dashboard | ✅ |
 | `API_KEY` | Chave interna da API REST | ✅ |
 | `AI_MODEL` | Modelo principal (ex: `claude-sonnet-4-6`) | ✅ |
-| `AI_MODEL_STRONG` | Modelo forte para queries complexas (ex: `claude-opus-4-0-20250514`) | ✅ |
+| `AI_MODEL_STRONG` | Modelo forte (ex: `claude-opus-4-0-20250514`) | ✅ |
 | `MEMORY_MODEL` | Modelo de extração (ex: `claude-3-haiku-20240307`) | ✅ |
+| `META_ACCESS_TOKEN` | Token Meta Ads (longa duração) | ⚙️ |
+| `META_AD_ACCOUNT_ID` | ID da conta de anúncios | ⚙️ |
+| `META_PAGES_MAP` | JSON: cliente → Page ID | ⚙️ |
 
 > Consulte `.env.example` para a lista completa com valores de exemplo.
 
@@ -176,11 +182,31 @@ O Jarvis classifica a intenção de cada mensagem e roteia para o agente especia
 
 | Agente | Especialidade | Triggers |
 |--------|--------------|----------|
-| **Master** | Conversação geral, personalidade, humor | Default (quando nenhum outro se aplica) |
-| **Creative** | Copy, legendas, roteiros, CTAs | copy, arte, conteúdo, post, legenda... |
-| **Manager** | Gestão de projetos, prazos, Asana | tarefa, prazo, status, cobrança... |
-| **Researcher** | Pesquisa, dados, tendências | pesquisar, dados, benchmark, análise... |
-| **Proativo** | Operação autônoma em grupos de clientes | Ativado por autorização do dono |
+| **Traffic** 📈 | Tráfego pago, Meta Ads, campanhas, métricas | campanha, CPC, CTR, ROAS, ads, verba... |
+| **Social** 📱 | Social media, publicação, calendário editorial | publicar, agendar, post, stories, engajamento... |
+| **Creative** 🎨 | Copy, legendas, roteiros, CTAs | copy, arte, conteúdo, legenda, roteiro... |
+| **Manager** 📋 | Gestão de projetos, prazos, Asana | tarefa, prazo, status, cobrança... |
+| **Researcher** 🔬 | Pesquisa, dados, tendências | pesquisar, dados, benchmark, análise... |
+| **Master** 🎯 | Conversação geral, personalidade | Default (quando nenhum outro se aplica) |
+| **Proativo** 🤖 | Operação autônoma em grupos de clientes | Ativado por autorização do dono |
+
+### Tools Disponíveis (13)
+
+| Tool | Agente | Descrição |
+|------|--------|-----------|
+| `criar_campanha` | Traffic | Cria campanha Meta Ads (sempre pausada) |
+| `relatorio_ads` | Traffic | Relatório de métricas (CPC, CTR, ROAS, CPA) |
+| `pausar_campanha` | Traffic | Pausa ou retoma campanha |
+| `otimizar_campanha` | Traffic | Sugestões de otimização |
+| `agendar_post` | Social | Publica ou agenda post FB/IG |
+| `calendario_editorial` | Social | Consulta/planeja grade de conteúdo |
+| `metricas_post` | Social | Métricas de posts orgânicos |
+| `consultar_tarefas` | Manager | Busca tarefas no Asana |
+| `criar_demanda_cliente` | Manager | Cria task com custom fields |
+| `agendar_captacao` | Manager | Cria evento no Google Calendar + task |
+| `enviar_mensagem_grupo` | Todos | Envia mensagem com @menções reais |
+| `anexar_midia_asana` | Manager | Upload de mídia como anexo em task |
+| `lembrar` | Todos | Registra fato na memória |
 
 ### Agente Proativo
 
@@ -191,8 +217,16 @@ Quando autorizado via WhatsApp ("autorizo você a operar no cliente X"), o Jarvi
 - **Cria tasks no Asana** — Projeto correto, responsável correto, baseado no que já aprendeu
 - **Notifica a equipe** — Avisa no grupo interno sobre novas demandas
 - **Pergunta quando não sabe** — Em vez de travar, pergunta pra equipe e aprende com a resposta
-- **Consolida mensagens** — Buffer de 15s para clientes que mandam várias msgs rápidas
-- **Rate limit** — 30s entre respostas no mesmo grupo (evita spam)
+- **Anti-vazamento** — Filtro duplo garante que informações internas nunca cheguem ao cliente
+
+### Sistema de Menções
+
+Para menções funcionarem no WhatsApp (highlight azul + push notification), o Jarvis:
+
+1. Mapeia **todos os contatos** no boot (grupos internos + clientes + banco de dados)
+2. Resolve nomes via 3 tiers: **exato** → **parcial** → **fuzzy** (Levenshtein ≤ 2)
+3. Substitui `@NomePessoa` por `@número` no texto antes de enviar
+4. Envia com array `mentions` contendo JIDs `@s.whatsapp.net`
 
 ---
 
@@ -229,6 +263,7 @@ Quando autorizado via WhatsApp ("autorizo você a operar no cliente X"), o Jarvi
 | `GET` | `/dashboard/memory/recent` | Memórias recentes |
 | `POST` | `/dashboard/memory/add` | Adicionar memória manualmente |
 | `POST` | `/dashboard/chat` | Chat com Jarvis via dashboard |
+| `GET` | `/dashboard/agents` | Agentes e distribuição de conhecimento |
 | `GET` | `/dashboard/profiles` | Listar perfis sintetizados |
 | `POST` | `/dashboard/asana/study/start` | Iniciar estudo exaustivo do Asana |
 | `GET` | `/dashboard/asana/study/status` | Progresso do estudo em tempo real |
@@ -238,14 +273,16 @@ Quando autorizado via WhatsApp ("autorizo você a operar no cliente X"), o Jarvi
 
 ## Dashboard
 
-SPA com interface temática do JARVIS (Iron Man). Funcionalidades:
+SPA com interface temática do JARVIS (Iron Man). Acesso via **guardiaolab.com.br**.
 
 - **Score de Inteligência** — Radar com 6 eixos + sistema de patentes (Recruta → Diretor da S.H.I.E.L.D.)
+- **6 Agentes** — Cards com especialidades, triggers e contagem de memórias relevantes
+- **Distribuição de Conhecimento** — Barras visuais por categoria (clientes, processos, prazos, etc.)
+- **Quem o Jarvis Mais Conhece** — Top 15 entidades com mais memórias
 - **Gestão de Memórias** — Busca, filtro por escopo, adição manual
 - **Configuração de Voz** — Sliders para stability, similarity, style (ElevenLabs)
 - **Chat Integrado** — Conversar com Jarvis diretamente pelo dashboard
-- **Estudo do Asana** — Painel com progresso em tempo real (projetos, tarefas, comentários)
-- **Perfis** — Visualização de perfis sintetizados (clientes, equipe, processos)
+- **Estudo do Asana** — Painel com progresso em tempo real
 - **Segurança** — Login com 2FA via WhatsApp, log de acessos com geolocalização
 
 ---
@@ -262,13 +299,14 @@ SPA com interface temática do JARVIS (Iron Man). Funcionalidades:
 - Rate limiting: 10 tentativas/min por IP
 - Alerta via WhatsApp para IPs desconhecidos
 - Geolocalização de acessos via ip-api.com
+- Anti-vazamento de informações internas em grupos de clientes
 - **Zero segredos no código** — scan automático nos testes
 
 ### Arquivos Sensíveis (NÃO versionados)
 - `.env` — todas as credenciais
 - `auth_session/` — sessão do WhatsApp
 - `google-calendar-key.json` — service account do GCal
-- `audio_files/` — áudios temporários
+- `audio_files/` e `media_files/` — mídias temporárias
 
 ---
 
@@ -279,7 +317,7 @@ git push origin master
   │
   ├─ CI (ci.yml)
   │   ├─ Node 20 + npm ci
-  │   └─ npm test (37 testes + scan de credenciais)
+  │   └─ npm test (47 testes + scan de credenciais)
   │
   └─ Deploy (deploy.yml) — executa apenas se CI passou
       ├─ SSH via chave Ed25519 (GitHub Secrets)
@@ -301,14 +339,16 @@ git push origin master
 npm test
 ```
 
-**37 casos de teste cobrindo:**
+**47 casos de teste cobrindo:**
 - Detecção de tipos de mídia (`getMediaType`)
 - Extração de remetente em DMs e grupos (`extractSender`)
 - Validação de respostas do Jarvis (`isValidResponse`)
 - Roteamento de agentes por intenção (`classifyIntent`)
-- Managed Clients — ativação/desativação de clientes gerenciados (`isManagedClientGroup`)
-- Agente Proativo — exports e callback de envio (`handleManagedClientMessage`, `registerSendFunction`)
+- Managed Clients — ativação/desativação (`isManagedClientGroup`)
+- Agente Proativo — exports e callbacks (`handleManagedClientMessage`, `registerSendFunction`)
+- Anti-alucinação — bloqueia respostas fabricadas sem base em tools
 - Model Routing — `AI_MODEL_STRONG` existe e é configurável
+- Mídia e Upload — tools de anexo existem e aceitam parâmetros
 - Documentação do `.env.example`
 - **Scan de credenciais** — varre todos os `.mjs` por chaves/tokens hardcoded
 
@@ -317,17 +357,10 @@ npm test
 ## Docker
 
 ```bash
-# Subir serviços
-docker compose up -d
-
-# Verificar status
-docker compose ps
-
-# Logs
-docker compose logs -f
-
-# Parar
-docker compose down
+docker compose up -d       # Subir serviços
+docker compose ps          # Verificar status
+docker compose logs -f     # Logs
+docker compose down        # Parar
 ```
 
 | Serviço | Imagem | Porta | Volume |
@@ -339,15 +372,31 @@ Ambos com health check e bind exclusivo em localhost (sem exposição externa).
 
 ---
 
-## PM2
+## Changelog
 
-```bash
-pm2 start jarvis-v2.mjs --name jarvis   # Iniciar
-pm2 restart jarvis                        # Reiniciar
-pm2 logs jarvis                           # Logs em tempo real
-pm2 status                                # Status
-pm2 save                                  # Salvar processos
-```
+### v4.0.0 (2026-03-16)
+- 6 agentes especializados (+ Traffic e Social)
+- Meta Ads multi-cliente (7 tools, 15+ páginas)
+- Menções inteligentes com fuzzy matching
+- Anti-vazamento em grupos de clientes
+- Mapeamento massivo de contatos via histórico
+- Dashboard v4.0 com 6 agentes e scroll otimizado
+
+### v3.0.0 (2026-03-01)
+- Arquitetura Claude Code (Agent Loop, Extended Thinking, Prompt Caching)
+- Model Routing dinâmico (Sonnet/Opus)
+- Anti-alucinação
+- Dashboard com 2FA via WhatsApp
+
+### v2.0.0 (2026-02-01)
+- Agente Proativo para clientes gerenciados
+- Tools: criar_demanda_cliente, enviar_mensagem_grupo, anexar_midia_asana
+- Sistema de memória Mem0-inspired
+
+### v1.0.0 (2026-01-01)
+- Bot WhatsApp básico com Claude API
+- Integração Asana + Google Calendar
+- TTS/STT
 
 ---
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JARVIS 3.0 | Guardiao Lab</title>
+  <title>JARVIS 4.0 | Guardiao Lab</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
@@ -227,7 +227,7 @@
           <div class="w-3 h-3 rounded-full bg-stark-blue pulse-dot"></div>
         </div>
         <h1 class="font-orbitron text-stark-blue text-lg tracking-widest glow-blue">JARVIS</h1>
-        <span class="text-xs text-stark-dim font-mono">v3.0</span>
+        <span class="text-xs text-stark-dim font-mono">v4.0</span>
       </div>
 
       <!-- Nav Tabs -->
@@ -927,7 +927,7 @@
     <div id="tab-agents" class="tab-content hidden space-y-6">
 
       <!-- Agent Cards -->
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" id="agents-cards">
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="agents-cards">
         <!-- Populated by JS -->
       </div>
 
@@ -958,7 +958,7 @@
         <!-- Knowledge Distribution -->
         <div class="panel p-5">
           <h3 class="font-orbitron text-sm text-stark-cyan mb-4 tracking-wider" style="color:#00f0ff">DISTRIBUIÇÃO DE CONHECIMENTO</h3>
-          <div id="knowledge-bars" class="space-y-3">
+          <div id="knowledge-bars" class="space-y-3 max-h-[400px] overflow-y-auto pr-2" style="scrollbar-width: thin; scrollbar-color: #1e3a5f #0a1628;">
             <!-- Populated by JS -->
           </div>
         </div>
@@ -1028,7 +1028,7 @@
         <!-- Top Entities Known -->
         <div class="panel p-5">
           <h3 class="font-orbitron text-sm text-stark-cyan mb-4 tracking-wider" style="color:#00f0ff">QUEM O JARVIS MAIS CONHECE</h3>
-          <div id="top-entities" class="space-y-2">
+          <div id="top-entities" class="space-y-2 max-h-[400px] overflow-y-auto pr-1" style="scrollbar-width: thin; scrollbar-color: #1e3a5f #0a1628;">
             <!-- Populated by JS -->
           </div>
         </div>
@@ -1413,7 +1413,7 @@
         // API retorna data.ai.model
         const model = data.ai?.model || '--';
         document.getElementById('stat-model').textContent = model.replace('claude-', '').replace('-20250514', '');
-        document.getElementById('stat-version').textContent = 'Jarvis 3.0';
+        document.getElementById('stat-version').textContent = 'Jarvis 4.0';
         // Contar chaves configuradas
         const keyCount = [data.ai?.model, data.asana?.workspace, data.whatsapp?.groupTarefas].filter(Boolean).length;
         document.getElementById('api-keys-status').textContent = `${keyCount} servicos`;
@@ -2323,18 +2323,38 @@
         // === Top Entities ===
         const topEl = document.getElementById('top-entities');
         const scopeColors = { agent: '#00ff88', user: '#00d4ff', chat: '#7b61ff' };
-        const scopeLabels = { agent: 'Asana', user: 'Pessoa', chat: 'Conversa' };
-        topEl.innerHTML = (data.topEntities || []).map((e, i) => {
+        const scopeLabels = { agent: 'Operacional', user: 'Pessoa', chat: 'Conversa' };
+        // Formatar nomes: "asana:maria_alice_borges" → "Maria Alice Borges", JIDs de grupo → "Grupo"
+        function formatEntityName(id) {
+          if (!id) return '?';
+          if (id.endsWith('@g.us')) return '💬 Grupo';
+          const clean = id.replace(/^asana:/, '').replace(/_/g, ' ');
+          return clean.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        }
+        // Agrupar entidades por nome limpo (merge user+chat do mesmo scope_id)
+        const entityMap = new Map();
+        for (const e of (data.topEntities || [])) {
+          const name = formatEntityName(e.entity_id);
+          const key = name + '_' + e.scope;
+          if (entityMap.has(name) && e.scope !== 'chat') {
+            entityMap.get(name).cnt += e.cnt;
+          } else if (!entityMap.has(name)) {
+            entityMap.set(name, { name, scope: e.scope, cnt: e.cnt });
+          }
+        }
+        const sortedEntities = [...entityMap.values()].sort((a, b) => b.cnt - a.cnt).slice(0, 15);
+        topEl.innerHTML = sortedEntities.map((e, i) => {
           const color = scopeColors[e.scope] || '#3a4a6b';
           const badge = scopeLabels[e.scope] || e.scope;
+          const cntFormatted = e.cnt >= 1000 ? (e.cnt / 1000).toFixed(1) + 'k' : e.cnt;
           return `
             <div class="flex items-center justify-between p-2 rounded ${i < 3 ? 'bg-stark-bg border border-stark-border' : ''}">
               <div class="flex items-center gap-2">
                 <span class="text-[10px] font-mono text-stark-dim w-5">#${i + 1}</span>
-                <span class="text-xs text-white truncate max-w-[180px]">${e.entity_id}</span>
+                <span class="text-xs text-white truncate max-w-[180px]">${e.name}</span>
                 <span class="text-[8px] px-1.5 py-0.5 rounded border" style="color:${color};border-color:${color}40">${badge}</span>
               </div>
-              <span class="text-xs font-mono" style="color:${color}">${e.cnt}</span>
+              <span class="text-xs font-mono" style="color:${color}">${cntFormatted}</span>
             </div>`;
         }).join('');
 

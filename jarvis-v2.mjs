@@ -19,7 +19,7 @@ import { fileURLToPath } from 'url';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 
-// Módulos do Jarvis 3.0
+// Módulos do Jarvis 4.0
 import { CONFIG, AUDIO_ALLOWED, teamPhones, teamWhatsApp, managedClients, loadManagedClients, saveManagedClients, isManagedClientGroup } from './src/config.mjs';
 import { pool, initDB, storeMessage, getRecentMessages, getContactInfo, getGroupInfo, upsertContact, upsertGroup, getMessageCount } from './src/database.mjs';
 import { initMemory, processMemory, getMemoryContext, getMemoryStats, searchMemories, storeFacts, extractFacts } from './src/memory.mjs';
@@ -845,7 +845,7 @@ app.get('/status', auth, async (req, res) => {
   res.json({
     status: connectionStatus, version: CONFIG.JARVIS_VERSION,
     messages_stored: msgCount, memories_stored: memStats.total,
-    ai_model: CONFIG.AI_MODEL, architecture: 'Jarvis 3.0 - Agent Loop + Extended Thinking + Prompt Caching',
+    ai_model: CONFIG.AI_MODEL, architecture: 'Jarvis 4.0 - Agent Loop + Extended Thinking + Prompt Caching',
   });
 });
 
@@ -906,10 +906,10 @@ app.get('/dashboard/agents', auth, async (req, res) => {
 
     // 9. Top entidades com mais memórias (quem o Jarvis mais conhece)
     const topEntities = await pool.query(`
-      SELECT entity_id, scope, COUNT(*)::int as cnt
+      SELECT scope_id as entity_id, scope, COUNT(*)::int as cnt
       FROM jarvis_memories
-      WHERE entity_id IS NOT NULL AND entity_id != ''
-      GROUP BY entity_id, scope
+      WHERE scope_id IS NOT NULL AND scope_id != ''
+      GROUP BY scope_id, scope
       ORDER BY cnt DESC
       LIMIT 15
     `).catch(() => ({ rows: [] }));
@@ -932,7 +932,7 @@ app.get('/dashboard/agents', auth, async (req, res) => {
         icon: '🎨',
         cor: '#a855f7',
         especialidade: 'Copy, legendas, roteiros, CTAs, conteúdo criativo',
-        triggers: 'copy, arte, conteúdo, post, legenda, roteiro, headline',
+        triggers: 'copy, arte, conteúdo, legenda, roteiro, headline, CTA',
         capabilities: ['Copywriting', 'Legendas para redes', 'Roteiros de vídeo', 'Headlines e CTAs'],
         memoriasRelevantes: (catMap.style?.count || 0) + (catMap.pattern?.count || 0) + (catMap.client_profile?.count || 0),
       },
@@ -955,6 +955,26 @@ app.get('/dashboard/agents', auth, async (req, res) => {
         triggers: 'pesquisar, dados, benchmark, tendência, análise, relatório',
         capabilities: ['Busca na memória (RAG)', 'Análise de dados', 'Relatórios', 'Tendências'],
         memoriasRelevantes: (scopeMap.agent || 0),
+      },
+      {
+        id: 'traffic',
+        nome: 'Traffic',
+        icon: '📈',
+        cor: '#ff6b35',
+        especialidade: 'Tráfego pago, Meta Ads, campanhas, métricas',
+        triggers: 'campanha, CPC, CTR, CPM, ROAS, ads, verba, tráfego, pixel, anúncio',
+        capabilities: ['Criar campanhas Meta Ads', 'Relatório de métricas', 'Pausar/ativar campanhas', 'Otimização de verba'],
+        memoriasRelevantes: (catMap.client?.count || 0) + (catMap.process?.count || 0),
+      },
+      {
+        id: 'social',
+        nome: 'Social',
+        icon: '📱',
+        cor: '#ec4899',
+        especialidade: 'Social media, publicação, calendário editorial',
+        triggers: 'publicar, agendar, post, stories, reels, engajamento, alcance, calendário editorial',
+        capabilities: ['Agendar posts FB/IG', 'Calendário editorial', 'Métricas orgânicas', 'Melhores horários'],
+        memoriasRelevantes: (catMap.client_profile?.count || 0) + (catMap.pattern?.count || 0),
       },
     ];
 
@@ -1073,7 +1093,7 @@ app.get('/dashboard/config', auth, async (req, res) => {
     res.json({
       api: { port: CONFIG.API_PORT }, ai: { model: CONFIG.AI_MODEL },
       asana: { workspace: CONFIG.ASANA_WORKSPACE }, whatsapp: { groupTarefas: CONFIG.GROUP_TAREFAS },
-      architecture: 'Jarvis 3.0 - Agent Loop',
+      architecture: 'Jarvis 4.0 - Agent Loop',
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -2004,6 +2024,100 @@ function setupCronJobs() {
 }
 
 // ============================================
+// BACKGROUND: Mapear TODOS os contatos conhecidos
+// ============================================
+async function mapAllKnownGroups(sock) {
+  try {
+    console.log('[MAP-ALL] Iniciando mapeamento de todos os contatos conhecidos...');
+    let mapped = 0;
+
+    // 1) Contatos do banco (jarvis_contacts) — histórico completo de quem já mandou msg
+    const { rows: contacts } = await pool.query(
+      `SELECT jid, push_name FROM jarvis_contacts WHERE push_name IS NOT NULL AND push_name != '' AND jid LIKE '%@s.whatsapp.net'`
+    );
+    for (const c of contacts) {
+      const firstName = c.push_name.split(' ')[0].toLowerCase();
+      if (!teamWhatsApp.has(firstName)) {
+        teamWhatsApp.set(firstName, c.jid);
+        mapped++;
+      }
+      // Alias limpo (só letras)
+      const cleanName = firstName.replace(/[^a-záàâãéêíóôõúç]/gi, '').toLowerCase();
+      if (cleanName && cleanName !== firstName && !teamWhatsApp.has(cleanName)) {
+        teamWhatsApp.set(cleanName, c.jid);
+      }
+      // Nome completo sem emojis
+      const fullClean = c.push_name.replace(/[^a-záàâãéêíóôõúç\s]/gi, '').trim().toLowerCase();
+      if (fullClean && fullClean !== firstName && !teamWhatsApp.has(fullClean)) {
+        teamWhatsApp.set(fullClean, c.jid);
+      }
+      // teamPhones também
+      if (!teamPhones.has(firstName)) {
+        teamPhones.set(firstName, c.jid);
+      }
+    }
+    console.log(`[MAP-ALL] ${contacts.length} contatos do banco processados (${mapped} novos mapeados)`);
+
+    // 2) Contatos com @lid — tentar resolver via mensagens que contenham o mesmo push_name
+    const { rows: lidContacts } = await pool.query(
+      `SELECT jid, push_name FROM jarvis_contacts WHERE push_name IS NOT NULL AND push_name != '' AND jid LIKE '%@lid'`
+    );
+    for (const c of lidContacts) {
+      const firstName = c.push_name.split(' ')[0].toLowerCase();
+      if (teamWhatsApp.has(firstName)) continue; // já mapeado com @s.whatsapp.net
+      // Tentar achar o mesmo push_name em mensagens com JID @s.whatsapp.net
+      const { rows: phoneMatch } = await pool.query(
+        `SELECT DISTINCT sender FROM jarvis_messages WHERE push_name = $1 AND sender LIKE '%@s.whatsapp.net' LIMIT 1`,
+        [c.push_name]
+      );
+      if (phoneMatch.length > 0) {
+        teamWhatsApp.set(firstName, phoneMatch[0].sender);
+        if (!teamPhones.has(firstName)) teamPhones.set(firstName, phoneMatch[0].sender);
+        mapped++;
+      }
+    }
+    console.log(`[MAP-ALL] ${lidContacts.length} contatos @lid processados (tentativa de resolução)`);
+
+    // 3) Grupos conhecidos — tentar groupMetadata para pegar phoneNumber dos participantes
+    const { rows: groups } = await pool.query(
+      `SELECT jid, name FROM jarvis_groups WHERE jid LIKE '%@g.us'`
+    );
+    let groupsMapped = 0;
+    for (const g of groups) {
+      // Pular grupos que já foram mapeados no boot (internos + clientes gerenciados)
+      if (g.jid === CONFIG.GROUP_TAREFAS || g.jid === CONFIG.GROUP_GALAXIAS) continue;
+      if (managedClients.has(g.jid)) continue;
+      try {
+        const meta = await sock.groupMetadata(g.jid);
+        for (const p of meta.participants) {
+          const mentionJid = p.phoneNumber || p.id;
+          if (!mentionJid.includes('@s.whatsapp.net')) continue;
+          const contact = await getContactInfo(p.id);
+          const contactByPhone = p.phoneNumber ? await getContactInfo(p.phoneNumber) : null;
+          const pushName = contact?.push_name || contactByPhone?.push_name || p.notify;
+          if (pushName) {
+            const firstName = pushName.split(' ')[0].toLowerCase();
+            if (!teamWhatsApp.has(firstName)) {
+              teamWhatsApp.set(firstName, mentionJid);
+              if (!teamPhones.has(firstName)) teamPhones.set(firstName, mentionJid);
+            }
+          }
+        }
+        groupsMapped++;
+        // Rate limit: não sobrecarregar a API do WhatsApp
+        if (groupsMapped % 5 === 0) await new Promise(r => setTimeout(r, 2000));
+      } catch {
+        // Grupo que o bot não participa mais — ignorar silenciosamente
+      }
+    }
+    console.log(`[MAP-ALL] ${groupsMapped}/${groups.length} grupos adicionais mapeados via metadata`);
+    console.log(`[MAP-ALL] Total: ${teamWhatsApp.size} contatos no mapa de menções`);
+  } catch (err) {
+    console.error('[MAP-ALL] Erro:', err.message);
+  }
+}
+
+// ============================================
 // WHATSAPP CONNECTION
 // ============================================
 async function startWhatsApp() {
@@ -2160,6 +2274,9 @@ async function startWhatsApp() {
           console.log(`[TEAM] ${realTeamJids.size} membros da equipe real identificados`);
           console.log(`[TEAM] ${teamWhatsApp.size} contatos mapeados para menções`);
           console.log('[TEAM] Mapeamento:', JSON.stringify(Object.fromEntries(teamWhatsApp)));
+
+          // Background: mapear TODOS os grupos conhecidos (30s depois, sem bloquear boot)
+          setTimeout(() => mapAllKnownGroups(sock), 25000);
         } catch (err) { console.error('[TEAM] Erro:', err.message); }
       }, 5000);
     }
@@ -2182,7 +2299,7 @@ async function startWhatsApp() {
 // STARTUP
 // ============================================
 console.log('============================================');
-console.log('  JARVIS v3.0 - Stream Lab AI Bot');
+console.log('  JARVIS v4.0 - Stream Lab AI Bot');
 console.log('  Arquitetura: Modular + Agent Teams + Mem0');
 console.log('  AI: Claude Sonnet 4.6 (Anthropic)');
 console.log('  Audio: Whisper (STT) + ElevenLabs (TTS)');
