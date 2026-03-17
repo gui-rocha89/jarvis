@@ -165,110 +165,94 @@ function parseAsanaEmail(parsed) {
 // GERAR RESPOSTA INTELIGENTE
 // ============================================
 async function generateMentionResponse(taskGid, commenterName, commentText, taskName) {
-  // 1. Buscar detalhes da task no Asana
+  // 1. Buscar TUDO da task — descrição completa + todos os comentários
   let taskDetails = null;
-  let recentComments = [];
+  let recentComments = '';
   try {
-    const taskData = await asanaRequest(`/tasks/${taskGid}?opt_fields=name,notes,assignee.name,due_on,completed,memberships.project.name`);
+    const taskData = await asanaRequest(`/tasks/${taskGid}?opt_fields=name,notes,assignee.name,due_on,completed,memberships.project.name,custom_fields.name,custom_fields.display_value`);
     taskDetails = taskData?.data || null;
 
-    // Últimos comentários da task
-    const stories = await asanaRequest(`/tasks/${taskGid}/stories?opt_fields=text,created_by.name,created_at,type&limit=10`);
+    // TODOS os comentários — não só os últimos 5
+    const stories = await asanaRequest(`/tasks/${taskGid}/stories?opt_fields=text,created_by.name,created_at,type&limit=50`);
     recentComments = (stories?.data || [])
       .filter(s => s.type === 'comment' && s.text)
-      .slice(-5)
-      .map(s => `${s.created_by?.name || '?'}: ${s.text.substring(0, 200)}`)
+      .slice(-20) // últimos 20 comentários — contexto completo
+      .map(s => `${s.created_by?.name || '?'}: ${s.text.substring(0, 500)}`)
       .join('\n');
   } catch (e) {
     console.error('[EMAIL] Erro ao buscar task:', e.message);
   }
 
-  // 2. Buscar memórias relevantes (rápido — limite reduzido pra velocidade)
+  // 2. Buscar memórias relevantes
   let memories = [];
   try {
     const searchTerms = [taskName, commenterName, commentText].filter(Boolean).join(' ');
-    memories = await searchMemories(searchTerms, null, null, 5);
+    memories = await searchMemories(searchTerms, null, null, 8);
   } catch {}
 
-  // Top memórias (conhecimento fundamental — limite reduzido)
-  let topMemories = [];
-  try {
-    const { pool: dbPool } = await import('./database.mjs');
-    const { rows } = await dbPool.query(
-      `SELECT content, category FROM jarvis_memories WHERE importance >= 9 ORDER BY importance DESC LIMIT 5`
-    );
-    topMemories = rows;
-  } catch {}
+  const memoryContext = memories.length > 0
+    ? memories.map(m => `- [${m.category}] ${m.content}`).join('\n')
+    : '';
 
-  const memoryContext = [
-    ...(topMemories.length > 0 ? ['CONHECIMENTO FUNDAMENTAL:', ...topMemories.map(m => `- [${m.category}] ${m.content}`)] : []),
-    ...(memories.length > 0 ? ['\nMEMÓRIAS RELEVANTES:', ...memories.map(m => `- [${m.category}] ${m.content}`)] : []),
-  ].join('\n') || 'Sem memórias relevantes encontradas.';
+  // 3. Montar contexto — descrição COMPLETA, custom fields, tudo
+  const customFields = (taskDetails?.custom_fields || [])
+    .filter(f => f.display_value)
+    .map(f => `${f.name}: ${f.display_value}`)
+    .join('\n');
 
-  // 3. Montar contexto
   const taskContext = taskDetails ? [
     `Task: ${taskDetails.name}`,
     taskDetails.assignee?.name ? `Responsável: ${taskDetails.assignee.name}` : null,
     taskDetails.due_on ? `Prazo: ${taskDetails.due_on}` : null,
     `Status: ${taskDetails.completed ? 'Concluída' : 'Pendente'}`,
     taskDetails.memberships?.[0]?.project?.name ? `Projeto: ${taskDetails.memberships[0].project.name}` : null,
-    taskDetails.notes ? `Descrição: ${taskDetails.notes.substring(0, 300)}` : null,
+    customFields || null,
+    taskDetails.notes ? `Descrição completa:\n${taskDetails.notes.substring(0, 2000)}` : 'Descrição: (vazia)',
   ].filter(Boolean).join('\n') : `Task: ${taskName || 'desconhecida'}`;
 
-  // 4. Chamar Claude (Sonnet pra velocidade — resposta em Asana precisa ser rápida)
+  // 4. Chamar Claude — Sonnet pra velocidade
   const model = CONFIG.AI_MODEL || 'claude-sonnet-4-20250514';
   const response = await anthropic.messages.create({
     model,
-    max_tokens: 4096,
-    system: `Você é o Jarvis, assistente de IA da agência de marketing Stream Lab. Estilo: direto, útil, personalidade inspirada no Jarvis do Tony Stark mas profissional.
+    max_tokens: 2048,
+    system: `Você é o Jarvis, assistente de IA da agência de marketing Stream Lab. Personalidade inspirada no Jarvis do Iron Man — direto, inteligente, proativo.
 
 Você foi @mencionado em um comentário de uma task no Asana.
 
-⚠️ REGRA CRÍTICA DE COMPREENSÃO CONVERSACIONAL:
-Antes de responder, analise COM CUIDADO:
-1. QUEM está falando? (o autor do comentário)
-2. PARA QUEM ele está falando? (pode ser pra outra pessoa, não pra você!)
-3. QUAL é o papel do Jarvis neste comentário? Possibilidades:
-   a) O pedido é DIRETAMENTE para o Jarvis → responda normalmente
-   b) O Jarvis foi mencionado como REFERÊNCIA (ex: "marca o Jarvis", "avisa o Jarvis") → reconheça que foi avisado e diga que está acompanhando
-   c) O pedido é para OUTRA PESSOA e o Jarvis só foi tagado pra ficar ciente → NÃO execute o pedido, apenas confirme que está acompanhando
+REGRAS DE COMPORTAMENTO:
+1. NUNCA comece com o nome da pessoa (ex: "Fala, Gui!" ou "Oi Gui"). Você está respondendo em uma thread — eles já sabem que é pra eles.
+2. NUNCA diga "não tenho contexto" ou "preciso de mais informações" se os dados estão nos comentários/descrição. LEIA tudo que foi fornecido antes de responder.
+3. Se te pedem pra agir/resolver → AJA. Dê a resposta, sugira o plano, proponha a solução. NÃO fique fazendo perguntas — resolva com o que tem.
+4. Só pergunte algo se REALMENTE não tem a informação em lugar nenhum (nem na task, nem nos comentários, nem nas memórias).
+5. Seja CONCISO — Asana não é lugar pra textão. Máximo 3-4 parágrafos curtos.
 
-EXEMPLOS:
-- "Jarvis, me lista as tarefas atrasadas" → pedido PARA o Jarvis → responde com as tarefas
-- "Bruna me confirma as artes e marca o Jarvis" → pedido PARA a Bruna, Jarvis só foi tagado → responde "Entendido! Vou acompanhar. Assim que a Bruna confirmar as artes, já fico de olho."
-- "@Jarvis qual o status dessa task?" → pedido PARA o Jarvis → responde com o status
-- "Nicolas finaliza isso e avisa o Jarvis quando tiver pronto" → pedido PARA o Nicolas → responde "Anotado! Fico no aguardo da finalização do Nicolas."
+COMPREENSÃO CONVERSACIONAL:
+- Se o pedido é PARA você → responda/aja
+- Se você foi tagado só como referência (ex: "avisa o Jarvis") → confirme brevemente que está acompanhando
+- Se o pedido é para outra pessoa → só confirme que está ciente
 
-REGRAS:
-- Responda como COMENTÁRIO no Asana (sem formatação HTML, só texto plain)
-- Seja direto e útil
-- Se te pedirem ajuda com estratégia/ideias, dê sugestões concretas
-- Se te pedirem status, dê o status baseado nos dados da task e memórias
-- Use as memórias do contexto para personalizar a resposta — você TEM conhecimento acumulado, USE-O
-- NUNCA altere a descrição da task — apenas comente
-- Português com acentos sempre
-- Se não sabe algo, diga com honestidade — não invente`,
+FORMATO:
+- Texto plain (sem HTML, sem markdown, sem *negrito*, sem listas com -)
+- Português com acentos
+- NUNCA altere a descrição da task`,
     messages: [{
       role: 'user',
-      content: `Comentário na task do Asana:
+      content: `TASK NO ASANA:
 
---- DETALHES DA TASK ---
 ${taskContext}
 
---- ÚLTIMOS COMENTÁRIOS ---
-${recentComments || 'Nenhum comentário anterior.'}
+HISTÓRICO DE COMENTÁRIOS:
+${recentComments || '(sem comentários anteriores)'}
 
---- COMENTÁRIO QUE TE MENCIONOU ---
+COMENTÁRIO QUE TE MENCIONOU:
 ${commenterName}: ${commentText}
 
---- CONTEXTO DA MEMÓRIA (conhecimento acumulado) ---
-${memoryContext}
+${memoryContext ? `MEMÓRIAS RELEVANTES:\n${memoryContext}` : ''}
 
-Analise o contexto conversacional: o pedido é PRA VOCÊ ou pra outra pessoa? Responda adequadamente:`
+Responda ao comentário de forma direta e útil:`
     }],
   });
 
-  // Extrair texto (ignorar thinking blocks)
   const textBlock = response.content?.find(b => b.type === 'text');
   return textBlock?.text || '';
 }
