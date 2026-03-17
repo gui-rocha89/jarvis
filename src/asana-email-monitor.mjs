@@ -5,14 +5,12 @@
 // ============================================
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
-import Anthropic from '@anthropic-ai/sdk';
 import { CONFIG } from './config.mjs';
 import { pool } from './database.mjs';
 import { searchMemories } from './memory.mjs';
-import { asanaAddComment, asanaRequest } from './skills/loader.mjs';
+import { asanaAddComment, asanaRequest, JARVIS_TOOLS } from './skills/loader.mjs';
 import { JARVIS_IDENTITY, CHANNEL_CONTEXT } from './agents/master.mjs';
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
+import { agentLoop } from './brain.mjs';
 
 // Estado do monitor (exposto pro dashboard)
 export const emailMonitorState = {
@@ -249,15 +247,10 @@ async function generateMentionResponse(taskGid, commenterName, commentText, task
     taskDetails.notes ? `Descrição completa:\n${taskDetails.notes.substring(0, 2000)}` : 'Descrição: (vazia)',
   ].filter(Boolean).join('\n') : `Task: ${taskName || 'desconhecida'}`;
 
-  // 4. Chamar Claude — Sonnet pra velocidade
+  // 4. Chamar Claude com Agent Loop + Tools — MESMO CÉREBRO de todos os canais
   const model = CONFIG.AI_MODEL || 'claude-sonnet-4-20250514';
-  const response = await anthropic.messages.create({
-    model,
-    max_tokens: 2048,
-    system: `${JARVIS_IDENTITY}\n\n${CHANNEL_CONTEXT.asana}`,
-    messages: [{
-      role: 'user',
-      content: `TASK NO ASANA:
+  const systemPrompt = `${JARVIS_IDENTITY}\n\n${CHANNEL_CONTEXT.asana}`;
+  const userMessage = `TASK NO ASANA:
 
 ${taskContext}
 
@@ -269,12 +262,19 @@ ${commenterName}: ${actualComment}
 
 ${memoryContext ? `MEMÓRIAS RELEVANTES:\n${memoryContext}` : ''}
 
-Responda ao comentário de forma direta e útil:`
-    }],
-  });
+Responda ao comentário de forma direta e útil. Se a pessoa pediu uma AÇÃO (criar campanha, consultar dados, etc.), USE AS TOOLS disponíveis para EXECUTAR.`;
 
-  const textBlock = response.content?.find(b => b.type === 'text');
-  return textBlock?.text || '';
+  const { text: finalText } = await agentLoop(
+    model,
+    systemPrompt,
+    [{ role: 'user', content: userMessage }],
+    JARVIS_TOOLS,
+    { channel: 'asana', taskGid },
+    { thinking: false, maxTokens: 4096 } // Sem thinking pra velocidade no Asana
+  );
+
+  console.log(`[EMAIL] agentLoop concluído — resposta: ${finalText.length} chars`);
+  return finalText || '';
 }
 
 // ============================================

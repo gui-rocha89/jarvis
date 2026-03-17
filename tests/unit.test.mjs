@@ -413,6 +413,11 @@ describe('Colaboração Multi-Agente', () => {
       assert.ok(AGENT_PROMPTS[agent].includes('JARVIS'), `AGENT_PROMPTS.${agent} não contém identidade`);
     }
   });
+
+  it('agentLoop é exportado do brain.mjs (cérebro compartilhado entre canais)', async () => {
+    const { agentLoop } = await import('../src/brain.mjs');
+    assert.ok(typeof agentLoop === 'function', 'agentLoop não é uma função');
+  });
 });
 
 // ============================================

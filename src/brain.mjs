@@ -66,35 +66,34 @@ function chooseModel(text, intent, context = {}) {
  *
  * Retorna { text, mentions, toolResults }
  */
-async function agentLoop(model, systemPrompt, messages, tools, context = {}) {
+export async function agentLoop(model, systemPrompt, messages, tools, context = {}, options = {}) {
   let currentMessages = [...messages];
   let finalText = '';
   const allMentions = [];
   const toolsUsed = new Set(); // Rastrear tools usadas (anti-alucinação)
   let iterations = 0;
 
-  // Configurar thinking baseado no modelo
-  const useThinking = true;
-  const thinkingConfig = model.includes('opus')
-    ? { type: 'enabled', budget_tokens: 8192 }
-    : { type: 'enabled', budget_tokens: 4096 };
+  // Configurar thinking — pode ser desabilitado via options.thinking = false
+  const useThinking = options.thinking !== false;
+  const thinkingConfig = useThinking
+    ? { type: 'enabled', budget_tokens: options.thinkingBudget || (model.includes('opus') ? 8192 : 4096) }
+    : undefined;
 
   while (iterations < MAX_AGENT_ITERATIONS) {
     iterations++;
 
     const apiParams = {
       model,
-      max_tokens: useThinking ? 12000 : 2048,
+      max_tokens: options.maxTokens || (useThinking ? 12000 : 2048),
       system: systemPrompt,
       messages: currentMessages,
       tools: tools || undefined,
-      thinking: thinkingConfig,
     };
+    if (thinkingConfig) apiParams.thinking = thinkingConfig;
 
     // Interleaved thinking para ver raciocínio entre tool calls
-    const response = await anthropic.messages.create(apiParams, {
-      headers: { 'anthropic-beta': 'interleaved-thinking-2025-05-14' },
-    });
+    const headers = useThinking ? { 'anthropic-beta': 'interleaved-thinking-2025-05-14' } : {};
+    const response = await anthropic.messages.create(apiParams, { headers });
 
     // Processar blocos da resposta
     let hasToolUse = false;

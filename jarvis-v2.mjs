@@ -2004,9 +2004,10 @@ app.post('/dashboard/chat/voice', auth, express.raw({ type: ['audio/*', 'applica
     console.log(`[VOICE] Transcrição (${Date.now() - startTime}ms): "${transcription.substring(0, 80)}"`);
     send('transcription', { text: transcription });
 
-    // 2. Claude — Sonnet pra velocidade, sem tools, prompt curto
+    // 2. Claude com Agent Loop + Tools — MESMO CÉREBRO de todos os canais
     send('status', { phase: 'thinking' });
     const { JARVIS_IDENTITY, CHANNEL_CONTEXT } = await import('./src/agents/master.mjs');
+    const { agentLoop } = await import('./src/brain.mjs');
     const memoryCtx = await getMemoryContext(CONFIG.GUI_JID, 'dashboard', transcription);
 
     dashboardChatHistory.push({ role: 'user', content: transcription });
@@ -2015,22 +2016,20 @@ app.post('/dashboard/chat/voice', auth, express.raw({ type: ['audio/*', 'applica
     const msgs = [...dashboardChatHistory];
     if (msgs.length > 0 && msgs[0].role !== 'user') msgs.shift();
 
-    const Anthropic = (await import('@anthropic-ai/sdk')).default;
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
-
     const voiceSystemPrompt = JARVIS_IDENTITY + '\n\n' + CHANNEL_CONTEXT.dashboard_voice + memoryCtx;
 
-    // Usar Sonnet pra velocidade máxima no voice
+    // Sonnet + tools + sem thinking = velocidade + capacidade
     const voiceModel = CONFIG.AI_MODEL || 'claude-sonnet-4-20250514';
-    const response = await anthropic.messages.create({
-      model: voiceModel,
-      max_tokens: 1024, // Respostas curtas pra voz
-      system: voiceSystemPrompt,
-      messages: msgs,
-    });
+    const { text: finalText } = await agentLoop(
+      voiceModel,
+      voiceSystemPrompt,
+      msgs,
+      DASHBOARD_TOOLS,
+      { senderJid: CONFIG.GUI_JID, chatId: 'dashboard', channel: 'voice' },
+      { thinking: false, maxTokens: 2048 } // Sem thinking pra velocidade no voice
+    );
 
-    const finalText = response.content.find(b => b.type === 'text')?.text || '';
-    console.log(`[VOICE] Claude (${Date.now() - startTime}ms): ${finalText.length} chars`);
+    console.log(`[VOICE] agentLoop (${Date.now() - startTime}ms): ${finalText.length} chars`);
 
     dashboardChatHistory.push({ role: 'assistant', content: finalText });
     send('response', { text: finalText });
