@@ -765,7 +765,7 @@
           <div class="space-y-4" id="voice-config">
             <div>
               <label class="text-xs text-stark-dim uppercase tracking-wider block mb-2">Provider</label>
-              <select id="voice-provider" onchange="updateVoiceUI()" class="w-full bg-stark-bg border border-stark-border rounded px-4 py-2.5 text-sm text-white focus:border-stark-blue focus:outline-none">
+              <select id="voice-provider" onchange="updateVoiceProviderUI()" class="w-full bg-stark-bg border border-stark-border rounded px-4 py-2.5 text-sm text-white focus:border-stark-blue focus:outline-none">
                 <option value="elevenlabs">ElevenLabs</option>
                 <option value="openai">OpenAI</option>
               </select>
@@ -2280,11 +2280,11 @@
 
         // OpenAI voice
         if (data.openai?.voice) document.getElementById('voice-oai-voice').value = data.openai.voice;
-        updateVoiceUI();
+        updateVoiceProviderUI();
       } catch (e) { console.error('Voice config error:', e); }
     }
 
-    function updateVoiceUI() {
+    function updateVoiceProviderUI() {
       const provider = document.getElementById('voice-provider').value;
       document.getElementById('voice-el-options').classList.toggle('hidden', provider !== 'elevenlabs');
       document.getElementById('voice-oai-options').classList.toggle('hidden', provider !== 'openai');
