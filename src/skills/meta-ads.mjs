@@ -330,12 +330,27 @@ export async function createAdSet({
 
   const budgetCents = Math.round(parseFloat(dailyBudget) * 100);
 
-  // Buscar objetivo da campanha pai pra determinar promoted_object automaticamente
+  // Buscar objetivo E bid_strategy da campanha pai
   let campaignObjective = null;
+  let campaignBidStrategy = null;
   try {
-    const campaign = await metaRequest(`/${campaignId}?fields=objective`);
+    const campaign = await metaRequest(`/${campaignId}?fields=objective,bid_strategy`);
     campaignObjective = campaign?.objective;
-    console.log(`[META-ADS] Campanha ${campaignId} objetivo: ${campaignObjective}`);
+    campaignBidStrategy = campaign?.bid_strategy;
+    console.log(`[META-ADS] Campanha ${campaignId} objetivo: ${campaignObjective}, bid_strategy: ${campaignBidStrategy}`);
+
+    // AUTO-CORREÇÃO: se a campanha tem bid_strategy que exige bid_amount, corrigir automaticamente
+    if (campaignBidStrategy && campaignBidStrategy !== 'LOWEST_COST_WITHOUT_CAP') {
+      console.warn(`[META-ADS] ⚠️ Campanha ${campaignId} tem bid_strategy="${campaignBidStrategy}" (exige bid_amount). Corrigindo para LOWEST_COST_WITHOUT_CAP...`);
+      try {
+        await metaRequest(`/${campaignId}`, 'POST', { bid_strategy: 'LOWEST_COST_WITHOUT_CAP' });
+        console.log(`[META-ADS] ✅ Campanha ${campaignId} bid_strategy corrigida para LOWEST_COST_WITHOUT_CAP`);
+        campaignBidStrategy = 'LOWEST_COST_WITHOUT_CAP';
+      } catch (fixErr) {
+        console.error(`[META-ADS] ❌ Não conseguiu corrigir bid_strategy da campanha ${campaignId}: ${fixErr.message}`);
+        // Continua mesmo assim — talvez funcione
+      }
+    }
   } catch (err) {
     console.warn(`[META-ADS] Não conseguiu buscar objetivo da campanha: ${err.message}`);
   }
@@ -368,7 +383,6 @@ export async function createAdSet({
     daily_budget: budgetCents,
     optimization_goal: optimizationGoal,
     billing_event: billingEvent,
-    bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
     targeting: targetingSpec,
     status: status === 'ACTIVE' ? 'ACTIVE' : 'PAUSED',
   };
