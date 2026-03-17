@@ -3,7 +3,7 @@
 // Carrega e gerencia skills dinâmicamente
 // ============================================
 import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, ASANA_CUSTOM_FIELDS, ASANA_CLIENTE_MAP, ASANA_URGENCIA_MAP, ASANA_TIER_MAP, ASANA_TIPO_DEMANDA_MAP, GCAL_KEY_PATH, GCAL_CALENDAR_ID, managedClients, saveManagedClients, teamWhatsApp } from '../config.mjs';
-import { listCampaigns, getCampaignInsights, createCampaign, updateCampaignStatus, getAccountInsights, publishPagePost, getPagePosts, resolvePageId, listAvailablePages, createAdSet, listAdSets, uploadAdImage, createAdCreative, createAd, updateEntityStatus, asanaGetAttachments, pipelineAsanaToAds } from './meta-ads.mjs';
+import { listCampaigns, getCampaignInsights, createCampaign, updateCampaignStatus, getAccountInsights, publishPagePost, getPagePosts, resolvePageId, resolveWhatsAppNumber, listAvailablePages, createAdSet, listAdSets, uploadAdImage, createAdCreative, createAd, updateEntityStatus, asanaGetAttachments, pipelineAsanaToAds } from './meta-ads.mjs';
 import { pool } from '../database.mjs';
 import { searchMemories } from '../memory.mjs';
 import { readFile, readdir, stat } from 'fs/promises';
@@ -625,8 +625,9 @@ export const JARVIS_TOOLS = [
           items: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } } },
         },
         otimizacao: { type: 'string', enum: ['LINK_CLICKS', 'REACH', 'IMPRESSIONS', 'LANDING_PAGE_VIEWS'], description: 'Objetivo de otimização (default: LINK_CLICKS)' },
-        destino: { type: 'string', enum: ['WEBSITE', 'MESSENGER', 'WHATSAPP', 'APP'], description: 'Tipo de destino para campanhas de tráfego (default: WEBSITE). Use WHATSAPP se o CTA for "Enviar mensagem no WhatsApp".' },
-        cliente: { type: 'string', description: 'Nome do cliente (resolve Page ID automaticamente pro promoted_object). OBRIGATÓRIO para campanhas de tráfego.' },
+        destino: { type: 'string', enum: ['WEBSITE', 'MESSENGER', 'WHATSAPP', 'APP'], description: 'Tipo de destino para campanhas de tráfego (default: WEBSITE). Use WHATSAPP quando o objetivo for direcionar pro WhatsApp do cliente — nesse caso PERGUNTE o número do WhatsApp antes de criar.' },
+        cliente: { type: 'string', description: 'Nome do cliente (resolve Page ID e WhatsApp automaticamente). OBRIGATÓRIO para campanhas de tráfego.' },
+        whatsapp_numero: { type: 'string', description: 'Número do WhatsApp do cliente com código do país (ex: "555599767916"). OBRIGATÓRIO quando destino=WHATSAPP e o número não está cadastrado no sistema.' },
       },
       required: ['campanha_id', 'nome', 'orcamento_diario'],
     },
@@ -1424,6 +1425,24 @@ export async function executeJarvisTool(toolName, input, context = {}) {
     if (!input.nome) return { error: 'nome é obrigatório' };
     if (!input.orcamento_diario) return { error: 'orcamento_diario é obrigatório' };
 
+    // Se destino é WHATSAPP, OBRIGATÓRIO ter o número do cliente
+    if (input.destino === 'WHATSAPP') {
+      let whatsappNumber = input.whatsapp_numero || null;
+
+      // Tentar resolver pelo nome do cliente
+      if (!whatsappNumber && input.cliente) {
+        whatsappNumber = resolveWhatsAppNumber(input.cliente);
+      }
+
+      if (!whatsappNumber) {
+        return {
+          error: `Para anúncios com destino WhatsApp, preciso do número do WhatsApp do cliente. Informe o número com DDD e código do país (ex: 555599767916).`,
+          campo_necessario: 'whatsapp_numero',
+          dica: 'Pergunte ao Gui qual o número do WhatsApp do cliente para usar no anúncio.',
+        };
+      }
+    }
+
     try {
       const targeting = {};
       if (input.cidades) targeting.cities = input.cidades;
@@ -1447,6 +1466,13 @@ export async function executeJarvisTool(toolName, input, context = {}) {
         status: 'PAUSED',
       });
 
+      // Montar info do link WhatsApp pra usar no criativo
+      let whatsappLink = null;
+      if (input.destino === 'WHATSAPP') {
+        const numero = input.whatsapp_numero || resolveWhatsAppNumber(input.cliente);
+        if (numero) whatsappLink = `https://wa.me/${numero}`;
+      }
+
       return {
         sucesso: true,
         conjunto_id: result.id,
@@ -1454,7 +1480,10 @@ export async function executeJarvisTool(toolName, input, context = {}) {
         campanha_id: result.campaignId,
         orcamento_diario: `R$ ${parseFloat(input.orcamento_diario).toFixed(2)}`,
         status: 'PAUSADO',
-        mensagem: `Conjunto de anúncios "${input.nome}" criado com sucesso (PAUSADO).`,
+        whatsapp_link: whatsappLink,
+        mensagem: whatsappLink
+          ? `Conjunto "${input.nome}" criado (PAUSADO). Use o link ${whatsappLink} como destino nos criativos.`
+          : `Conjunto de anúncios "${input.nome}" criado com sucesso (PAUSADO).`,
       };
     } catch (err) {
       return { error: `Erro ao criar conjunto: ${err.message}` };

@@ -53,6 +53,9 @@ export const ASANA_TIPO_DEMANDA_MAP = parseJsonEnv('ASANA_TIPO_DEMANDA_MAP');
 // Meta Ads — mapeamento cliente → Page ID do Facebook
 export const META_PAGES_MAP = parseJsonEnv('META_PAGES_MAP');
 
+// Meta Ads — mapeamento cliente → número WhatsApp (para anúncios click-to-WhatsApp)
+export const META_WHATSAPP_MAP = parseJsonEnv('META_WHATSAPP_MAP');
+
 export const PUBLIC_ASANA_PROJECTS = new Set(
   (process.env.PUBLIC_ASANA_PROJECTS || '').split(',').filter(Boolean)
 );

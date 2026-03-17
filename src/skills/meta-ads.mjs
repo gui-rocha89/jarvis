@@ -2,7 +2,7 @@
 // JARVIS 3.0 - Meta Ads Skill
 // Integração com Meta Marketing API v25.0
 // ============================================
-import { CONFIG, META_PAGES_MAP } from '../config.mjs';
+import { CONFIG, META_PAGES_MAP, META_WHATSAPP_MAP } from '../config.mjs';
 
 const META_BASE = () => `https://graph.facebook.com/${CONFIG.META_API_VERSION || 'v25.0'}`;
 
@@ -101,6 +101,28 @@ export function resolvePageId(clienteName) {
   // Busca parcial (ex: "rossato" match "rossato_stara")
   for (const [key, pageId] of Object.entries(META_PAGES_MAP)) {
     if (key.includes(lower) || lower.includes(key)) return pageId;
+  }
+
+  return null;
+}
+
+/**
+ * Resolve nome do cliente para o número WhatsApp (para anúncios click-to-WhatsApp).
+ * Busca em META_WHATSAPP_MAP (.env) por match parcial case-insensitive.
+ * @param {string} clienteName - Nome do cliente (ex: "rossato", "minner")
+ * @returns {string|null} Número WhatsApp formatado (ex: "555599767916") ou null
+ */
+export function resolveWhatsAppNumber(clienteName) {
+  if (!clienteName) return null;
+
+  const lower = clienteName.toLowerCase().trim();
+
+  // Busca exata primeiro
+  if (META_WHATSAPP_MAP[lower]) return META_WHATSAPP_MAP[lower];
+
+  // Busca parcial
+  for (const [key, number] of Object.entries(META_WHATSAPP_MAP)) {
+    if (key.includes(lower) || lower.includes(key)) return number;
   }
 
   return null;
@@ -379,8 +401,11 @@ export async function createAdSet({
     }
   }
 
-  // destination_type para campanhas de tráfego (WEBSITE, MESSENGER, WHATSAPP, etc.)
-  if (destinationType) {
+  // destination_type para campanhas de tráfego
+  // Para click-to-WhatsApp: usar WEBSITE + link wa.me/numero no criativo (não requer integração WA Business)
+  if (destinationType === 'WHATSAPP') {
+    body.destination_type = 'WEBSITE';
+  } else if (destinationType) {
     body.destination_type = destinationType;
   } else if (campaignObjective === 'OUTCOME_TRAFFIC' && !body.destination_type) {
     body.destination_type = 'WEBSITE';
