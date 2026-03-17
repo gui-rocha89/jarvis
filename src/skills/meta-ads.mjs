@@ -367,6 +367,7 @@ export async function createAdSet({
     daily_budget: budgetCents,
     optimization_goal: optimizationGoal,
     billing_event: billingEvent,
+    bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
     targeting: targetingSpec,
     status: status === 'ACTIVE' ? 'ACTIVE' : 'PAUSED',
   };
@@ -726,6 +727,62 @@ export async function pipelineAsanaToAds({
   }
 
   return results;
+}
+
+// ============================================
+// GEO LOCATION — Buscar IDs reais de cidades/regiões
+// ============================================
+
+/**
+ * Busca localização geográfica real na API do Meta para usar em segmentação de Ad Sets.
+ * OBRIGATÓRIO usar esta função ANTES de criar Ad Sets com segmentação por cidade/região.
+ * Nunca inventar IDs — sempre buscar via esta função.
+ *
+ * @param {string} query - Nome da cidade, estado ou região (ex: "Cuiabá", "Mato Grosso", "Sinop")
+ * @param {string} locationType - Tipo: 'city', 'region', 'country', 'zip' (default: 'city')
+ * @param {string} countryCode - Código do país (default: 'BR')
+ * @returns {Array} Lista de resultados com key, name, type, region, country_code
+ */
+export async function searchGeoLocation(query, locationType = 'city', countryCode = 'BR') {
+  if (!query) throw new Error('query é obrigatório (nome da cidade ou região)');
+
+  const params = new URLSearchParams({
+    type: 'adgeolocation',
+    location_types: `["${locationType}"]`,
+    q: query,
+    country_code: countryCode,
+    access_token: CONFIG.META_ACCESS_TOKEN,
+    limit: '10',
+  });
+
+  const url = `${META_BASE()}/search?${params.toString()}`;
+
+  try {
+    const resp = await fetch(url);
+    const data = await resp.json();
+
+    if (data.error) {
+      throw new Error(`Meta API: ${data.error.message} (code: ${data.error.code})`);
+    }
+
+    const results = (data.data || []).map(loc => ({
+      key: loc.key,
+      name: loc.name,
+      type: loc.type,
+      region: loc.region || null,
+      region_id: loc.region_id || null,
+      country_code: loc.country_code,
+      country_name: loc.country_name || null,
+      supports_city: loc.supports_city || false,
+      supports_region: loc.supports_region || false,
+    }));
+
+    console.log(`[META-ADS] Geo search "${query}" (${locationType}): ${results.length} resultados`);
+    return results;
+  } catch (err) {
+    console.error(`[META-ADS] Erro ao buscar localização "${query}":`, err.message);
+    throw err;
+  }
 }
 
 // ============================================

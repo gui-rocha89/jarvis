@@ -3,7 +3,7 @@
 // Carrega e gerencia skills dinâmicamente
 // ============================================
 import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, ASANA_CUSTOM_FIELDS, ASANA_CLIENTE_MAP, ASANA_URGENCIA_MAP, ASANA_TIER_MAP, ASANA_TIPO_DEMANDA_MAP, GCAL_KEY_PATH, GCAL_CALENDAR_ID, managedClients, saveManagedClients, teamWhatsApp } from '../config.mjs';
-import { listCampaigns, getCampaignInsights, createCampaign, updateCampaignStatus, getAccountInsights, publishPagePost, getPagePosts, resolvePageId, resolveWhatsAppNumber, listAvailablePages, createAdSet, listAdSets, uploadAdImage, createAdCreative, createAd, updateEntityStatus, asanaGetAttachments, pipelineAsanaToAds } from './meta-ads.mjs';
+import { listCampaigns, getCampaignInsights, createCampaign, updateCampaignStatus, getAccountInsights, publishPagePost, getPagePosts, resolvePageId, resolveWhatsAppNumber, listAvailablePages, createAdSet, listAdSets, uploadAdImage, createAdCreative, createAd, updateEntityStatus, asanaGetAttachments, pipelineAsanaToAds, searchGeoLocation } from './meta-ads.mjs';
 import { pool } from '../database.mjs';
 import { searchMemories } from '../memory.mjs';
 import { readFile, readdir, stat } from 'fs/promises';
@@ -604,6 +604,19 @@ export const JARVIS_TOOLS = [
   // TOOLS — Pipeline Criativo (Asana → Meta Ads)
   // ============================================
   {
+    name: 'buscar_localizacao_ads',
+    description: 'Busca IDs reais de cidades, estados ou regiões na API do Meta para usar na segmentação de conjuntos de anúncios. OBRIGATÓRIO usar ANTES de criar Ad Sets com segmentação geográfica. NUNCA invente IDs — sempre busque primeiro.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        busca: { type: 'string', description: 'Nome da cidade, estado ou região (ex: "Cuiabá", "Mato Grosso", "Sinop", "Goiás")' },
+        tipo: { type: 'string', enum: ['city', 'region', 'country', 'zip'], description: 'Tipo de localização: city (cidade), region (estado/região), country (país). Default: city' },
+        pais: { type: 'string', description: 'Código do país (default: BR)' },
+      },
+      required: ['busca'],
+    },
+  },
+  {
     name: 'criar_conjunto_anuncios',
     description: 'Criar um conjunto de anúncios (Ad Set) dentro de uma campanha existente no Meta Ads. Define segmentação, orçamento e otimização. Criado PAUSADO por segurança.',
     input_schema: {
@@ -616,7 +629,12 @@ export const JARVIS_TOOLS = [
         idade_max: { type: 'number', description: 'Idade máxima (default: 65)' },
         cidades: {
           type: 'array',
-          description: 'Lista de cidades para segmentação (ex: [{"key":"2513539","name":"Cuiabá"}]). Se omitido, Brasil inteiro.',
+          description: 'Lista de cidades para segmentação. OBRIGATÓRIO buscar keys reais via buscar_localizacao_ads ANTES (ex: [{"key":"2684461","name":"Sinop"}]). Se omitido, Brasil inteiro.',
+          items: { type: 'object', properties: { key: { type: 'string' }, name: { type: 'string' } } },
+        },
+        regioes: {
+          type: 'array',
+          description: 'Lista de estados/regiões para segmentação. OBRIGATÓRIO buscar keys reais via buscar_localizacao_ads com tipo=region ANTES (ex: [{"key":"448","name":"Mato Grosso"}]).',
           items: { type: 'object', properties: { key: { type: 'string' }, name: { type: 'string' } } },
         },
         interesses: {
@@ -1420,6 +1438,34 @@ export async function executeJarvisTool(toolName, input, context = {}) {
   // TOOLS — Pipeline Criativo (Asana → Meta Ads)
   // ============================================
 
+  if (toolName === 'buscar_localizacao_ads') {
+    if (!input.busca) return { error: 'busca é obrigatório (nome da cidade, estado ou região)' };
+
+    try {
+      const tipo = input.tipo || 'city';
+      const pais = input.pais || 'BR';
+      const resultados = await searchGeoLocation(input.busca, tipo, pais);
+
+      if (resultados.length === 0) {
+        return {
+          resultados: [],
+          mensagem: `Nenhuma localização encontrada para "${input.busca}" (tipo: ${tipo}, país: ${pais}). Tente outro nome ou tipo diferente.`,
+        };
+      }
+
+      return {
+        sucesso: true,
+        busca: input.busca,
+        tipo,
+        total: resultados.length,
+        resultados,
+        instrucao: 'Use o campo "key" de cada resultado para segmentar Ad Sets. Para cidades: cidades=[{"key":"<key>","name":"<name>"}]. Para regiões/estados: regioes=[{"key":"<key>","name":"<name>"}].',
+      };
+    } catch (err) {
+      return { error: `Erro ao buscar localização: ${err.message}` };
+    }
+  }
+
   if (toolName === 'criar_conjunto_anuncios') {
     if (!input.campanha_id) return { error: 'campanha_id é obrigatório' };
     if (!input.nome) return { error: 'nome é obrigatório' };
@@ -1446,6 +1492,7 @@ export async function executeJarvisTool(toolName, input, context = {}) {
     try {
       const targeting = {};
       if (input.cidades) targeting.cities = input.cidades;
+      if (input.regioes) targeting.regions = input.regioes;
       if (input.interesses) targeting.interests = input.interesses;
       if (input.idade_min) targeting.ageMin = input.idade_min;
       if (input.idade_max) targeting.ageMax = input.idade_max;

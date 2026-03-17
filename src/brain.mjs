@@ -156,7 +156,7 @@ export async function agentLoop(model, systemPrompt, messages, tools, context = 
 // ============================================
 export function antiHallucinationCheck(finalText, toolsUsed) {
   // Se usou tools de busca/consulta nesta iteração, a resposta é baseada em dados reais
-  if (toolsUsed.has('buscar_mensagens') || toolsUsed.has('consultar_tarefas') || toolsUsed.has('consultar_task') || toolsUsed.has('buscar_memorias') || toolsUsed.has('relatorio_ads') || toolsUsed.has('metricas_post') || toolsUsed.has('calendario_editorial') || toolsUsed.has('otimizar_campanha') || toolsUsed.has('baixar_anexos_task') || toolsUsed.has('listar_conjuntos')) {
+  if (toolsUsed.has('buscar_mensagens') || toolsUsed.has('consultar_tarefas') || toolsUsed.has('consultar_task') || toolsUsed.has('buscar_memorias') || toolsUsed.has('relatorio_ads') || toolsUsed.has('metricas_post') || toolsUsed.has('calendario_editorial') || toolsUsed.has('otimizar_campanha') || toolsUsed.has('baixar_anexos_task') || toolsUsed.has('listar_conjuntos') || toolsUsed.has('buscar_localizacao_ads')) {
     return { safe: true };
   }
 
