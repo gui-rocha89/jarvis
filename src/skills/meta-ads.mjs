@@ -383,6 +383,7 @@ export async function createAdSet({
     daily_budget: budgetCents,
     optimization_goal: optimizationGoal,
     billing_event: billingEvent,
+    bid_strategy: 'LOWEST_COST_WITHOUT_CAP', // OBRIGATÓRIO no Ad Set — sem isso herda da campanha (que pode exigir bid_amount)
     targeting: targetingSpec,
     status: status === 'ACTIVE' ? 'ACTIVE' : 'PAUSED',
   };
