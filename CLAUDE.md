@@ -1,7 +1,101 @@
 # Jarvis 4.0 — Technical Reference
 
 > **Projeto:** Jarvis · **Organização:** Stream Lab · **Versão:** 4.0.0
-> **Última atualização:** 2026-03-16 · **Autores:** Equipe Stream Lab + Claude Code
+> **Última atualização:** 2026-03-17 · **Autores:** Equipe Stream Lab + Claude Code
+
+---
+
+## 0. PRINCÍPIOS DE DESENVOLVIMENTO (LEIA PRIMEIRO)
+
+> ⚠️ **OBRIGATÓRIO.** Estas regras existem porque erros foram cometidos. Cada regra aqui foi escrita com sangue (metafórico). Se você é uma sessão futura do Claude Code, LEIA TUDO antes de tocar em qualquer código.
+
+### 0.1 Arquitetura de Prompts — UMA IDENTIDADE
+
+O Jarvis usa a mesma arquitetura do Claude: **uma identidade que nunca muda, contexto adapta por canal**.
+
+```
+src/agents/master.mjs
+├── JARVIS_IDENTITY      → Quem ele é. Regras. Equipe. Tom. NUNCA DUPLICAR.
+├── CHANNEL_CONTEXT       → Adapta por canal (WhatsApp/Asana/Dashboard/Voz)
+├── AGENT_EXPERTISE       → Foco por especialidade (1-2 linhas, NÃO redefine personalidade)
+├── MASTER_SYSTEM_PROMPT  → Compatibilidade = JARVIS_IDENTITY + CHANNEL_CONTEXT.whatsapp_internal
+└── AGENT_PROMPTS         → Compatibilidade = JARVIS_IDENTITY + AGENT_EXPERTISE[agent]
+```
+
+**REGRAS INVIOLÁVEIS DE PROMPTS:**
+
+| ❌ PROIBIDO | ✅ CORRETO |
+|------------|-----------|
+| Criar novo system prompt do zero em outro arquivo | Importar `JARVIS_IDENTITY` + `CHANNEL_CONTEXT` de `master.mjs` |
+| Escrever "Você é o Jarvis..." em qualquer lugar que não seja `JARVIS_IDENTITY` | Compor: `JARVIS_IDENTITY + CHANNEL_CONTEXT.canal + contexto_dinâmico` |
+| Adicionar "NUNCA faça X" em tool descriptions | Colocar regra comportamental em `JARVIS_IDENTITY` ou `CHANNEL_CONTEXT` |
+| Criar prompt separado para email monitor, dashboard, etc | Usar `JARVIS_IDENTITY + CHANNEL_CONTEXT.asana` (ou outro canal) |
+| Redefinir personalidade em AGENT_EXPERTISE | AGENT_EXPERTISE = só o foco técnico (1-2 linhas) |
+
+**Como adicionar um NOVO CANAL:**
+```javascript
+// Em master.mjs, adicionar ao CHANNEL_CONTEXT:
+export const CHANNEL_CONTEXT = {
+  ...canais_existentes,
+  novo_canal: `CANAL: Nome do canal. Regras específicas deste canal aqui.`,
+};
+// Em qualquer lugar que use: JARVIS_IDENTITY + '\n\n' + CHANNEL_CONTEXT.novo_canal
+```
+
+**Como adicionar uma NOVA EXPERTISE:**
+```javascript
+// Em master.mjs, adicionar ao AGENT_EXPERTISE:
+export const AGENT_EXPERTISE = {
+  ...expertises_existentes,
+  novo_agente: `ESPECIALIDADE ATIVA: Nome. Habilidades: x, y, z.`,
+};
+```
+
+### 0.2 Anti-Padrões (O QUE JÁ DEU ERRADO)
+
+| Anti-Padrão | O que aconteceu | Solução |
+|-------------|----------------|---------|
+| **18 system prompts** | Cada arquivo definia "quem o Jarvis é" de forma diferente → comportamento esquizofrênico | Uma identidade (`JARVIS_IDENTITY`), contexto por canal |
+| **Deploy manual via SCP** | Código foi direto pro servidor sem passar pelo CI → bugs sem testes | SOMENTE `git push` → CI → deploy automático |
+| **Band-aids em prompts** | "NUNCA faça X" empilhado em 4 arquivos diferentes → contradições | Regra vai em UM lugar (identity ou channel) |
+| **Tool descriptions com regras comportamentais** | Tool `comentar_task` tinha "NUNCA repita nome" → confunde o modelo | Tools = descrição técnica. Comportamento = identity/channel |
+| **Buscar poucos dados antes de responder** | Jarvis dizia "não tenho contexto" quando os dados existiam nos comentários | Buscar 20+ comentários, descrição completa, custom fields |
+| **Opus para tudo** | Email monitor usava Opus + Extended Thinking → 15-20s de latência | Sonnet para respostas rápidas (Asana, voz). Opus só para decisões complexas |
+
+### 0.3 Fluxo de Desenvolvimento Obrigatório
+
+```
+1. Ler CLAUDE.md (este arquivo) INTEIRO antes de começar
+2. Entender a arquitetura ANTES de modificar
+3. Modificar código
+4. Rodar npm test (52 testes devem passar)
+5. git add <arquivos específicos> (NUNCA git add -A)
+6. git commit com mensagem descritiva
+7. git push origin master
+8. Acompanhar CI → Deploy no GitHub Actions
+9. NUNCA fazer scp/ssh direto pro servidor
+```
+
+### 0.4 Quando o Gui Reclamar
+
+O Gui é direto e reclama quando algo não funciona. Padrões comuns:
+
+| Reclamação | Causa provável | Ação |
+|-----------|---------------|------|
+| "Nada mudou" | Cache do browser ou deploy não foi feito | Verificar se `git push` aconteceu, checar CI/CD |
+| "Tá repetindo nome" | Menção Asana + nome no texto = duplicado | Verificar CHANNEL_CONTEXT.asana e tool `comentar_task` |
+| "Demora muito" | Opus + Extended Thinking + muitas memórias | Usar Sonnet, reduzir memórias, sem thinking |
+| "Esquizofrenia" | Prompts contraditórios em arquivos diferentes | Verificar se está usando JARVIS_IDENTITY em todos os lugares |
+| "Coisa amadora" | Patching em vez de resolver a raiz | Refatorar a causa, não adicionar mais regras |
+
+### 0.5 Checklist Antes de Qualquer Mudança em Prompts
+
+- [ ] A mudança está em `JARVIS_IDENTITY`, `CHANNEL_CONTEXT` ou `AGENT_EXPERTISE`?
+- [ ] NÃO criei um system prompt novo em outro arquivo?
+- [ ] NÃO adicionei regra comportamental em tool description?
+- [ ] NÃO dupliquei informação que já existe em `JARVIS_IDENTITY`?
+- [ ] Os testes passam (`npm test`)?
+- [ ] O deploy é via `git push` (NÃO via scp/ssh)?
 
 ---
 
