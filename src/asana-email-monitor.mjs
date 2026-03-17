@@ -135,12 +135,15 @@ function parseAsanaEmail(parsed) {
       if (cleanLine) commentLines.push(cleanLine);
     }
     commentText = commentLines.join(' ').trim();
-    // Limpar: remover duplicatas do texto que aparecem no final
-    if (commentText.length > 200) {
-      const half = commentText.substring(0, Math.floor(commentText.length / 2));
-      const secondHalf = commentText.substring(Math.floor(commentText.length / 2));
-      if (secondHalf.includes(half.substring(0, 50))) {
-        commentText = half.trim();
+    // Limpar: remover duplicatas ÓBVIAS (Asana às vezes repete o texto inteiro no footer)
+    // Só corta se a segunda metade é EXATAMENTE igual à primeira (duplicata real)
+    if (commentText.length > 100) {
+      const half = Math.floor(commentText.length / 2);
+      const firstHalf = commentText.substring(0, half).trim();
+      const secondHalf = commentText.substring(half).trim();
+      // Só deduplica se >80% da primeira metade aparece na segunda (duplicata real, não coincidência)
+      if (firstHalf.length > 50 && secondHalf.startsWith(firstHalf.substring(0, Math.min(firstHalf.length, 80)))) {
+        commentText = firstHalf;
       }
     }
   }
@@ -168,15 +171,18 @@ function parseAsanaEmail(parsed) {
 async function generateMentionResponse(taskGid, commenterName, commentText, taskName) {
   // 1. Buscar TUDO da task — descrição completa + todos os comentários
   let taskDetails = null;
+  let allComments = [];
   let recentComments = '';
   try {
     const taskData = await asanaRequest(`/tasks/${taskGid}?opt_fields=name,notes,assignee.name,due_on,completed,memberships.project.name,custom_fields.name,custom_fields.display_value`);
     taskDetails = taskData?.data || null;
 
-    // TODOS os comentários — não só os últimos 5
+    // TODOS os comentários via API — fonte CONFIÁVEL (email pode truncar)
     const stories = await asanaRequest(`/tasks/${taskGid}/stories?opt_fields=text,created_by.name,created_at,type&limit=50`);
-    recentComments = (stories?.data || [])
-      .filter(s => s.type === 'comment' && s.text)
+    allComments = (stories?.data || [])
+      .filter(s => s.type === 'comment' && s.text);
+
+    recentComments = allComments
       .slice(-20) // últimos 20 comentários — contexto completo
       .map(s => `${s.created_by?.name || '?'}: ${s.text.substring(0, 500)}`)
       .join('\n');
@@ -184,10 +190,31 @@ async function generateMentionResponse(taskGid, commenterName, commentText, task
     console.error('[EMAIL] Erro ao buscar task:', e.message);
   }
 
+  // 1.5. Usar o comentário REAL da API em vez do parseado do email
+  // O email pode truncar/cortar o texto — a API tem o conteúdo completo
+  let actualComment = commentText; // fallback: texto do email
+  if (allComments.length > 0) {
+    // Buscar o último comentário do commenterName (quem nos mencionou)
+    const commenterLower = commenterName.toLowerCase();
+    const matchingComments = allComments.filter(s => {
+      const authorName = (s.created_by?.name || '').toLowerCase();
+      return authorName.includes(commenterLower) || commenterLower.includes(authorName.split(' ')[0]);
+    });
+    if (matchingComments.length > 0) {
+      // Pegar o ÚLTIMO comentário dessa pessoa — é o que gerou a notificação
+      actualComment = matchingComments[matchingComments.length - 1].text;
+      console.log(`[EMAIL] Comentário real da API (${actualComment.length} chars) substituiu parse do email (${commentText.length} chars)`);
+    } else {
+      // Se não achou por nome, pegar o último comentário geral (provavelmente é o que nos mencionou)
+      actualComment = allComments[allComments.length - 1].text;
+      console.log(`[EMAIL] Usando último comentário da task como referência (${actualComment.length} chars)`);
+    }
+  }
+
   // 2. Buscar memórias relevantes
   let memories = [];
   try {
-    const searchTerms = [taskName, commenterName, commentText].filter(Boolean).join(' ');
+    const searchTerms = [taskName, commenterName, actualComment.substring(0, 200)].filter(Boolean).join(' ');
     memories = await searchMemories(searchTerms, null, null, 8);
   } catch {}
 
@@ -227,7 +254,7 @@ HISTÓRICO DE COMENTÁRIOS:
 ${recentComments || '(sem comentários anteriores)'}
 
 COMENTÁRIO QUE TE MENCIONOU:
-${commenterName}: ${commentText}
+${commenterName}: ${actualComment}
 
 ${memoryContext ? `MEMÓRIAS RELEVANTES:\n${memoryContext}` : ''}
 
