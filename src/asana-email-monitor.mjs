@@ -177,10 +177,21 @@ async function generateMentionResponse(taskGid, commenterName, commentText, task
     const taskData = await asanaRequest(`/tasks/${taskGid}?opt_fields=name,notes,assignee.name,due_on,completed,memberships.project.name,custom_fields.name,custom_fields.display_value`);
     taskDetails = taskData?.data || null;
 
-    // TODOS os comentários via API — fonte CONFIÁVEL (email pode truncar)
-    const stories = await asanaRequest(`/tasks/${taskGid}/stories?opt_fields=text,created_by.name,created_at,type&limit=50`);
-    allComments = (stories?.data || [])
-      .filter(s => s.type === 'comment' && s.text);
+    // TODOS os comentários via API — COM PAGINAÇÃO
+    // Tasks com muitas interações têm stories em múltiplas páginas
+    // O comentário mais recente pode estar na ÚLTIMA página
+    let allStories = [];
+    let storiesUrl = `/tasks/${taskGid}/stories?opt_fields=text,created_by.name,created_at,type&limit=100`;
+    let pages = 0;
+    while (storiesUrl && pages < 5) { // máx 5 páginas (500 stories) para não travar
+      const storiesPage = await asanaRequest(storiesUrl);
+      if (storiesPage?.data) allStories.push(...storiesPage.data);
+      storiesUrl = storiesPage?.next_page?.path || null;
+      pages++;
+    }
+    if (pages > 1) console.log(`[EMAIL] Buscou ${pages} páginas de stories (${allStories.length} total)`);
+
+    allComments = allStories.filter(s => s.type === 'comment' && s.text);
 
     recentComments = allComments
       .slice(-20) // últimos 20 comentários — contexto completo
