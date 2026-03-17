@@ -349,6 +349,24 @@ describe('Mídia e Asana Upload', () => {
 });
 
 // ============================================
+// TESTES: Cérebro Persistente (brain-document.mjs)
+// ============================================
+describe('Cérebro Persistente', () => {
+  it('brain-document.mjs exporta as funções necessárias', async () => {
+    const mod = await import('../src/brain-document.mjs');
+    assert.ok(typeof mod.generateBrainDocument === 'function');
+    assert.ok(typeof mod.loadBrainDocument === 'function');
+    assert.ok(typeof mod.invalidateBrainCache === 'function');
+    assert.ok(typeof mod.getBrainStatus === 'function');
+  });
+
+  it('invalidateBrainCache não lança erro', async () => {
+    const { invalidateBrainCache } = await import('../src/brain-document.mjs');
+    assert.doesNotThrow(() => invalidateBrainCache());
+  });
+});
+
+// ============================================
 // TESTES: Validação de estrutura
 // ============================================
 describe('Estrutura do projeto', () => {
@@ -393,6 +411,7 @@ describe('Estrutura do projeto', () => {
       '../src/agents/master.mjs',
       '../src/skills/loader.mjs',
       '../src/profiles.mjs',
+      '../src/brain-document.mjs',
     ];
 
     const dangerousPatterns = [

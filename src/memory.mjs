@@ -134,7 +134,7 @@ export async function searchMemories(query, scope = null, scopeId = null, limit 
     if (scopeId) { sql += ` AND (scope_id = $${paramIdx++} OR scope_id IS NULL)`; params.push(scopeId); }
 
     if (query) {
-      const keywords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2).slice(0, 5);
+      const keywords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2).slice(0, 10);
       if (keywords.length > 0) {
         const conditions = keywords.map(k => { params.push(`%${k}%`); return `content ILIKE $${paramIdx++}`; });
         sql += ` AND (${conditions.join(' OR ')})`;
@@ -157,29 +157,152 @@ export async function searchMemories(query, scope = null, scopeId = null, limit 
   }
 }
 
+/**
+ * Busca INTELIGENTE de memórias — usa Claude Haiku pra expandir a query
+ * em múltiplas buscas paralelas, cobrindo sinônimos, categorias e termos relacionados.
+ * Retorna resultados deduplicados ordenados por relevância.
+ */
+export async function smartSearchMemories(query, scope = null, scopeId = null, limit = 15) {
+  try {
+    // 1. Usar Haiku pra gerar queries de busca inteligentes
+    const response = await anthropic.messages.create({
+      model: MEMORY_MODEL,
+      max_tokens: 300,
+      system: `Você é um gerador de queries de busca. Dado um texto, gere 5-8 queries de busca alternativas que capturem TODOS os ângulos possíveis do que a pessoa pode estar perguntando. Inclua: sinônimos, termos relacionados, nomes de pessoas/empresas mencionados, categorias do assunto (processo, cliente, equipe, regra, preferência).
+
+Responda APENAS em JSON array de strings. Exemplo: ["query1", "query2", "query3"]`,
+      messages: [{ role: 'user', content: query }],
+    });
+
+    let queries = [query]; // sempre inclui a original
+    try {
+      const raw = response.content[0]?.text || '[]';
+      const match = raw.match(/\[.*\]/s);
+      if (match) {
+        const parsed = JSON.parse(match[0]);
+        if (Array.isArray(parsed)) queries = [query, ...parsed];
+      }
+    } catch {}
+
+    // 2. Executar TODAS as queries em paralelo
+    const searchPromises = queries.slice(0, 8).map(q =>
+      searchMemories(q, scope, scopeId, Math.ceil(limit / 2))
+    );
+    const results = await Promise.allSettled(searchPromises);
+
+    // 3. Deduplicar e ordenar por importância
+    const seen = new Set();
+    const allMemories = [];
+    for (const result of results) {
+      if (result.status !== 'fulfilled') continue;
+      for (const m of result.value) {
+        if (seen.has(m.content)) continue;
+        seen.add(m.content);
+        allMemories.push(m);
+      }
+    }
+
+    // Ordenar: importância DESC, depois por quantas queries bateram (relevância)
+    allMemories.sort((a, b) => b.importance - a.importance);
+    return allMemories.slice(0, limit);
+  } catch (err) {
+    console.error('[MEMORY] smartSearch erro, fallback para busca simples:', err.message);
+    return searchMemories(query, scope, scopeId, limit);
+  }
+}
+
 export async function getMemoryContext(senderJid, chatId, text) {
   try {
     const contexts = [];
 
-    const userMemories = await searchMemories(text, 'user', senderJid, 5);
+    // ============================================
+    // CAMADA 1: Memórias de ALTA IMPORTÂNCIA — SEMPRE presentes
+    // Independente da pergunta, o Jarvis SEMPRE tem acesso ao conhecimento mais valioso
+    // ============================================
+    try {
+      const { rows: topMemories } = await pool.query(
+        `SELECT DISTINCT ON (content) content, category, importance, scope, scope_id
+         FROM jarvis_memories
+         WHERE importance >= 8
+         ORDER BY content, importance DESC
+         LIMIT 25`
+      );
+      if (topMemories.length > 0) {
+        contexts.push('🧠 CONHECIMENTO FUNDAMENTAL (alta importância — SEMPRE disponível):');
+        // Agrupar por categoria pra ficar organizado
+        const byCategory = {};
+        for (const m of topMemories) {
+          const cat = m.category || 'general';
+          if (!byCategory[cat]) byCategory[cat] = [];
+          byCategory[cat].push(m.content);
+        }
+        for (const [cat, items] of Object.entries(byCategory)) {
+          contexts.push(`  [${cat}]:`);
+          items.forEach(item => contexts.push(`  - ${item}`));
+        }
+      }
+    } catch {}
+
+    // ============================================
+    // CAMADA 2: Busca INTELIGENTE por relevância à mensagem
+    // Usa Haiku pra expandir a query em múltiplos ângulos de busca
+    // ============================================
+    const [userMemories, chatMemories, agentMemories] = await Promise.all([
+      smartSearchMemories(text, 'user', senderJid, 15),
+      smartSearchMemories(text, 'chat', chatId, 15),
+      smartSearchMemories(text, 'agent', null, 15),
+    ]);
+
     if (userMemories.length > 0) {
-      contexts.push('MEMORIAS SOBRE ESTA PESSOA:');
+      contexts.push('\nMEMORIAS SOBRE ESTA PESSOA:');
       userMemories.forEach(m => contexts.push(`- [${m.category}] ${m.content}`));
     }
 
-    const chatMemories = await searchMemories(text, 'chat', chatId, 5);
     if (chatMemories.length > 0) {
       contexts.push('\nMEMORIAS DESTE CHAT/GRUPO:');
       chatMemories.forEach(m => contexts.push(`- [${m.category}] ${m.content}`));
     }
 
-    const agentMemories = await searchMemories(text, 'agent', null, 3);
     if (agentMemories.length > 0) {
-      contexts.push('\nCONHECIMENTO DO JARVIS:');
-      agentMemories.forEach(m => contexts.push(`- ${m.content}`));
+      contexts.push('\nCONHECIMENTO OPERACIONAL DO JARVIS:');
+      agentMemories.forEach(m => contexts.push(`- [${m.category}] ${m.content}`));
     }
 
-    // Perfil do grupo/cliente (se existir)
+    // ============================================
+    // CAMADA 3: Busca por CATEGORIAS relevantes ao contexto
+    // Se a mensagem fala de processo, traz TODOS os processos conhecidos
+    // ============================================
+    try {
+      const lower = text.toLowerCase();
+      const categoryQueries = [];
+      if (/process|fluxo|como funciona|etapa|passo|procedimento/i.test(lower)) categoryQueries.push('process');
+      if (/equipe|time|quem|responsável|nicolas|bruna|arthur|bruno|rigon/i.test(lower)) categoryQueries.push('team_member');
+      if (/cliente|marca|empresa/i.test(lower)) categoryQueries.push('client', 'client_profile');
+      if (/regra|nunca|sempre|obrigat/i.test(lower)) categoryQueries.push('rule');
+      if (/prazo|deadline|vence|atrasa/i.test(lower)) categoryQueries.push('deadline');
+      if (/prefer|gosta|estilo|tom/i.test(lower)) categoryQueries.push('preference', 'style');
+
+      if (categoryQueries.length > 0) {
+        const placeholders = categoryQueries.map((_, i) => `$${i + 1}`).join(', ');
+        const { rows: catMemories } = await pool.query(
+          `SELECT content, category, importance FROM jarvis_memories
+           WHERE category IN (${placeholders})
+           ORDER BY importance DESC, updated_at DESC LIMIT 20`,
+          categoryQueries
+        );
+        // Filtrar memórias que já apareceram nas camadas anteriores
+        const existingContents = new Set(contexts.filter(c => c.startsWith('  - ') || c.startsWith('- ')).map(c => c.replace(/^-?\s*(\[.*?\]\s*)?/, '')));
+        const newCatMemories = catMemories.filter(m => !existingContents.has(m.content));
+        if (newCatMemories.length > 0) {
+          contexts.push(`\nCONHECIMENTO POR CATEGORIA (${categoryQueries.join(', ')}):`);
+          newCatMemories.forEach(m => contexts.push(`- [${m.category}] ${m.content}`));
+        }
+      }
+    } catch {}
+
+    // ============================================
+    // CAMADA 4: Perfis sintetizados (grupo, cliente, pessoa)
+    // ============================================
     try {
       const { rows: profiles } = await pool.query(
         `SELECT entity_type, entity_name, profile FROM jarvis_profiles WHERE entity_id = $1`,
@@ -196,7 +319,6 @@ export async function getMemoryContext(senderJid, chatId, text) {
       }
     } catch {}
 
-    // Perfil da pessoa que enviou (se existir — pode ser team_member OU client_contact)
     try {
       const { rows: senderProfiles } = await pool.query(
         `SELECT entity_type, entity_name, profile FROM jarvis_profiles WHERE entity_id = $1 AND entity_type IN ('team_member', 'client_contact')`,
@@ -213,6 +335,9 @@ export async function getMemoryContext(senderJid, chatId, text) {
       }
     } catch {}
 
+    // ============================================
+    // CAMADA 5: Homework (instruções diretas — prioridade máxima)
+    // ============================================
     try {
       const { rows } = await pool.query('SELECT content, source FROM homework ORDER BY created_at DESC LIMIT 20');
       if (rows.length > 0) {

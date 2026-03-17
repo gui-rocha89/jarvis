@@ -8,7 +8,7 @@ import { simpleParser } from 'mailparser';
 import Anthropic from '@anthropic-ai/sdk';
 import { CONFIG } from './config.mjs';
 import { pool } from './database.mjs';
-import { searchMemories } from './memory.mjs';
+import { searchMemories, smartSearchMemories } from './memory.mjs';
 import { asanaAddComment, asanaRequest } from './skills/loader.mjs';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
@@ -183,16 +183,33 @@ async function generateMentionResponse(taskGid, commenterName, commentText, task
     console.error('[EMAIL] Erro ao buscar task:', e.message);
   }
 
-  // 2. Buscar memórias relevantes via RAG
+  // 2. Buscar memórias relevantes via RAG (busca inteligente)
   let memories = [];
   try {
     const searchTerms = [taskName, commenterName, commentText].filter(Boolean).join(' ');
-    memories = await searchMemories(searchTerms, null, null, 8);
-  } catch (e) {}
+    memories = await smartSearchMemories(searchTerms, null, null, 15);
+  } catch (e) {
+    // Fallback para busca simples
+    try {
+      const searchTerms = [taskName, commenterName, commentText].filter(Boolean).join(' ');
+      memories = await searchMemories(searchTerms, null, null, 10);
+    } catch {}
+  }
 
-  const memoryContext = memories.length > 0
-    ? memories.map(m => `- ${m.content}`).join('\n')
-    : 'Sem memórias relevantes encontradas.';
+  // Também trazer memórias de alta importância (conhecimento fundamental)
+  let topMemories = [];
+  try {
+    const { pool: dbPool } = await import('./database.mjs');
+    const { rows } = await dbPool.query(
+      `SELECT content, category FROM jarvis_memories WHERE importance >= 8 ORDER BY importance DESC LIMIT 15`
+    );
+    topMemories = rows;
+  } catch {}
+
+  const memoryContext = [
+    ...(topMemories.length > 0 ? ['CONHECIMENTO FUNDAMENTAL:', ...topMemories.map(m => `- [${m.category}] ${m.content}`)] : []),
+    ...(memories.length > 0 ? ['\nMEMÓRIAS RELEVANTES:', ...memories.map(m => `- [${m.category}] ${m.content}`)] : []),
+  ].join('\n') || 'Sem memórias relevantes encontradas.';
 
   // 3. Montar contexto
   const taskContext = taskDetails ? [
@@ -204,25 +221,43 @@ async function generateMentionResponse(taskGid, commenterName, commentText, task
     taskDetails.notes ? `Descrição: ${taskDetails.notes.substring(0, 300)}` : null,
   ].filter(Boolean).join('\n') : `Task: ${taskName || 'desconhecida'}`;
 
-  // 4. Chamar Claude
+  // 4. Chamar Claude (Opus pra compreensão conversacional máxima)
+  const model = CONFIG.AI_MODEL_STRONG || CONFIG.AI_MODEL;
   const response = await anthropic.messages.create({
-    model: CONFIG.AI_MODEL,
-    max_tokens: 1024,
+    model,
+    max_tokens: 2048,
+    thinking: { type: 'enabled', budget_tokens: 4096 },
     system: `Você é o Jarvis, assistente de IA da agência de marketing Stream Lab. Estilo: direto, útil, personalidade inspirada no Jarvis do Tony Stark mas profissional.
 
-Você foi @mencionado em um comentário de uma task no Asana. Responda de forma concisa e útil ao que foi pedido.
+Você foi @mencionado em um comentário de uma task no Asana.
+
+⚠️ REGRA CRÍTICA DE COMPREENSÃO CONVERSACIONAL:
+Antes de responder, analise COM CUIDADO:
+1. QUEM está falando? (o autor do comentário)
+2. PARA QUEM ele está falando? (pode ser pra outra pessoa, não pra você!)
+3. QUAL é o papel do Jarvis neste comentário? Possibilidades:
+   a) O pedido é DIRETAMENTE para o Jarvis → responda normalmente
+   b) O Jarvis foi mencionado como REFERÊNCIA (ex: "marca o Jarvis", "avisa o Jarvis") → reconheça que foi avisado e diga que está acompanhando
+   c) O pedido é para OUTRA PESSOA e o Jarvis só foi tagado pra ficar ciente → NÃO execute o pedido, apenas confirme que está acompanhando
+
+EXEMPLOS:
+- "Jarvis, me lista as tarefas atrasadas" → pedido PARA o Jarvis → responde com as tarefas
+- "Bruna me confirma as artes e marca o Jarvis" → pedido PARA a Bruna, Jarvis só foi tagado → responde "Entendido! Vou acompanhar. Assim que a Bruna confirmar as artes, já fico de olho."
+- "@Jarvis qual o status dessa task?" → pedido PARA o Jarvis → responde com o status
+- "Nicolas finaliza isso e avisa o Jarvis quando tiver pronto" → pedido PARA o Nicolas → responde "Anotado! Fico no aguardo da finalização do Nicolas."
 
 REGRAS:
 - Responda como COMENTÁRIO no Asana (sem formatação HTML, só texto plain)
-- Seja direto e útil — responda o que foi perguntado
+- Seja direto e útil
 - Se te pedirem ajuda com estratégia/ideias, dê sugestões concretas
-- Se te pedirem status, dê o status baseado nos dados
-- Use as memórias do contexto para personalizar a resposta
+- Se te pedirem status, dê o status baseado nos dados da task e memórias
+- Use as memórias do contexto para personalizar a resposta — você TEM conhecimento acumulado, USE-O
 - NUNCA altere a descrição da task — apenas comente
-- Português com acentos sempre`,
+- Português com acentos sempre
+- Se não sabe algo, diga com honestidade — não invente`,
     messages: [{
       role: 'user',
-      content: `${commenterName} te mencionou nesta task do Asana:
+      content: `Comentário na task do Asana:
 
 --- DETALHES DA TASK ---
 ${taskContext}
@@ -233,14 +268,16 @@ ${recentComments || 'Nenhum comentário anterior.'}
 --- COMENTÁRIO QUE TE MENCIONOU ---
 ${commenterName}: ${commentText}
 
---- CONTEXTO DA MEMÓRIA (RAG) ---
+--- CONTEXTO DA MEMÓRIA (conhecimento acumulado) ---
 ${memoryContext}
 
-Responda ao que ${commenterName} pediu:`
+Analise o contexto conversacional: o pedido é PRA VOCÊ ou pra outra pessoa? Responda adequadamente:`
     }],
   });
 
-  return response.content?.[0]?.text || '';
+  // Extrair texto (ignorar thinking blocks)
+  const textBlock = response.content?.find(b => b.type === 'text');
+  return textBlock?.text || '';
 }
 
 // ============================================

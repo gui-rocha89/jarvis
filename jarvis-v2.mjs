@@ -22,7 +22,7 @@ import jwt from 'jsonwebtoken';
 // Módulos do Jarvis 4.0
 import { CONFIG, AUDIO_ALLOWED, teamPhones, teamWhatsApp, managedClients, loadManagedClients, saveManagedClients, isManagedClientGroup } from './src/config.mjs';
 import { pool, initDB, storeMessage, getRecentMessages, getContactInfo, getGroupInfo, upsertContact, upsertGroup, getMessageCount } from './src/database.mjs';
-import { initMemory, processMemory, getMemoryContext, getMemoryStats, searchMemories, storeFacts, extractFacts } from './src/memory.mjs';
+import { initMemory, processMemory, getMemoryContext, getMemoryStats, searchMemories, smartSearchMemories, storeFacts, extractFacts } from './src/memory.mjs';
 import { shouldJarvisRespond, isValidResponse, generateResponse, markConversationActive, isConversationActive, findTeamJid, extractMentionsFromText, generateDailyReport, handleManagedClientMessage, runOverdueCheck } from './src/brain.mjs';
 import { voiceConfig, loadVoiceConfig, saveVoiceConfig, transcribeAudio, generateAudio } from './src/audio.mjs';
 import { synthesizeProfile, getProfile, listProfiles, syncProfiles } from './src/profiles.mjs';
@@ -30,6 +30,7 @@ import { asanaRequest, getOverdueTasks, getGCalClient, JARVIS_TOOLS, registerSen
 import { getMediaType, extractSender } from './src/helpers.mjs';
 import { startAsanaStudy, stopAsanaStudy, asanaBatchState } from './src/batch-asana.mjs';
 import { startEmailMonitor, stopEmailMonitor, emailMonitorState } from './src/asana-email-monitor.mjs';
+import { generateBrainDocument, loadBrainDocument, invalidateBrainCache, getBrainStatus } from './src/brain-document.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -42,6 +43,46 @@ const sentByBot = new Set();
 // JIDs da equipe REAL (participantes dos grupos internos Tarefas/Galáxias)
 // NÃO inclui clientes — usado exclusivamente pelo agente proativo
 const realTeamJids = new Set();
+
+// ============================================
+// VALIDADOR DE HOMEWORK — Usa Haiku pra confirmar se é realmente uma instrução pro Jarvis
+// Evita salvar áudios de clientes, conversas casuais, etc.
+// ============================================
+async function validateHomework(text, isAudio = false) {
+  try {
+    // Se o texto é muito longo (>500 chars) e é áudio, provavelmente é transcrição de conversa
+    if (isAudio && text.length > 500) {
+      console.log(`[HOMEWORK] Áudio longo (${text.length} chars) — provavelmente transcrição de conversa, rejeitando`);
+      return false;
+    }
+
+    const Anthropic = (await import('@anthropic-ai/sdk')).default;
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
+
+    const response = await anthropic.messages.create({
+      model: process.env.MEMORY_MODEL || 'claude-haiku-3-5-20241022',
+      max_tokens: 10,
+      system: `Você é um classificador. Analise se o texto é uma INSTRUÇÃO DIRETA do dono da empresa para o assistente de IA (Jarvis), ou se é apenas conversa casual, transcrição de áudio de terceiros, ou conteúdo genérico.
+
+INSTRUÇÃO DIRETA = ordens como "não faça X", "me chame de Y", "quando acontecer Z, faça W", "aprenda que...", "a partir de agora...", correções de comportamento.
+
+NÃO É INSTRUÇÃO = conversas entre outras pessoas, áudios de clientes transcritos, discussões de negócios, conteúdo de terceiros encaminhado.
+
+${isAudio ? 'ATENÇÃO: Este texto é uma TRANSCRIÇÃO DE ÁUDIO. Se parece alguém falando com outra pessoa (não com o Jarvis), NÃO é instrução.' : ''}
+
+Responda APENAS "SIM" ou "NAO".`,
+      messages: [{ role: 'user', content: text.substring(0, 500) }],
+    });
+
+    const answer = (response.content[0]?.text || '').trim().toUpperCase();
+    return answer === 'SIM';
+  } catch (err) {
+    console.error('[HOMEWORK] Erro na validação:', err.message);
+    // Em caso de erro, usa heurística simples: rejeita áudios longos, aceita texto curto
+    if (isAudio && text.length > 200) return false;
+    return text.length < 200;
+  }
+}
 
 // ============================================
 // WHATSAPP - Envio de mensagens
@@ -240,14 +281,29 @@ async function handleIncomingMessage(m) {
   }
 
   // Auto-detectar instruções/correções do Gui (WhatsApp) e salvar como homework
+  // REGRA: Só salva se for REALMENTE uma instrução do Gui pro Jarvis
+  // NÃO salva: áudios encaminhados de clientes, conversas casuais, transcrições
   if (sender === CONFIG.GUI_JID && text.length >= 15) {
     const lower = text.toLowerCase();
-    if (/a partir de agora|lembr[ea]|regra|nunca mais|sempre que|aprenda|importante|n[aã]o (fa[cç]a|chame|use|mande|envie|fale)|pode me chamar|me chame de|entendeu\??|compreende\??|entendi[ds]?[ot]?|quero que voc[eê]|preciso que|fa[cç]a isso|resolv[ea]|oper[ea]|autoriz|cuide|monitore|fique de olho|preste aten[cç][aã]o|tom[ea] conta|assuma|gerencie|acompanhe/i.test(lower)) {
-      pool.query(
-        'INSERT INTO homework (type, content, source) VALUES ($1, $2, $3)',
-        ['whatsapp_instruction', text, 'whatsapp_gui']
-      ).then(() => {
-        console.log(`[HOMEWORK] Instrução do Gui salva: "${text.substring(0, 60)}..."`);
+    // Regex mais restritivo: exige padrões que SÓ aparecem em instruções diretas pro Jarvis
+    const isDirectInstruction = /\b(a partir de agora|nunca mais|sempre que|aprenda que|regra:|n[aã]o (fa[cç]a|chame|use|mande|envie|fale)|pode me chamar|me chame de|quero que voc[eê]|preciso que voc[eê]|jarvis.*(lembr|aprend|regra|entend))/i.test(lower);
+    // Padrões de gestão (só conta se tiver "jarvis" ou for bem curto e direto)
+    const isManagementOrder = /\b(autoriz|cuide|monitore|fique de olho|preste aten[cç][aã]o|tom[ea] conta|assuma|gerencie|acompanhe)\b/i.test(lower)
+      && (lower.includes('jarvis') || text.length < 120);
+
+    if (isDirectInstruction || isManagementOrder) {
+      // Validação com Haiku: confirma se é instrução pro Jarvis (evita salvar áudio de cliente)
+      validateHomework(text, isAudio).then(isValid => {
+        if (isValid) {
+          pool.query(
+            'INSERT INTO homework (type, content, source) VALUES ($1, $2, $3)',
+            ['whatsapp_instruction', text, 'whatsapp_gui']
+          ).then(() => {
+            console.log(`[HOMEWORK] ✅ Instrução do Gui salva: "${text.substring(0, 60)}..."`);
+          }).catch(() => {});
+        } else {
+          console.log(`[HOMEWORK] ❌ Rejeitado (não é instrução pro Jarvis): "${text.substring(0, 60)}..."`);
+        }
       }).catch(() => {});
     }
 
@@ -1755,13 +1811,15 @@ async function processDashboardChat(message, isVoice = false) {
   while (iterations < MAX_ITERATIONS) {
     iterations++;
 
+    // Dashboard chat SEMPRE usa Opus — Gui quer qualidade máxima na comunicação direta
+    const dashboardModel = CONFIG.AI_MODEL_STRONG || CONFIG.AI_MODEL;
     const apiParams = {
-      model: CONFIG.AI_MODEL,
-      max_tokens: 8000,
+      model: dashboardModel,
+      max_tokens: 12000,
       system: dashboardSystemPrompt,
       messages: currentMessages,
       tools: DASHBOARD_TOOLS,
-      thinking: { type: 'enabled', budget_tokens: 4096 },
+      thinking: { type: 'enabled', budget_tokens: 8192 },
     };
 
     const response = await anthropic.messages.create(apiParams, {
@@ -1809,11 +1867,18 @@ async function processDashboardChat(message, isVoice = false) {
 
   dashboardChatHistory.push({ role: 'assistant', content: finalText });
 
-  // Homework
+  // Homework — Dashboard sempre é o Gui falando direto, mas ainda valida com Haiku
   const lower = message.toLowerCase();
-  if (/a partir de agora|lembr[ea]|regra|nunca mais|sempre que|aprenda|importante|n[aã]o (fa[cç]a|chame|use|mande|envie|fale)|pode me chamar|me chame de|entendeu\??|compreende\??|entendi[ds]?[ot]?|quero que voc[eê]|preciso que|fa[cç]a isso|resolv[ea]|oper[ea]|autoriz|cuide|monitore|fique de olho|preste aten[cç][aã]o|tom[ea] conta|assuma|gerencie|acompanhe/i.test(lower)) {
-    await pool.query('INSERT INTO homework (type, content, source) VALUES ($1, $2, $3)', ['chat_instruction', message, isVoice ? 'dashboard_voice' : 'dashboard_chat']).catch(() => {});
-    console.log(`[HOMEWORK] Instrução do dashboard salva: "${message.substring(0, 60)}..."`);
+  const isDashboardInstruction = /\b(a partir de agora|nunca mais|sempre que|aprenda que|regra:|n[aã]o (fa[cç]a|chame|use|mande|envie|fale)|pode me chamar|me chame de|quero que voc[eê]|preciso que voc[eê]|jarvis.*(lembr|aprend|regra|entend)|autoriz|cuide|monitore|fique de olho|preste aten[cç][aã]o|tom[ea] conta|assuma|gerencie|acompanhe)\b/i.test(lower);
+  if (isDashboardInstruction) {
+    validateHomework(message, isVoice).then(isValid => {
+      if (isValid) {
+        pool.query('INSERT INTO homework (type, content, source) VALUES ($1, $2, $3)', ['chat_instruction', message, isVoice ? 'dashboard_voice' : 'dashboard_chat']).catch(() => {});
+        console.log(`[HOMEWORK] ✅ Instrução do dashboard salva: "${message.substring(0, 60)}..."`);
+      } else {
+        console.log(`[HOMEWORK] ❌ Dashboard: rejeitado (não é instrução): "${message.substring(0, 60)}..."`);
+      }
+    }).catch(() => {});
   }
 
   // Memória em background
@@ -1911,6 +1976,35 @@ app.post('/team/phone', auth, (req, res) => {
   const jid = phone.includes('@') ? phone : phone.replace(/\D/g, '') + '@s.whatsapp.net';
   teamPhones.set(name.toLowerCase(), jid);
   res.json({ success: true, name: name.toLowerCase(), jid });
+});
+
+// --- Cérebro Persistente ---
+app.get('/dashboard/brain', auth, async (req, res) => {
+  try {
+    const status = await getBrainStatus();
+    if (status.exists) {
+      const { rows } = await pool.query("SELECT value FROM jarvis_config WHERE key = 'jarvis_brain'");
+      const data = typeof rows[0].value === 'string' ? JSON.parse(rows[0].value) : rows[0].value;
+      res.json({ ...status, document: data.document });
+    } else {
+      res.json(status);
+    }
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/dashboard/brain/generate', auth, async (req, res) => {
+  try {
+    res.json({ status: 'generating', message: 'Geração do Cérebro Persistente iniciada em background' });
+    // Rodar em background pra não travar o request
+    generateBrainDocument().then(doc => {
+      if (doc) {
+        invalidateBrainCache();
+        console.log(`[API] ✅ Cérebro Persistente gerado via dashboard: ${doc.length} chars`);
+      }
+    }).catch(err => {
+      console.error('[API] Erro ao gerar Cérebro:', err.message);
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // --- Reports ---
@@ -2020,7 +2114,24 @@ function setupCronJobs() {
     } catch (err) { console.error('[CRON] Erro no relatório:', err.message); }
   });
 
-  console.log('[CRON] Jobs ativados: syncProfiles 6h + estudo Asana 5x/dia + cobrança 2x/dia + relatório diário 08h');
+  // ============================================
+  // CÉREBRO PERSISTENTE — 1x por dia às 04:00 BRT (07:00 UTC)
+  // Sintetiza TODAS as memórias num documento estruturado
+  // ============================================
+  cron.schedule('0 7 * * *', async () => {
+    console.log('[CRON] 🧠 Gerando Cérebro Persistente (04:00 BRT)...');
+    try {
+      const doc = await generateBrainDocument();
+      if (doc) {
+        invalidateBrainCache(); // Força reload do cache
+        console.log(`[CRON] ✅ Cérebro Persistente atualizado: ${doc.length} chars`);
+      }
+    } catch (err) {
+      console.error('[CRON] ❌ Erro ao gerar Cérebro:', err.message);
+    }
+  });
+
+  console.log('[CRON] Jobs ativados: syncProfiles 6h + estudo Asana 5x/dia + cobrança 2x/dia + relatório diário 08h + Cérebro 1x/dia');
 }
 
 // ============================================

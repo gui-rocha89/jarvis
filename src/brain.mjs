@@ -5,7 +5,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import { CONFIG, JARVIS_ALLOWED_GROUPS, teamPhones, teamWhatsApp } from './config.mjs';
 import { pool } from './database.mjs';
 import { getRecentMessages, getContactInfo, getGroupInfo, getMessageCount } from './database.mjs';
-import { getMemoryContext, processMemory, searchMemories } from './memory.mjs';
+import { getMemoryContext, processMemory, searchMemories, smartSearchMemories } from './memory.mjs';
+import { loadBrainDocument } from './brain-document.mjs';
 import { classifyIntent, MASTER_SYSTEM_PROMPT, AGENT_PROMPTS } from './agents/master.mjs';
 import { JARVIS_TOOLS, executeJarvisTool } from './skills/loader.mjs';
 
@@ -19,9 +20,21 @@ const MAX_AGENT_ITERATIONS = 10;
  * Queries complexas (multi-step, análise profunda, estratégia) → Opus
  * Queries simples (cumprimento, pergunta direta, status) → Sonnet
  */
-function chooseModel(text, intent) {
+function chooseModel(text, intent, context = {}) {
   const strong = CONFIG.AI_MODEL_STRONG;
   if (!strong || strong === CONFIG.AI_MODEL) return CONFIG.AI_MODEL;
+
+  // DM com o Gui ou Dashboard = SEMPRE Opus (ele quer qualidade máxima)
+  if (context.isDM || context.isDashboard) {
+    console.log(`[AI] Modelo forte selecionado: ${strong} (comunicação direta — Opus obrigatório)`);
+    return strong;
+  }
+
+  // Agentes especializados que precisam de raciocínio complexo = Opus
+  if (intent?.agent && ['traffic', 'manager', 'researcher'].includes(intent.agent)) {
+    console.log(`[AI] Modelo forte selecionado: ${strong} (agente ${intent.agent} — requer raciocínio)`);
+    return strong;
+  }
 
   // Indicadores de complexidade que justificam Opus
   const complexPatterns = [
@@ -32,14 +45,12 @@ function chooseModel(text, intent) {
     /\b(crie|monte|elabore|desenvolva|proponha)\b/i,
   ];
 
-  // Texto longo + complexidade = Opus
-  const isComplex = text.length > 100 && complexPatterns.some(p => p.test(text));
-  // Agente gestor com query longa = Opus
-  const isManagerComplex = intent?.agent === 'manager' && text.length > 80;
+  // Texto com complexidade = Opus (removido requisito de >100 chars)
+  const isComplex = complexPatterns.some(p => p.test(text));
   // Agente criativo com briefing = Opus
-  const isCreativeComplex = intent?.agent === 'creative' && text.length > 120;
+  const isCreativeComplex = intent?.agent === 'creative' && text.length > 80;
 
-  if (isComplex || isManagerComplex || isCreativeComplex) {
+  if (isComplex || isCreativeComplex) {
     console.log(`[AI] Modelo forte selecionado: ${strong} (complexidade detectada)`);
     return strong;
   }
@@ -310,7 +321,10 @@ export async function generateResponse(text, chatId, senderJid, pushName, isGrou
     const timeStr = brDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     const year = brDate.getFullYear();
 
-    // Buscar memórias relevantes (NOVO - Mem0)
+    // Buscar Cérebro Persistente (conhecimento sintetizado, atualizado 1x/dia)
+    const brainDocument = await loadBrainDocument();
+
+    // Buscar memórias relevantes específicas à conversa (complementa o cérebro)
     const memoryContext = await getMemoryContext(senderJid, chatId, text);
 
     // Classificar intenção (Agent Teams)
@@ -341,19 +355,30 @@ export async function generateResponse(text, chatId, senderJid, pushName, isGrou
     }
 
     // Prompt Caching: system prompt como array com cache_control
-    // Bloco estático (MASTER_SYSTEM_PROMPT) = cacheável (muda raramente)
-    // Bloco dinâmico (contextNote) = NÃO cacheável (muda a cada request)
+    // Bloco 1: MASTER_SYSTEM_PROMPT + agente = cacheável (muda raramente)
+    // Bloco 2: Cérebro Persistente = cacheável (muda 1x/dia — conhecimento sintetizado)
+    // Bloco 3: Contexto dinâmico = NÃO cacheável (muda a cada request)
     const systemPrompt = [
       {
         type: 'text',
         text: MASTER_SYSTEM_PROMPT + agentSection,
         cache_control: { type: 'ephemeral' },
       },
-      {
-        type: 'text',
-        text: contextNote,
-      },
     ];
+
+    // Injetar Cérebro Persistente como bloco cacheável (se existir)
+    if (brainDocument) {
+      systemPrompt.push({
+        type: 'text',
+        text: '\n\n' + brainDocument,
+        cache_control: { type: 'ephemeral' },
+      });
+    }
+
+    systemPrompt.push({
+      type: 'text',
+      text: contextNote,
+    });
 
     // Detectar links de tasks do Asana na mensagem
     let asanaTaskContext = '';
@@ -382,8 +407,9 @@ export async function generateResponse(text, chatId, senderJid, pushName, isGrou
       consolidatedHistory.shift();
     }
 
-    // Escolher modelo (Sonnet para simples, Opus para complexo)
-    const model = chooseModel(text, intent);
+    // Escolher modelo — DM com Gui = SEMPRE Opus, grupos = depende da complexidade
+    const isDM = !isGroup && senderJid === CONFIG.GUI_JID;
+    const model = chooseModel(text, intent, { isDM });
 
     // Agent Loop: executa tools em loop até resposta final
     const { text: finalText, mentions } = await agentLoop(
@@ -501,6 +527,9 @@ export async function handleManagedClientMessage(text, senderJid, pushName, chat
 
     const clientPromptText = buildClientAgentPrompt(managedClient, memoryContext, dateStr, timeStr, dayOfWeek);
 
+    // Carregar Cérebro Persistente pro agente proativo também
+    const brainDoc = await loadBrainDocument();
+
     // Prompt Caching: separar parte estática (prompt do agente) da dinâmica (contexto)
     const systemPrompt = [
       {
@@ -509,6 +538,15 @@ export async function handleManagedClientMessage(text, senderJid, pushName, chat
         cache_control: { type: 'ephemeral' },
       },
     ];
+
+    // Injetar Cérebro Persistente (se existir)
+    if (brainDoc) {
+      systemPrompt.push({
+        type: 'text',
+        text: '\n\n' + brainDoc,
+        cache_control: { type: 'ephemeral' },
+      });
+    }
 
     // Agent Loop: executa tools em loop até resposta final
     const { text: finalText, toolsUsed } = await agentLoop(
@@ -607,22 +645,35 @@ async function getClientFullContext(chatId, senderJid, managedClient, text) {
   const contexts = [];
 
   try {
-    // 1. Memórias do chat/grupo deste cliente
-    const chatMemories = await searchMemories(text, 'chat', chatId, 10);
+    // 1. Memórias de ALTA IMPORTÂNCIA — SEMPRE presentes no contexto do cliente
+    try {
+      const { rows: topMems } = await pool.query(
+        `SELECT DISTINCT ON (content) content, category, importance
+         FROM jarvis_memories WHERE importance >= 8
+         ORDER BY content, importance DESC LIMIT 20`
+      );
+      if (topMems.length > 0) {
+        contexts.push('🧠 CONHECIMENTO FUNDAMENTAL (alta importância):');
+        topMems.forEach(m => contexts.push(`- [${m.category}] ${m.content}`));
+      }
+    } catch {}
+
+    // 2. Memórias do chat/grupo deste cliente (busca inteligente)
+    const chatMemories = await smartSearchMemories(text, 'chat', chatId, 15);
     if (chatMemories.length > 0) {
-      contexts.push('HISTÓRICO E MEMÓRIAS DESTE CLIENTE:');
+      contexts.push('\nHISTÓRICO E MEMÓRIAS DESTE CLIENTE:');
       chatMemories.forEach(m => contexts.push(`- [${m.category}] ${m.content}`));
     }
 
-    // 2. Memórias sobre a pessoa que mandou a mensagem
-    const senderMemories = await searchMemories(text, 'user', senderJid, 5);
+    // 3. Memórias sobre a pessoa que mandou a mensagem
+    const senderMemories = await smartSearchMemories(text, 'user', senderJid, 10);
     if (senderMemories.length > 0) {
       contexts.push('\nSOBRE QUEM MANDOU A MENSAGEM:');
       senderMemories.forEach(m => contexts.push(`- [${m.category}] ${m.content}`));
     }
 
-    // 3. Conhecimento operacional do Jarvis (processos, regras)
-    const agentMemories = await searchMemories('cliente demanda task fluxo processo', 'agent', null, 8);
+    // 4. Conhecimento operacional do Jarvis (processos, regras) — busca ampla
+    const agentMemories = await smartSearchMemories(text + ' cliente demanda task fluxo processo regra', 'agent', null, 15);
     if (agentMemories.length > 0) {
       contexts.push('\nCONHECIMENTO OPERACIONAL (como a agência funciona):');
       agentMemories.forEach(m => contexts.push(`- ${m.content}`));
