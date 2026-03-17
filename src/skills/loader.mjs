@@ -3,7 +3,7 @@
 // Carrega e gerencia skills dinâmicamente
 // ============================================
 import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, ASANA_CUSTOM_FIELDS, ASANA_CLIENTE_MAP, ASANA_URGENCIA_MAP, ASANA_TIER_MAP, ASANA_TIPO_DEMANDA_MAP, GCAL_KEY_PATH, GCAL_CALENDAR_ID, managedClients, saveManagedClients, teamWhatsApp } from '../config.mjs';
-import { listCampaigns, getCampaignInsights, createCampaign, updateCampaignStatus, getAccountInsights, publishPagePost, getPagePosts, resolvePageId, listAvailablePages } from './meta-ads.mjs';
+import { listCampaigns, getCampaignInsights, createCampaign, updateCampaignStatus, getAccountInsights, publishPagePost, getPagePosts, resolvePageId, listAvailablePages, createAdSet, listAdSets, uploadAdImage, createAdCreative, createAd, updateEntityStatus, asanaGetAttachments, pipelineAsanaToAds } from './meta-ads.mjs';
 import { pool } from '../database.mjs';
 import { searchMemories } from '../memory.mjs';
 import { readFile, readdir, stat } from 'fs/promises';
@@ -536,12 +536,13 @@ export const JARVIS_TOOLS = [
   },
   {
     name: 'pausar_campanha',
-    description: 'Pausar ou retomar uma campanha no Meta Ads.',
+    description: 'Pausar ou retomar uma campanha, conjunto de anúncios ou anúncio no Meta Ads. Para ativar/pausar vários de uma vez, use ativar_desativar_ads.',
     input_schema: {
       type: 'object',
       properties: {
-        campanha_id: { type: 'string', description: 'ID da campanha no Meta Ads' },
+        campanha_id: { type: 'string', description: 'ID da entidade no Meta Ads (campanha, conjunto ou anúncio)' },
         acao: { type: 'string', enum: ['pausar', 'retomar'], description: 'Ação a executar' },
+        tipo: { type: 'string', enum: ['campanha', 'conjunto', 'anuncio'], description: 'Tipo da entidade (default: campanha)' },
       },
       required: ['campanha_id', 'acao'],
     },
@@ -597,6 +598,134 @@ export const JARVIS_TOOLS = [
         cliente: { type: 'string', description: 'Nome do cliente (ex: "minner", "rossato", "pippi"). Resolve automaticamente a página do Facebook.' },
         limite: { type: 'number', description: 'Número de posts recentes para consultar (default: 10)' },
       },
+    },
+  },
+  // ============================================
+  // TOOLS — Pipeline Criativo (Asana → Meta Ads)
+  // ============================================
+  {
+    name: 'criar_conjunto_anuncios',
+    description: 'Criar um conjunto de anúncios (Ad Set) dentro de uma campanha existente no Meta Ads. Define segmentação, orçamento e otimização. Criado PAUSADO por segurança.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        campanha_id: { type: 'string', description: 'ID da campanha pai no Meta Ads' },
+        nome: { type: 'string', description: 'Nome do conjunto (ex: "[ROSSATO] Usados - Cuiabá 25-55")' },
+        orcamento_diario: { type: 'number', description: 'Orçamento diário em reais (ex: 30 = R$30/dia)' },
+        idade_min: { type: 'number', description: 'Idade mínima (default: 18)' },
+        idade_max: { type: 'number', description: 'Idade máxima (default: 65)' },
+        cidades: {
+          type: 'array',
+          description: 'Lista de cidades para segmentação (ex: [{"key":"2513539","name":"Cuiabá"}]). Se omitido, Brasil inteiro.',
+          items: { type: 'object', properties: { key: { type: 'string' }, name: { type: 'string' } } },
+        },
+        interesses: {
+          type: 'array',
+          description: 'Lista de interesses para segmentação (ex: [{"id":"123","name":"Agronegócio"}])',
+          items: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } } },
+        },
+        otimizacao: { type: 'string', enum: ['LINK_CLICKS', 'REACH', 'IMPRESSIONS', 'LANDING_PAGE_VIEWS'], description: 'Objetivo de otimização (default: LINK_CLICKS)' },
+      },
+      required: ['campanha_id', 'nome', 'orcamento_diario'],
+    },
+  },
+  {
+    name: 'subir_imagem_ads',
+    description: 'Faz upload de uma imagem para o Meta Ads. Retorna o hash da imagem para usar em criativos. Aceita URL pública da imagem.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        imagem_url: { type: 'string', description: 'URL pública da imagem para upload' },
+        nome_arquivo: { type: 'string', description: 'Nome do arquivo (ex: "banner_rossato.jpg")' },
+      },
+      required: ['imagem_url'],
+    },
+  },
+  {
+    name: 'criar_criativo_ads',
+    description: 'Cria um criativo de anúncio no Meta Ads usando uma imagem já uploadada (hash). Define copy, link, headline e CTA.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        image_hash: { type: 'string', description: 'Hash da imagem (obtido via subir_imagem_ads)' },
+        cliente: { type: 'string', description: 'Nome do cliente (resolve Page ID automaticamente)' },
+        texto: { type: 'string', description: 'Copy/texto principal do anúncio' },
+        link: { type: 'string', description: 'URL de destino do anúncio' },
+        titulo: { type: 'string', description: 'Título do anúncio (aparece no card)' },
+        descricao: { type: 'string', description: 'Descrição abaixo do título (opcional)' },
+        cta: { type: 'string', enum: ['LEARN_MORE', 'SHOP_NOW', 'SIGN_UP', 'CONTACT_US', 'BOOK_TRAVEL', 'DOWNLOAD', 'GET_OFFER', 'APPLY_NOW', 'SEND_WHATSAPP_MESSAGE'], description: 'Botão de ação (default: LEARN_MORE)' },
+        nome_criativo: { type: 'string', description: 'Nome interno do criativo (opcional)' },
+      },
+      required: ['image_hash', 'cliente', 'texto', 'link'],
+    },
+  },
+  {
+    name: 'criar_anuncio',
+    description: 'Cria um anúncio no Meta Ads vinculando um criativo a um conjunto de anúncios. Criado PAUSADO por segurança.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        conjunto_id: { type: 'string', description: 'ID do conjunto de anúncios (Ad Set)' },
+        criativo_id: { type: 'string', description: 'ID do criativo (Ad Creative)' },
+        nome: { type: 'string', description: 'Nome do anúncio' },
+      },
+      required: ['conjunto_id', 'criativo_id'],
+    },
+  },
+  {
+    name: 'baixar_anexos_task',
+    description: 'Lista ou baixa os anexos (imagens, PDFs, etc.) de uma task do Asana. Útil para pegar criativos aprovados e subir pro Meta Ads.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        task_id: { type: 'string', description: 'GID da task no Asana' },
+        baixar: { type: 'boolean', description: 'Se true, baixa o conteúdo das imagens (para upload no Meta). Se false, só lista.' },
+      },
+      required: ['task_id'],
+    },
+  },
+  {
+    name: 'pipeline_asana_meta',
+    description: 'Pipeline COMPLETO: baixa imagens de uma task do Asana → sobe pro Meta Ads → cria criativos → cria anúncios. Tudo PAUSADO por segurança.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        task_id: { type: 'string', description: 'GID da task no Asana com os criativos aprovados' },
+        conjunto_id: { type: 'string', description: 'ID do conjunto de anúncios (Ad Set) onde os anúncios serão criados' },
+        cliente: { type: 'string', description: 'Nome do cliente (resolve Page ID automaticamente)' },
+        texto: { type: 'string', description: 'Copy/texto do anúncio' },
+        link: { type: 'string', description: 'URL de destino' },
+        titulo: { type: 'string', description: 'Título do anúncio (opcional)' },
+        cta: { type: 'string', enum: ['LEARN_MORE', 'SHOP_NOW', 'SIGN_UP', 'CONTACT_US', 'SEND_WHATSAPP_MESSAGE'], description: 'Botão de ação (default: LEARN_MORE)' },
+      },
+      required: ['task_id', 'conjunto_id', 'cliente', 'texto', 'link'],
+    },
+  },
+  {
+    name: 'ativar_desativar_ads',
+    description: 'Ativa ou desativa qualquer entidade do Meta Ads: campanha, conjunto de anúncios ou anúncio individual. Use para ativar/pausar em massa.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        ids: {
+          type: 'array',
+          description: 'Lista de IDs para ativar/desativar. Pode ser mix de campanhas, conjuntos e anúncios.',
+          items: { type: 'string' },
+        },
+        acao: { type: 'string', enum: ['ativar', 'pausar'], description: 'Ação a executar em todos os IDs' },
+      },
+      required: ['ids', 'acao'],
+    },
+  },
+  {
+    name: 'listar_conjuntos',
+    description: 'Lista os conjuntos de anúncios (Ad Sets) de uma campanha no Meta Ads com seus status e orçamentos.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        campanha_id: { type: 'string', description: 'ID da campanha' },
+      },
+      required: ['campanha_id'],
     },
   },
   {
@@ -1181,15 +1310,17 @@ export async function executeJarvisTool(toolName, input, context = {}) {
 
     try {
       const status = input.acao === 'retomar' ? 'ACTIVE' : 'PAUSED';
-      const result = await updateCampaignStatus(input.campanha_id, status);
+      const tipo = input.tipo || 'campanha';
+      const result = await updateEntityStatus(input.campanha_id, status, tipo);
       return {
         sucesso: true,
-        campanha_id: result.id,
+        id: result.id,
+        tipo: result.tipo,
         novo_status: result.status === 'ACTIVE' ? 'ATIVA' : 'PAUSADA',
-        mensagem: `Campanha ${input.acao === 'retomar' ? 'retomada' : 'pausada'} com sucesso.`,
+        mensagem: `${tipo.charAt(0).toUpperCase() + tipo.slice(1)} ${input.acao === 'retomar' ? 'retomada' : 'pausada'} com sucesso.`,
       };
     } catch (err) {
-      return { error: `Erro ao ${input.acao} campanha: ${err.message}` };
+      return { error: `Erro ao ${input.acao} ${input.tipo || 'campanha'}: ${err.message}` };
     }
   }
 
@@ -1279,6 +1410,259 @@ export async function executeJarvisTool(toolName, input, context = {}) {
       };
     } catch (err) {
       return { error: `Erro ao buscar métricas: ${err.message}` };
+    }
+  }
+
+  // ============================================
+  // TOOLS — Pipeline Criativo (Asana → Meta Ads)
+  // ============================================
+
+  if (toolName === 'criar_conjunto_anuncios') {
+    if (!input.campanha_id) return { error: 'campanha_id é obrigatório' };
+    if (!input.nome) return { error: 'nome é obrigatório' };
+    if (!input.orcamento_diario) return { error: 'orcamento_diario é obrigatório' };
+
+    try {
+      const targeting = {};
+      if (input.cidades) targeting.cities = input.cidades;
+      if (input.interesses) targeting.interests = input.interesses;
+      if (input.idade_min) targeting.ageMin = input.idade_min;
+      if (input.idade_max) targeting.ageMax = input.idade_max;
+
+      const result = await createAdSet({
+        campaignId: input.campanha_id,
+        name: input.nome,
+        dailyBudget: input.orcamento_diario,
+        targeting,
+        optimizationGoal: input.otimizacao || 'LINK_CLICKS',
+        status: 'PAUSED',
+      });
+
+      return {
+        sucesso: true,
+        conjunto_id: result.id,
+        nome: result.name,
+        campanha_id: result.campaignId,
+        orcamento_diario: `R$ ${parseFloat(input.orcamento_diario).toFixed(2)}`,
+        status: 'PAUSADO',
+        mensagem: `Conjunto de anúncios "${input.nome}" criado com sucesso (PAUSADO).`,
+      };
+    } catch (err) {
+      return { error: `Erro ao criar conjunto: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'subir_imagem_ads') {
+    if (!input.imagem_url) return { error: 'imagem_url é obrigatório' };
+
+    try {
+      // Baixar a imagem da URL
+      const imgResp = await fetch(input.imagem_url);
+      if (!imgResp.ok) throw new Error(`Erro ao baixar imagem: ${imgResp.status}`);
+      const buffer = Buffer.from(await imgResp.arrayBuffer());
+
+      const fileName = input.nome_arquivo || input.imagem_url.split('/').pop()?.split('?')[0] || 'ad_image.jpg';
+      const result = await uploadAdImage(buffer, fileName);
+
+      return {
+        sucesso: true,
+        image_hash: result.hash,
+        url: result.url,
+        nome_arquivo: fileName,
+        tamanho_bytes: buffer.length,
+        mensagem: `Imagem "${fileName}" uploaded com sucesso. Hash: ${result.hash}. Use este hash para criar criativos.`,
+      };
+    } catch (err) {
+      return { error: `Erro ao fazer upload: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'criar_criativo_ads') {
+    if (!input.image_hash) return { error: 'image_hash é obrigatório (faça upload primeiro com subir_imagem_ads)' };
+    if (!input.cliente) return { error: 'cliente é obrigatório' };
+    if (!input.texto) return { error: 'texto é obrigatório' };
+    if (!input.link) return { error: 'link é obrigatório' };
+
+    try {
+      const pageId = resolvePageId(input.cliente);
+      if (!pageId) return { error: `Página não encontrada para cliente "${input.cliente}". Use listAvailablePages() para ver as disponíveis.` };
+
+      const result = await createAdCreative({
+        imageHash: input.image_hash,
+        pageId,
+        message: input.texto,
+        link: input.link,
+        headline: input.titulo || '',
+        description: input.descricao || '',
+        callToAction: input.cta || 'LEARN_MORE',
+        name: input.nome_criativo,
+      });
+
+      return {
+        sucesso: true,
+        criativo_id: result.id,
+        nome: result.name,
+        mensagem: `Criativo "${result.name}" criado com sucesso. Use este ID para criar anúncios.`,
+      };
+    } catch (err) {
+      return { error: `Erro ao criar criativo: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'criar_anuncio') {
+    if (!input.conjunto_id) return { error: 'conjunto_id é obrigatório' };
+    if (!input.criativo_id) return { error: 'criativo_id é obrigatório' };
+
+    try {
+      const result = await createAd({
+        adSetId: input.conjunto_id,
+        creativeId: input.criativo_id,
+        name: input.nome || undefined,
+        status: 'PAUSED',
+      });
+
+      return {
+        sucesso: true,
+        anuncio_id: result.id,
+        nome: result.name,
+        conjunto_id: result.adSetId,
+        criativo_id: result.creativeId,
+        status: 'PAUSADO',
+        mensagem: `Anúncio "${result.name}" criado com sucesso (PAUSADO).`,
+      };
+    } catch (err) {
+      return { error: `Erro ao criar anúncio: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'baixar_anexos_task') {
+    if (!input.task_id) return { error: 'task_id é obrigatório' };
+
+    try {
+      const attachments = await asanaGetAttachments(input.task_id, input.baixar || false);
+
+      if (!input.baixar) {
+        return {
+          sucesso: true,
+          total: attachments.length,
+          anexos: attachments,
+          mensagem: attachments.length > 0
+            ? `${attachments.length} anexo(s) encontrado(s). Use baixar=true para baixar as imagens.`
+            : 'Nenhum anexo encontrado na task.',
+        };
+      }
+
+      const imagens = attachments.filter(a => a.tipo === 'imagem');
+      const outros = attachments.filter(a => a.tipo !== 'imagem');
+
+      return {
+        sucesso: true,
+        total: attachments.length,
+        imagens_encontradas: imagens.length,
+        outros_arquivos: outros.length,
+        anexos: attachments.map(a => ({
+          nome: a.nome,
+          tipo: a.tipo,
+          tamanho: a.tamanho || null,
+          error: a.error || null,
+        })),
+        mensagem: imagens.length > 0
+          ? `${imagens.length} imagem(ns) baixada(s) com sucesso. Prontas para upload no Meta Ads.`
+          : 'Nenhuma imagem encontrada nos anexos.',
+      };
+    } catch (err) {
+      return { error: `Erro ao buscar anexos: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'pipeline_asana_meta') {
+    if (!input.task_id) return { error: 'task_id é obrigatório' };
+    if (!input.conjunto_id) return { error: 'conjunto_id é obrigatório' };
+    if (!input.cliente) return { error: 'cliente é obrigatório' };
+    if (!input.texto) return { error: 'texto é obrigatório' };
+    if (!input.link) return { error: 'link é obrigatório' };
+
+    try {
+      const pageId = resolvePageId(input.cliente);
+      if (!pageId) return { error: `Página não encontrada para cliente "${input.cliente}".` };
+
+      const results = await pipelineAsanaToAds({
+        taskGid: input.task_id,
+        adSetId: input.conjunto_id,
+        pageId,
+        message: input.texto,
+        link: input.link,
+        headline: input.titulo || '',
+        callToAction: input.cta || 'LEARN_MORE',
+      });
+
+      const sucessos = results.filter(r => r.sucesso);
+      const falhas = results.filter(r => !r.sucesso);
+
+      return {
+        sucesso: falhas.length === 0,
+        total_imagens: results.length,
+        anuncios_criados: sucessos.length,
+        falhas: falhas.length,
+        detalhes: results,
+        mensagem: sucessos.length > 0
+          ? `Pipeline concluído! ${sucessos.length} anúncio(s) criado(s) com sucesso (PAUSADOS). ${falhas.length > 0 ? `${falhas.length} falha(s).` : ''}`
+          : 'Nenhum anúncio criado. Verifique se a task tem imagens nos anexos.',
+      };
+    } catch (err) {
+      return { error: `Erro no pipeline: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'ativar_desativar_ads') {
+    if (!input.ids || !Array.isArray(input.ids) || input.ids.length === 0) return { error: 'ids é obrigatório (array de IDs)' };
+    if (!input.acao) return { error: 'acao é obrigatória (ativar ou pausar)' };
+
+    try {
+      const status = input.acao === 'ativar' ? 'ACTIVE' : 'PAUSED';
+      const results = [];
+
+      for (const id of input.ids) {
+        try {
+          const result = await updateEntityStatus(id, status, 'entidade');
+          results.push({ id, sucesso: true, status: result.status });
+        } catch (err) {
+          results.push({ id, sucesso: false, error: err.message });
+        }
+      }
+
+      const sucessos = results.filter(r => r.sucesso);
+      const falhas = results.filter(r => !r.sucesso);
+
+      return {
+        sucesso: falhas.length === 0,
+        total: results.length,
+        ativados: input.acao === 'ativar' ? sucessos.length : 0,
+        pausados: input.acao === 'pausar' ? sucessos.length : 0,
+        falhas: falhas.length,
+        detalhes: results,
+        mensagem: `${sucessos.length}/${results.length} entidade(s) ${input.acao === 'ativar' ? 'ativada(s)' : 'pausada(s)'} com sucesso.`,
+      };
+    } catch (err) {
+      return { error: `Erro ao ${input.acao}: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'listar_conjuntos') {
+    if (!input.campanha_id) return { error: 'campanha_id é obrigatório' };
+
+    try {
+      const adSets = await listAdSets(input.campanha_id);
+      return {
+        sucesso: true,
+        total: adSets.length,
+        conjuntos: adSets,
+        mensagem: adSets.length > 0
+          ? `${adSets.length} conjunto(s) encontrado(s).`
+          : 'Nenhum conjunto de anúncios encontrado nesta campanha.',
+      };
+    } catch (err) {
+      return { error: `Erro ao listar conjuntos: ${err.message}` };
     }
   }
 

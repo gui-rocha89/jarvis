@@ -421,6 +421,78 @@ describe('Colaboração Multi-Agente', () => {
 });
 
 // ============================================
+// TESTES: Pipeline Meta Ads (novas tools)
+// ============================================
+describe('Pipeline Meta Ads', () => {
+  it('JARVIS_TOOLS inclui todas as 8 novas tools do pipeline', async () => {
+    const { JARVIS_TOOLS } = await import('../src/skills/loader.mjs');
+    const novasTools = [
+      'criar_conjunto_anuncios',
+      'subir_imagem_ads',
+      'criar_criativo_ads',
+      'criar_anuncio',
+      'baixar_anexos_task',
+      'pipeline_asana_meta',
+      'ativar_desativar_ads',
+      'listar_conjuntos',
+    ];
+    for (const toolName of novasTools) {
+      const tool = JARVIS_TOOLS.find(t => t.name === toolName);
+      assert.ok(tool, `Tool ${toolName} não encontrada em JARVIS_TOOLS`);
+    }
+  });
+
+  it('meta-ads.mjs exporta todas as novas funções', async () => {
+    const metaAds = await import('../src/skills/meta-ads.mjs');
+    const expectedFns = [
+      'createAdSet', 'listAdSets', 'uploadAdImage',
+      'createAdCreative', 'createAd', 'updateEntityStatus',
+      'asanaGetAttachments', 'pipelineAsanaToAds',
+    ];
+    for (const fn of expectedFns) {
+      assert.ok(typeof metaAds[fn] === 'function', `Função ${fn} não exportada de meta-ads.mjs`);
+    }
+  });
+
+  it('pausar_campanha suporta tipo (campanha, conjunto, anuncio)', async () => {
+    const { JARVIS_TOOLS } = await import('../src/skills/loader.mjs');
+    const tool = JARVIS_TOOLS.find(t => t.name === 'pausar_campanha');
+    assert.ok(tool, 'Tool pausar_campanha não encontrada');
+    assert.ok(tool.input_schema.properties.tipo, 'Campo tipo ausente em pausar_campanha');
+    assert.deepEqual(tool.input_schema.properties.tipo.enum, ['campanha', 'conjunto', 'anuncio']);
+  });
+
+  it('ativar_desativar_ads aceita array de IDs', async () => {
+    const { JARVIS_TOOLS } = await import('../src/skills/loader.mjs');
+    const tool = JARVIS_TOOLS.find(t => t.name === 'ativar_desativar_ads');
+    assert.ok(tool, 'Tool ativar_desativar_ads não encontrada');
+    assert.equal(tool.input_schema.properties.ids.type, 'array');
+    assert.deepEqual(tool.input_schema.properties.acao.enum, ['ativar', 'pausar']);
+  });
+
+  it('classifyIntent detecta traffic para "ativa as campanhas do Rossato"', async () => {
+    const { classifyIntent } = await import('../src/agents/master.mjs');
+    const result = await classifyIntent('ativa as campanhas do Rossato no Meta Ads');
+    assert.equal(result.agent, 'traffic', `Esperava traffic, recebeu ${result.agent}`);
+  });
+
+  it('classifyIntent detecta traffic para "cria um conjunto de anúncios"', async () => {
+    const { classifyIntent } = await import('../src/agents/master.mjs');
+    const result = await classifyIntent('cria um conjunto de anúncios pra campanha de tráfego');
+    assert.equal(result.agent, 'traffic', `Esperava traffic, recebeu ${result.agent}`);
+  });
+
+  it('meta-ads.mjs não contém credenciais hardcoded', async () => {
+    const { readFile } = await import('fs/promises');
+    const content = await readFile(new URL('../src/skills/meta-ads.mjs', import.meta.url), 'utf-8');
+    const dangerousPatterns = [/sk-ant-api/i, /act_\d{10,}/, /EAAb[a-zA-Z0-9]+/];
+    for (const p of dangerousPatterns) {
+      assert.ok(!p.test(content), `Credencial encontrada em meta-ads.mjs: ${p}`);
+    }
+  });
+});
+
+// ============================================
 // TESTES: Validação de estrutura
 // ============================================
 describe('Estrutura do projeto', () => {

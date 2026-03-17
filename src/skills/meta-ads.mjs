@@ -278,6 +278,365 @@ export async function publishPagePost({ message, link, imageUrl, scheduledTime, 
 }
 
 // ============================================
+// AD SETS (Conjuntos de Anúncios)
+// ============================================
+
+/**
+ * Cria um conjunto de anúncios (Ad Set) vinculado a uma campanha
+ * @param {Object} params
+ * @param {string} params.campaignId - ID da campanha pai
+ * @param {string} params.name - Nome do conjunto
+ * @param {number} params.dailyBudget - Orçamento diário em reais
+ * @param {Object} params.targeting - Segmentação (cidades, idade, interesses)
+ * @param {string} params.optimizationGoal - Objetivo de otimização (LINK_CLICKS, REACH, IMPRESSIONS, LANDING_PAGE_VIEWS)
+ * @param {string} params.billingEvent - Evento de cobrança (IMPRESSIONS, LINK_CLICKS)
+ * @param {string} params.status - Status inicial (default: PAUSED)
+ */
+export async function createAdSet({
+  campaignId, name, dailyBudget, targeting = {},
+  optimizationGoal = 'LINK_CLICKS', billingEvent = 'IMPRESSIONS',
+  status = 'PAUSED', startTime = null,
+}) {
+  const adAccount = CONFIG.META_AD_ACCOUNT_ID;
+  if (!adAccount) throw new Error('META_AD_ACCOUNT_ID não configurado');
+  if (!campaignId) throw new Error('campaignId é obrigatório');
+
+  const budgetCents = Math.round(parseFloat(dailyBudget) * 100);
+
+  // Montar targeting padrão se não especificado
+  const targetingSpec = {
+    geo_locations: targeting.geoLocations || { countries: ['BR'] },
+    age_min: targeting.ageMin || 18,
+    age_max: targeting.ageMax || 65,
+  };
+
+  // Cidades específicas (ex: [{ key: '123456', name: 'Cuiabá' }])
+  if (targeting.cities) {
+    targetingSpec.geo_locations = { cities: targeting.cities };
+  }
+
+  // Regiões/estados (ex: [{ key: '11' }] para MT)
+  if (targeting.regions) {
+    targetingSpec.geo_locations = { ...targetingSpec.geo_locations, regions: targeting.regions };
+  }
+
+  // Interesses (ex: [{ id: '123', name: 'Agronegócio' }])
+  if (targeting.interests) {
+    targetingSpec.flexible_spec = [{ interests: targeting.interests }];
+  }
+
+  const body = {
+    campaign_id: campaignId,
+    name,
+    daily_budget: budgetCents,
+    optimization_goal: optimizationGoal,
+    billing_event: billingEvent,
+    targeting: targetingSpec,
+    status: status === 'ACTIVE' ? 'ACTIVE' : 'PAUSED',
+  };
+
+  if (startTime) {
+    body.start_time = new Date(startTime).toISOString();
+  }
+
+  const data = await metaRequest(`/${adAccount}/adsets`, 'POST', body);
+  console.log(`[META-ADS] Ad Set criado: ${data.id} "${name}" (campanha: ${campaignId})`);
+  return { id: data.id, name, campaignId, dailyBudget, status: body.status };
+}
+
+/**
+ * Lista conjuntos de anúncios de uma campanha
+ */
+export async function listAdSets(campaignId) {
+  if (!campaignId) throw new Error('campaignId é obrigatório');
+
+  const data = await metaRequest(`/${campaignId}/adsets?fields=id,name,status,daily_budget,targeting,optimization_goal,start_time&limit=50`);
+  return (data.data || []).map(a => ({
+    id: a.id,
+    nome: a.name,
+    status: a.status,
+    orcamento_diario: a.daily_budget ? (parseInt(a.daily_budget) / 100).toFixed(2) : null,
+    objetivo_otimizacao: a.optimization_goal,
+    inicio: a.start_time,
+  }));
+}
+
+// ============================================
+// CRIATIVOS E ANÚNCIOS
+// ============================================
+
+/**
+ * Faz upload de uma imagem para a conta de anúncios do Meta
+ * @param {Buffer} imageBuffer - Buffer da imagem
+ * @param {string} fileName - Nome do arquivo
+ * @returns {Object} { hash, url } - Hash para usar em criativos
+ */
+export async function uploadAdImage(imageBuffer, fileName = 'ad_image.jpg') {
+  const adAccount = CONFIG.META_AD_ACCOUNT_ID;
+  if (!adAccount) throw new Error('META_AD_ACCOUNT_ID não configurado');
+
+  // Meta Ads API aceita upload via multipart/form-data com bytes em base64
+  const base64 = imageBuffer.toString('base64');
+
+  const formBody = new URLSearchParams();
+  formBody.append('access_token', CONFIG.META_ACCESS_TOKEN);
+  formBody.append('filename', fileName);
+  formBody.append('bytes', base64);
+
+  const url = `${META_BASE()}/${adAccount}/adimages`;
+
+  let retries = 0;
+  while (retries <= 2) {
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        body: formBody,
+      });
+
+      const data = await resp.json();
+      if (data.error) throw new Error(`Meta API: ${data.error.message} (code: ${data.error.code})`);
+
+      // Resposta vem em data.images.{filename}.hash
+      const imageData = data.images?.[fileName] || Object.values(data.images || {})[0];
+      if (!imageData?.hash) throw new Error('Upload retornou sem hash da imagem');
+
+      console.log(`[META-ADS] Imagem uploaded: ${imageData.hash} (${fileName})`);
+      return { hash: imageData.hash, url: imageData.url || null };
+    } catch (err) {
+      if (retries < 2 && err.message?.includes('fetch')) {
+        retries++;
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+/**
+ * Cria um criativo de anúncio (Ad Creative)
+ * @param {Object} params
+ * @param {string} params.imageHash - Hash da imagem (de uploadAdImage)
+ * @param {string} params.pageId - Page ID do Facebook
+ * @param {string} params.message - Texto/copy principal do anúncio
+ * @param {string} params.link - URL de destino
+ * @param {string} params.headline - Título do anúncio (aparece no card)
+ * @param {string} params.description - Descrição abaixo do título
+ * @param {string} params.callToAction - CTA (LEARN_MORE, SHOP_NOW, SIGN_UP, etc.)
+ * @param {string} params.name - Nome interno do criativo
+ */
+export async function createAdCreative({
+  imageHash, pageId, message, link,
+  headline = '', description = '',
+  callToAction = 'LEARN_MORE', name = null,
+}) {
+  const adAccount = CONFIG.META_AD_ACCOUNT_ID;
+  if (!adAccount) throw new Error('META_AD_ACCOUNT_ID não configurado');
+  if (!imageHash) throw new Error('imageHash é obrigatório (faça upload primeiro)');
+  if (!pageId) throw new Error('pageId é obrigatório');
+
+  const body = {
+    name: name || `Creative - ${new Date().toISOString().split('T')[0]}`,
+    object_story_spec: {
+      page_id: pageId,
+      link_data: {
+        image_hash: imageHash,
+        link: link || 'https://www.facebook.com/',
+        message: message || '',
+        name: headline || undefined,
+        description: description || undefined,
+        call_to_action: { type: callToAction },
+      },
+    },
+  };
+
+  const data = await metaRequest(`/${adAccount}/adcreatives`, 'POST', body);
+  console.log(`[META-ADS] Creative criado: ${data.id}`);
+  return { id: data.id, name: body.name };
+}
+
+/**
+ * Cria um anúncio (Ad) vinculando criativo + conjunto
+ * SEMPRE criado como PAUSED por segurança
+ */
+export async function createAd({ adSetId, creativeId, name, status = 'PAUSED' }) {
+  const adAccount = CONFIG.META_AD_ACCOUNT_ID;
+  if (!adAccount) throw new Error('META_AD_ACCOUNT_ID não configurado');
+  if (!adSetId) throw new Error('adSetId é obrigatório');
+  if (!creativeId) throw new Error('creativeId é obrigatório');
+
+  const body = {
+    name: name || `Ad - ${new Date().toISOString().split('T')[0]}`,
+    adset_id: adSetId,
+    creative: { creative_id: creativeId },
+    status: status === 'ACTIVE' ? 'ACTIVE' : 'PAUSED',
+  };
+
+  const data = await metaRequest(`/${adAccount}/ads`, 'POST', body);
+  console.log(`[META-ADS] Anúncio criado: ${data.id} "${body.name}" (adset: ${adSetId})`);
+  return { id: data.id, name: body.name, adSetId, creativeId, status: body.status };
+}
+
+// ============================================
+// STATUS GENÉRICO (Campanha, Ad Set, Anúncio)
+// ============================================
+
+/**
+ * Atualiza status de qualquer entidade Meta Ads (campanha, ad set ou anúncio)
+ * @param {string} entityId - ID da entidade
+ * @param {string} status - 'ACTIVE', 'PAUSED', 'retomar', 'pausar'
+ * @param {string} entityType - 'campanha', 'conjunto', 'anuncio' (para log)
+ */
+export async function updateEntityStatus(entityId, status, entityType = 'entidade') {
+  const newStatus = (status === 'ACTIVE' || status === 'retomar' || status === 'ativar') ? 'ACTIVE' : 'PAUSED';
+  await metaRequest(`/${entityId}`, 'POST', { status: newStatus });
+  console.log(`[META-ADS] ${entityType} ${entityId} → ${newStatus}`);
+  return { id: entityId, status: newStatus, tipo: entityType };
+}
+
+// ============================================
+// ASANA → ATTACHMENTS (baixar anexos de tasks)
+// ============================================
+
+/**
+ * Lista e opcionalmente baixa anexos de uma task do Asana
+ * @param {string} taskGid - GID da task
+ * @param {boolean} download - Se true, baixa o conteúdo dos anexos
+ * @returns {Array} Lista de anexos com download_url e opcionalmente buffer
+ */
+export async function asanaGetAttachments(taskGid, download = false) {
+  if (!CONFIG.ASANA_PAT) throw new Error('ASANA_PAT não configurado');
+
+  const resp = await fetch(`https://app.asana.com/api/1.0/tasks/${taskGid}/attachments?opt_fields=name,download_url,host,size,created_at,resource_type`, {
+    headers: { Authorization: `Bearer ${CONFIG.ASANA_PAT}`, Accept: 'application/json' },
+  });
+
+  if (!resp.ok) throw new Error(`Asana API erro: ${resp.status}`);
+  const json = await resp.json();
+  const attachments = json.data || [];
+
+  if (!download) {
+    return attachments.map(a => ({
+      gid: a.gid,
+      nome: a.name,
+      tamanho: a.size,
+      host: a.host,
+      download_url: a.download_url,
+      criado_em: a.created_at,
+    }));
+  }
+
+  // Baixar conteúdo de cada anexo (filtrar só imagens)
+  const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
+  const results = [];
+
+  for (const att of attachments) {
+    const isImage = imageExts.some(ext => (att.name || '').toLowerCase().endsWith(ext));
+    if (!isImage) {
+      results.push({ gid: att.gid, nome: att.name, tipo: 'nao_imagem', buffer: null });
+      continue;
+    }
+
+    if (!att.download_url) {
+      results.push({ gid: att.gid, nome: att.name, tipo: 'sem_url', buffer: null });
+      continue;
+    }
+
+    try {
+      const dlResp = await fetch(att.download_url);
+      if (!dlResp.ok) throw new Error(`Download falhou: ${dlResp.status}`);
+      const buffer = Buffer.from(await dlResp.arrayBuffer());
+      results.push({ gid: att.gid, nome: att.name, tipo: 'imagem', buffer, tamanho: buffer.length });
+    } catch (err) {
+      console.error(`[META-ADS] Erro ao baixar anexo ${att.name}:`, err.message);
+      results.push({ gid: att.gid, nome: att.name, tipo: 'erro', error: err.message, buffer: null });
+    }
+  }
+
+  return results;
+}
+
+// ============================================
+// PIPELINE COMPLETO: Asana → Meta Ads
+// ============================================
+
+/**
+ * Pipeline completo: pega imagens de uma task Asana, sobe pro Meta, cria criativo + anúncio
+ * @param {Object} params
+ * @param {string} params.taskGid - GID da task com os criativos
+ * @param {string} params.adSetId - ID do conjunto de anúncios
+ * @param {string} params.pageId - Page ID do Facebook
+ * @param {string} params.message - Copy do anúncio
+ * @param {string} params.link - URL de destino
+ * @param {string} params.headline - Título
+ * @param {string} params.callToAction - CTA
+ * @returns {Array} Lista de anúncios criados
+ */
+export async function pipelineAsanaToAds({
+  taskGid, adSetId, pageId, message, link,
+  headline = '', callToAction = 'LEARN_MORE',
+}) {
+  if (!taskGid) throw new Error('taskGid é obrigatório');
+  if (!adSetId) throw new Error('adSetId é obrigatório');
+  if (!pageId) throw new Error('pageId é obrigatório');
+
+  console.log(`[META-ADS] Pipeline: Task ${taskGid} → Meta Ads`);
+
+  // 1. Baixar anexos de imagem da task
+  const attachments = await asanaGetAttachments(taskGid, true);
+  const images = attachments.filter(a => a.tipo === 'imagem' && a.buffer);
+
+  if (images.length === 0) {
+    throw new Error('Nenhuma imagem encontrada nos anexos da task do Asana');
+  }
+
+  console.log(`[META-ADS] ${images.length} imagens encontradas, subindo pro Meta...`);
+
+  // 2. Upload de cada imagem e criar anúncio
+  const results = [];
+  for (let i = 0; i < images.length; i++) {
+    const img = images[i];
+    try {
+      // Upload
+      const uploaded = await uploadAdImage(img.buffer, img.nome);
+
+      // Criar criativo
+      const creative = await createAdCreative({
+        imageHash: uploaded.hash,
+        pageId,
+        message,
+        link,
+        headline,
+        callToAction,
+        name: `Creative - ${img.nome}`,
+      });
+
+      // Criar anúncio (PAUSED)
+      const ad = await createAd({
+        adSetId,
+        creativeId: creative.id,
+        name: `Ad - ${img.nome}`,
+        status: 'PAUSED',
+      });
+
+      results.push({
+        sucesso: true,
+        imagem: img.nome,
+        image_hash: uploaded.hash,
+        creative_id: creative.id,
+        ad_id: ad.id,
+        status: 'PAUSADO',
+      });
+    } catch (err) {
+      console.error(`[META-ADS] Erro no pipeline para ${img.nome}:`, err.message);
+      results.push({ sucesso: false, imagem: img.nome, error: err.message });
+    }
+  }
+
+  return results;
+}
+
+// ============================================
 // EXPORTS PARA TESTES
 // ============================================
 export { metaRequest, objectiveMap, datePresetMap };

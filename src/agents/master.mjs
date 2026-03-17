@@ -18,7 +18,7 @@ export async function classifyIntent(text, chatId, isGroup) {
 
   if (/\b(tarefa|task|prazo|deadline|atras|pendente|asana|relat[oó]rio|status|entrega|cobranca|cobrar)\b/i.test(lower))
     return { agent: 'manager', confidence: 0.9 };
-  if (/\b(tr[aá]fego|campanha|an[uú]ncio|ads|cpc|ctr|cpm|roas|verba|or[cç]amento.*(campanha|ads|an[uú]ncio)|lead.*(campanha|ads)|pixel|segmenta[cç][aã]o|meta ads|facebook ads|instagram ads|pausar campanha|retomar campanha)\b/i.test(lower))
+  if (/\b(tr[aá]fego|campanhas?|an[uú]ncios?|ads|cpc|ctr|cpm|roas|verba|conjunto.*(an[uú]ncio|ads)|or[cç]amento.*(campanha|ads|an[uú]ncio)|lead.*(campanha|ads)|pixel|segmenta[cç][aã]o|meta ads|facebook ads|instagram ads|pausar campanha|retomar campanha|ativ[ae]r.*(campanha|an[uú]ncio)|criativo)/i.test(lower))
     return { agent: 'traffic', confidence: 0.9 };
   if (/\b(publica[rç]|agendar.*(post|stories|reels)|agenda.*(post|stories|reels|publica)|calend[aá]rio editorial|engajamento|alcance org[aâ]nico|m[eé]trica.*(post|org[aâ]nico)|seguidores|hashtag|grade de conte[uú]do)\b/i.test(lower))
     return { agent: 'social', confidence: 0.85 };

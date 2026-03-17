@@ -156,12 +156,12 @@ export async function agentLoop(model, systemPrompt, messages, tools, context = 
 // ============================================
 export function antiHallucinationCheck(finalText, toolsUsed) {
   // Se usou tools de busca/consulta nesta iteração, a resposta é baseada em dados reais
-  if (toolsUsed.has('buscar_mensagens') || toolsUsed.has('consultar_tarefas') || toolsUsed.has('consultar_task') || toolsUsed.has('buscar_memorias') || toolsUsed.has('relatorio_ads') || toolsUsed.has('metricas_post') || toolsUsed.has('calendario_editorial') || toolsUsed.has('otimizar_campanha')) {
+  if (toolsUsed.has('buscar_mensagens') || toolsUsed.has('consultar_tarefas') || toolsUsed.has('consultar_task') || toolsUsed.has('buscar_memorias') || toolsUsed.has('relatorio_ads') || toolsUsed.has('metricas_post') || toolsUsed.has('calendario_editorial') || toolsUsed.has('otimizar_campanha') || toolsUsed.has('baixar_anexos_task') || toolsUsed.has('listar_conjuntos')) {
     return { safe: true };
   }
 
   // Se usou tools de ação (lembrar, criar_demanda, enviar_mensagem, ads, posts), tá agindo — não bloquear
-  if (toolsUsed.has('lembrar') || toolsUsed.has('criar_demanda_cliente') || toolsUsed.has('enviar_mensagem_grupo') || toolsUsed.has('autorizar_cliente') || toolsUsed.has('revogar_cliente') || toolsUsed.has('criar_campanha') || toolsUsed.has('pausar_campanha') || toolsUsed.has('agendar_post')) {
+  if (toolsUsed.has('lembrar') || toolsUsed.has('criar_demanda_cliente') || toolsUsed.has('enviar_mensagem_grupo') || toolsUsed.has('autorizar_cliente') || toolsUsed.has('revogar_cliente') || toolsUsed.has('criar_campanha') || toolsUsed.has('pausar_campanha') || toolsUsed.has('agendar_post') || toolsUsed.has('criar_conjunto_anuncios') || toolsUsed.has('subir_imagem_ads') || toolsUsed.has('criar_criativo_ads') || toolsUsed.has('criar_anuncio') || toolsUsed.has('pipeline_asana_meta') || toolsUsed.has('ativar_desativar_ads')) {
     return { safe: true };
   }
 
