@@ -43,7 +43,10 @@ async function metaRequest(endpoint, method = 'GET', body = null) {
       const data = await resp.json();
 
       if (data.error) {
-        throw new Error(`Meta API: ${data.error.message} (code: ${data.error.code})`);
+        const errMsg = data.error.error_user_msg || data.error.message;
+        const subcode = data.error.error_subcode ? `, subcode: ${data.error.error_subcode}` : '';
+        console.error(`[META-ADS] ❌ API Error: ${JSON.stringify(data.error)}`);
+        throw new Error(`Meta API: ${errMsg} (code: ${data.error.code}${subcode})`);
       }
 
       return data;
@@ -387,15 +390,25 @@ export async function createAdSet({
     body.start_time = new Date(startTime).toISOString();
   }
 
-  console.log(`[META-ADS] Criando Ad Set com body:`, JSON.stringify({
-    ...body,
-    targeting: '(omitted)',
-    access_token: '(omitted)',
-  }));
+  const logBody = { ...body, targeting: '(omitted)', access_token: '(omitted)' };
+  console.log(`[META-ADS] Criando Ad Set com body:`, JSON.stringify(logBody));
 
-  const data = await metaRequest(`/${adAccount}/adsets`, 'POST', body);
-  console.log(`[META-ADS] Ad Set criado: ${data.id} "${name}" (campanha: ${campaignId})`);
-  return { id: data.id, name, campaignId, dailyBudget, status: body.status };
+  try {
+    const data = await metaRequest(`/${adAccount}/adsets`, 'POST', body);
+    console.log(`[META-ADS] Ad Set criado: ${data.id} "${name}" (campanha: ${campaignId})`);
+    return { id: data.id, name, campaignId, dailyBudget, status: body.status };
+  } catch (err) {
+    // Se falhou com destination_type diferente de WEBSITE, retry com WEBSITE
+    if (body.destination_type && body.destination_type !== 'WEBSITE' && err.message?.includes('code: 100')) {
+      console.warn(`[META-ADS] ⚠️ Falhou com destination_type=${body.destination_type}, tentando WEBSITE...`);
+      body.destination_type = 'WEBSITE';
+      // Para WEBSITE, promoted_object com pixel é melhor, mas page_id funciona
+      const data = await metaRequest(`/${adAccount}/adsets`, 'POST', body);
+      console.log(`[META-ADS] Ad Set criado (fallback WEBSITE): ${data.id} "${name}" (campanha: ${campaignId})`);
+      return { id: data.id, name, campaignId, dailyBudget, status: body.status, destinationFallback: 'WEBSITE' };
+    }
+    throw err;
+  }
 }
 
 /**
