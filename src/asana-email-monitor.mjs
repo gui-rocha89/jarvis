@@ -167,6 +167,10 @@ function parseAsanaEmail(parsed) {
 // GERAR RESPOSTA INTELIGENTE
 // ============================================
 async function generateMentionResponse(taskGid, commenterName, commentText, taskName) {
+  // 0. Esperar 5s para a API do Asana indexar o comentário novo
+  // O email de notificação chega ANTES do comentário aparecer na API stories
+  await new Promise(r => setTimeout(r, 5000));
+
   // 1. Buscar TUDO da task — descrição completa + todos os comentários
   let taskDetails = null;
   let allComments = [];
@@ -176,23 +180,20 @@ async function generateMentionResponse(taskGid, commenterName, commentText, task
     taskDetails = taskData?.data || null;
 
     // TODOS os comentários via API — COM PAGINAÇÃO
-    // Tasks com muitas interações têm stories em múltiplas páginas
-    // O comentário mais recente pode estar na ÚLTIMA página
     let allStories = [];
     let storiesUrl = `/tasks/${taskGid}/stories?opt_fields=text,created_by.name,created_at,type&limit=100`;
-    let pages = 0;
-    while (storiesUrl) { // busca TODAS as páginas — sem limite
+    while (storiesUrl) {
       const storiesPage = await asanaRequest(storiesUrl);
       if (storiesPage?.data) allStories.push(...storiesPage.data);
       storiesUrl = storiesPage?.next_page?.path || null;
-      pages++;
     }
-    if (pages > 1) console.log(`[EMAIL] Buscou ${pages} páginas de stories (${allStories.length} total)`);
+    console.log(`[EMAIL] ${allStories.length} stories encontradas na task`);
 
     allComments = allStories.filter(s => s.type === 'comment' && s.text);
+    console.log(`[EMAIL] ${allComments.length} comentários encontrados`);
 
     recentComments = allComments
-      .slice(-20) // últimos 20 comentários — contexto completo
+      .slice(-20)
       .map(s => `${s.created_by?.name || '?'}: ${s.text.substring(0, 500)}`)
       .join('\n');
   } catch (e) {
@@ -200,23 +201,23 @@ async function generateMentionResponse(taskGid, commenterName, commentText, task
   }
 
   // 1.5. Usar o comentário REAL da API em vez do parseado do email
-  // O email pode truncar/cortar o texto — a API tem o conteúdo completo
   let actualComment = commentText; // fallback: texto do email
   if (allComments.length > 0) {
-    // Buscar o último comentário do commenterName (quem nos mencionou)
     const commenterLower = commenterName.toLowerCase();
     const matchingComments = allComments.filter(s => {
       const authorName = (s.created_by?.name || '').toLowerCase();
       return authorName.includes(commenterLower) || commenterLower.includes(authorName.split(' ')[0]);
     });
     if (matchingComments.length > 0) {
-      // Pegar o ÚLTIMO comentário dessa pessoa — é o que gerou a notificação
       actualComment = matchingComments[matchingComments.length - 1].text;
-      console.log(`[EMAIL] Comentário real da API (${actualComment.length} chars) substituiu parse do email (${commentText.length} chars)`);
+      console.log(`[EMAIL] Comentário da API (${actualComment.length} chars) substituiu email (${commentText.length} chars)`);
     } else {
-      // Se não achou por nome, pegar o último comentário geral (provavelmente é o que nos mencionou)
-      actualComment = allComments[allComments.length - 1].text;
-      console.log(`[EMAIL] Usando último comentário da task como referência (${actualComment.length} chars)`);
+      // Fallback: último comentário geral (ignorar os do Jarvis)
+      const nonJarvisComments = allComments.filter(s => !(s.created_by?.name || '').toLowerCase().includes('jarvis'));
+      if (nonJarvisComments.length > 0) {
+        actualComment = nonJarvisComments[nonJarvisComments.length - 1].text;
+        console.log(`[EMAIL] Usando último comentário não-Jarvis (${actualComment.length} chars)`);
+      }
     }
   }
 
@@ -250,7 +251,7 @@ async function generateMentionResponse(taskGid, commenterName, commentText, task
   // 4. Chamar Claude com Agent Loop + Tools — MESMO CÉREBRO de todos os canais
   const model = CONFIG.AI_MODEL || 'claude-sonnet-4-20250514';
   const systemPrompt = `${JARVIS_IDENTITY}\n\n${CHANNEL_CONTEXT.asana}`;
-  const userMessage = `TASK NO ASANA:
+  const userMessage = `TASK NO ASANA (GID: ${taskGid}):
 
 ${taskContext}
 
@@ -262,18 +263,21 @@ ${commenterName}: ${actualComment}
 
 ${memoryContext ? `MEMÓRIAS RELEVANTES:\n${memoryContext}` : ''}
 
-Responda ao comentário de forma direta e útil. Se a pessoa pediu uma AÇÃO (criar campanha, consultar dados, etc.), USE AS TOOLS disponíveis para EXECUTAR.`;
+IMPORTANTE: O GID desta task é ${taskGid}. Use este GID se precisar usar comentar_task ou outras tools do Asana.
+NÃO use comentar_task para postar sua resposta — ela será postada automaticamente. Use comentar_task SOMENTE se precisar comentar em OUTRA task.
+Se a pessoa pediu uma AÇÃO (criar campanha, consultar dados, etc.), USE AS TOOLS disponíveis para EXECUTAR.
+Responda de forma direta e útil.`;
 
-  const { text: finalText } = await agentLoop(
+  const { text: finalText, toolsUsed } = await agentLoop(
     model,
     systemPrompt,
     [{ role: 'user', content: userMessage }],
     JARVIS_TOOLS,
     { channel: 'asana', taskGid },
-    { thinking: false, maxTokens: 4096 } // Sem thinking pra velocidade no Asana
+    { thinking: false, maxTokens: 4096 }
   );
 
-  console.log(`[EMAIL] agentLoop concluído — resposta: ${finalText.length} chars`);
+  console.log(`[EMAIL] agentLoop concluído — ${finalText.length} chars, tools: [${[...(toolsUsed || [])].join(', ')}]`);
   return finalText || '';
 }
 
