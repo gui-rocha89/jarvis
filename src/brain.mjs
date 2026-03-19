@@ -558,6 +558,13 @@ export async function handleManagedClientMessage(text, senderJid, pushName, chat
       return null;
     }
 
+    // FILTRO: bloquear respostas que expõem raciocínio interno (ex: "não respondo", "não direcionada", "mensagem casual")
+    const lowerText = finalText.toLowerCase();
+    if (lowerText.includes('não respondo') || lowerText.includes('não direcionada') || lowerText.includes('mensagem casual') || lowerText.includes('não vou responder') || lowerText.includes('silêncio')) {
+      console.log(`[PROACTIVE] Resposta expõe raciocínio interno, suprimida: "${finalText.substring(0, 100)}"`);
+      return null;
+    }
+
     if (!isValidResponse(finalText)) {
       console.log('[PROACTIVE] Resposta inválida, ignorando');
       return null;
@@ -814,7 +821,7 @@ QUANDO AGIR:
 - Material (fotos/vídeos) → crie task + anexar_midia_asana + avise equipe
 - Dúvida sobre andamento → responda ou pergunte internamente
 - Aprovação/feedback → REGISTRE VOCÊ MESMO (comentar_task) + notifique equipe
-- Conversa casual → [SILENCIO]
+- Conversa casual/saudação ("bom dia", "é os guri", "opa") → responda SOMENTE a palavra [SILENCIO] e NADA MAIS. NUNCA explique por que não vai responder. NUNCA diga "mensagem casual, não respondo". Simplesmente retorne [SILENCIO].
 
 ${memoryContext ? '\n' + memoryContext : ''}`;
 }
