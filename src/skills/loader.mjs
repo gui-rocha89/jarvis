@@ -354,6 +354,20 @@ export const JARVIS_TOOLS = [
     },
   },
   {
+    name: 'buscar_mensagens',
+    description: 'Busca mensagens reais do WhatsApp no banco de dados. Usa para encontrar links, arquivos, aprovações ou qualquer conteúdo enviado nos grupos. Busca por palavras-chave nas mensagens dos últimos N dias.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        palavras_chave: { type: 'array', items: { type: 'string' }, description: 'Palavras-chave para buscar (ex: ["roteiro", "aprovado", "Lívia"])' },
+        horas: { type: 'number', description: 'Buscar nas últimas N horas (default: 72, máximo: 720 = 30 dias)' },
+        grupo: { type: 'string', description: 'Nome do grupo para filtrar (opcional). Se não informar, busca em todos.' },
+        limite: { type: 'number', description: 'Máximo de mensagens a retornar (default: 20, máximo: 50)' },
+      },
+      required: ['palavras_chave'],
+    },
+  },
+  {
     name: 'lembrar',
     description: 'Salvar uma informacao importante na memoria de longo prazo do Jarvis.',
     input_schema: {
@@ -841,6 +855,51 @@ export async function executeJarvisTool(toolName, input, context = {}) {
     const projectGid = projectMap[input.projeto?.toLowerCase()] || ASANA_PROJECTS.CAPTACAO;
     const tasks = await asanaRequest(`/tasks?project=${projectGid}&opt_fields=name,due_on,completed,assignee.name&completed_since=now&limit=50`);
     return { tasks: (tasks || []).filter(t => !t.completed).map(t => ({ name: t.name, due_on: t.due_on, assignee: t.assignee?.name })), count: tasks?.length || 0 };
+  }
+
+  if (toolName === 'buscar_mensagens') {
+    if (!input.palavras_chave || input.palavras_chave.length === 0) {
+      return { error: 'palavras_chave é obrigatório (array de strings)' };
+    }
+    try {
+      const { searchRecentMessagesByKeyword } = await import('../database.mjs');
+      const horas = Math.min(input.horas || 72, 720);
+      const limite = Math.min(input.limite || 20, 50);
+
+      const mensagens = await searchRecentMessagesByKeyword(input.palavras_chave, horas, limite);
+
+      // Filtrar por grupo se especificado
+      let filtered = mensagens;
+      if (input.grupo) {
+        const grupoLower = input.grupo.toLowerCase();
+        // Buscar JID do grupo pelo nome
+        const { rows: grupoRows } = await pool.query(
+          `SELECT jid FROM jarvis_groups WHERE LOWER(name) LIKE $1 LIMIT 5`,
+          [`%${grupoLower}%`]
+        );
+        if (grupoRows.length > 0) {
+          const grupoJids = new Set(grupoRows.map(r => r.jid));
+          filtered = mensagens.filter(m => grupoJids.has(m.chat_id));
+        }
+      }
+
+      const resultado = filtered.map(m => ({
+        de: m.push_name || '?',
+        texto: (m.text || '').substring(0, 500),
+        grupo: m.chat_id,
+        data: m.hora_br ? new Date(m.hora_br).toLocaleString('pt-BR') : '?',
+      }));
+
+      return {
+        sucesso: true,
+        busca: input.palavras_chave.join(', '),
+        periodo: `últimas ${horas}h`,
+        total: resultado.length,
+        mensagens: resultado,
+      };
+    } catch (err) {
+      return { error: `Erro ao buscar mensagens: ${err.message}` };
+    }
   }
 
   if (toolName === 'lembrar') {
