@@ -20,7 +20,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 
 // Módulos do Jarvis 4.0
-import { CONFIG, AUDIO_ALLOWED, teamPhones, teamWhatsApp, managedClients, loadManagedClients, saveManagedClients, isManagedClientGroup } from './src/config.mjs';
+import { CONFIG, AUDIO_ALLOWED, JARVIS_ALLOWED_GROUPS, teamPhones, teamWhatsApp, managedClients, loadManagedClients, saveManagedClients, isManagedClientGroup } from './src/config.mjs';
 import { pool, initDB, storeMessage, getRecentMessages, getContactInfo, getGroupInfo, upsertContact, upsertGroup, getMessageCount } from './src/database.mjs';
 import { initMemory, processMemory, getMemoryContext, getMemoryStats, searchMemories, smartSearchMemories, storeFacts, extractFacts } from './src/memory.mjs';
 import { shouldJarvisRespond, isValidResponse, generateResponse, markConversationActive, isConversationActive, findTeamJid, extractMentionsFromText, generateDailyReport, handleManagedClientMessage, runOverdueCheck } from './src/brain.mjs';
@@ -1183,6 +1183,80 @@ app.get('/groups', auth, async (req, res) => {
     const list = Object.values(groups).map(g => ({ id: g.id, name: g.subject, participants: g.participants.length }));
     res.json({ groups: list });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ============================================
+// GRUPOS — Listar e toggle
+// ============================================
+app.get('/dashboard/groups', auth, async (req, res) => {
+  try {
+    const groups = [];
+
+    // Grupos internos
+    const internalJids = [CONFIG.GROUP_TAREFAS, CONFIG.GROUP_GALAXIAS].filter(Boolean);
+    if (internalJids.length > 0) {
+      const { rows } = await pool.query('SELECT jid, name FROM jarvis_groups WHERE jid = ANY($1)', [internalJids]);
+      const nameMap = Object.fromEntries(rows.map(r => [r.jid, r.name]));
+      for (const jid of internalJids) {
+        groups.push({
+          jid,
+          name: nameMap[jid] || jid,
+          type: 'internal',
+          active: JARVIS_ALLOWED_GROUPS.has(jid),
+          canToggle: true,
+        });
+      }
+    }
+
+    // Clientes gerenciados
+    for (const [jid, client] of managedClients) {
+      groups.push({
+        jid,
+        name: client.groupName || jid,
+        type: 'client',
+        active: !!client.active,
+        canToggle: true,
+        slug: client.slug,
+        defaultAssignee: client.defaultAssignee,
+        authorizedAt: client.authorizedAt,
+      });
+    }
+
+    res.json({ groups });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/dashboard/groups/toggle', auth, async (req, res) => {
+  const { jid, active } = req.body;
+  if (!jid) return res.status(400).json({ success: false, message: 'JID obrigatório' });
+
+  try {
+    const isInternal = jid === CONFIG.GROUP_TAREFAS || jid === CONFIG.GROUP_GALAXIAS;
+
+    if (isInternal) {
+      if (active) {
+        JARVIS_ALLOWED_GROUPS.add(jid);
+        AUDIO_ALLOWED.add(jid);
+      } else {
+        JARVIS_ALLOWED_GROUPS.delete(jid);
+        AUDIO_ALLOWED.delete(jid);
+      }
+      console.log(`[DASHBOARD] Grupo interno ${jid} ${active ? 'ATIVADO' : 'DESATIVADO'}`);
+      res.json({ success: true, jid, active, message: `Grupo interno ${active ? 'ativado' : 'desativado'}. Volta ao ativo ao reiniciar.` });
+    } else if (managedClients.has(jid)) {
+      const client = managedClients.get(jid);
+      client.active = active;
+      await saveManagedClients(pool);
+      console.log(`[DASHBOARD] Cliente ${client.groupName} ${active ? 'ATIVADO' : 'DESATIVADO'}`);
+      res.json({ success: true, jid, active, message: `${client.groupName || 'Cliente'} ${active ? 'ativado' : 'desativado'}.` });
+    } else {
+      res.status(404).json({ success: false, message: 'Grupo não encontrado' });
+    }
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 app.get('/dashboard/config', auth, async (req, res) => {

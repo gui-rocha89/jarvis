@@ -245,6 +245,7 @@
         <button onclick="switchTab('homework')" data-tab="homework" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Treinamento</button>
         <button onclick="switchTab('prompt')" data-tab="prompt" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Prompt</button>
         <button onclick="switchTab('security')" data-tab="security" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Segurança</button>
+        <button onclick="switchTab('groups')" data-tab="groups" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Grupos</button>
       </nav>
 
       <!-- Status -->
@@ -287,6 +288,10 @@
       <button onclick="switchTab('logs')" data-tab-m="logs" class="mobile-tab flex flex-col items-center gap-1 px-3 py-1 text-stark-dim">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
         <span class="text-[10px]">Registros</span>
+      </button>
+      <button onclick="switchTab('groups')" data-tab-m="groups" class="mobile-tab flex flex-col items-center gap-1 px-3 py-1 text-stark-dim">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        <span class="text-[10px]">Grupos</span>
       </button>
     </div>
   </div>
@@ -1153,6 +1158,20 @@
       </div>
     </div>
 
+    <!-- ==================== GROUPS TAB ==================== -->
+    <div id="tab-groups" class="tab-content hidden space-y-6">
+      <div class="panel p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-orbitron text-sm tracking-wider" style="color:#00f0ff">GRUPOS WHATSAPP</h3>
+          <button onclick="loadGroups()" class="text-xs text-stark-dim hover:text-stark-blue transition-colors">&#x21bb; Atualizar</button>
+        </div>
+        <p class="text-xs text-stark-dim mb-5">Gerencie os grupos onde o Jarvis opera. Ative ou desative em tempo real.</p>
+        <div id="groups-list" class="space-y-3">
+          <div class="text-center text-stark-dim text-sm py-8">Carregando...</div>
+        </div>
+      </div>
+    </div>
+
   </main>
 
   <!-- Notification Container -->
@@ -1390,6 +1409,70 @@
       if (tab === 'homework') loadHomework();
       if (tab === 'prompt') loadPrompt();
       if (tab === 'security') loadAccessLog();
+      if (tab === 'groups') loadGroups();
+    }
+
+    // ============================================
+    // GROUPS
+    // ============================================
+    async function loadGroups() {
+      const container = document.getElementById('groups-list');
+      try {
+        const res = await api('/dashboard/groups');
+        const data = await res.json();
+        if (!data.groups || data.groups.length === 0) {
+          container.innerHTML = '<div class="text-center text-stark-dim text-sm py-8">Nenhum grupo encontrado</div>';
+          return;
+        }
+        data.groups.sort((a, b) => {
+          if (a.type !== b.type) return a.type === 'internal' ? -1 : 1;
+          return (a.name || '').localeCompare(b.name || '');
+        });
+        container.innerHTML = data.groups.map(g => {
+          const isInternal = g.type === 'internal';
+          const badge = isInternal
+            ? '<span class="text-[10px] px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 font-mono">INTERNO</span>'
+            : '<span class="text-[10px] px-2 py-0.5 rounded bg-green-500/20 text-green-400 font-mono">CLIENTE</span>';
+          const details = isInternal ? ''
+            : `<div class="text-[10px] text-stark-dim mt-1">${g.defaultAssignee ? 'Responsável: ' + g.defaultAssignee : ''}${g.authorizedAt ? ' | Desde: ' + new Date(g.authorizedAt).toLocaleDateString('pt-BR') : ''}</div>`;
+          const warning = !g.active && isInternal ? '<div class="text-[10px] text-yellow-500 mt-1">Volta ao ativo ao reiniciar</div>' : '';
+          return `<div class="flex items-center justify-between p-4 rounded-lg border transition-all ${g.active ? 'border-stark-border bg-white/5' : 'border-stark-border/30 bg-white/[0.02] opacity-50'}" data-group-jid="${g.jid}">
+            <div class="flex items-center gap-3 flex-1 min-w-0">
+              <span class="text-xl flex-shrink-0">${isInternal ? '🏠' : '👥'}</span>
+              <div class="min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="text-sm font-semibold text-white truncate">${g.name || g.jid}</span>
+                  ${badge}
+                </div>
+                ${details}${warning}
+              </div>
+            </div>
+            <button onclick="toggleGroup('${g.jid}', ${!g.active})" class="flex-shrink-0 ml-3 w-12 h-6 rounded-full transition-all relative ${g.active ? 'bg-green-500' : 'bg-gray-600'}">
+              <div class="w-5 h-5 rounded-full bg-white absolute top-0.5 transition-all ${g.active ? 'left-[26px]' : 'left-0.5'}"></div>
+            </button>
+          </div>`;
+        }).join('');
+      } catch (err) {
+        container.innerHTML = '<div class="text-center text-red-400 text-sm py-8">Erro ao carregar grupos</div>';
+      }
+    }
+
+    async function toggleGroup(jid, active) {
+      try {
+        const res = await api('/dashboard/groups/toggle', {
+          method: 'POST',
+          body: JSON.stringify({ jid, active }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          notify(data.message, 'success');
+          loadGroups();
+        } else {
+          notify(data.message || 'Erro ao alterar grupo', 'error');
+        }
+      } catch (err) {
+        notify('Erro ao alterar grupo', 'error');
+      }
     }
 
     // ============================================
