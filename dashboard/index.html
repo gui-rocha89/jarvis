@@ -621,7 +621,6 @@
               <span id="voice-status-text" class="text-sm font-orbitron tracking-wider relative z-10" style="color:#00ff88">OUVINDO</span>
               <span id="voice-status-sub" class="text-[10px] text-stark-dim mt-1 relative z-10 font-mono">Fale naturalmente...</span>
               <div class="flex gap-3 mt-3 relative z-10">
-                <button onclick="sendVoiceNow()" class="text-[10px] text-stark-green hover:text-white transition-colors font-mono tracking-wider border border-stark-green/40 px-4 py-1.5 rounded-full hover:border-stark-green hover:bg-stark-green/10">▶ ENVIAR</button>
                 <button onclick="stopVoiceMode()" class="text-[10px] text-stark-dim hover:text-stark-red transition-colors font-mono tracking-wider border border-stark-border/30 px-4 py-1.5 rounded-full hover:border-stark-red/50">✕ SAIR</button>
               </div>
             </div>
@@ -1801,7 +1800,7 @@
 
       const dataArray = new Uint8Array(voiceAnalyser.frequencyBinCount);
       const SILENCE_THRESHOLD = 25; // Nível mínimo pra considerar "fala" (ajustado pra ruído ambiente)
-      const SILENCE_DURATION = 2000; // 2s de silêncio após falar = auto-envia
+      const SILENCE_DURATION = 1500; // 1.5s de silêncio após falar = auto-envia
       const MAX_RECORDING = 30000; // Máximo 30s de gravação — auto-envia
       let silenceStart = null;
       const recordStart = Date.now();
@@ -2073,7 +2072,7 @@
           statusBar.classList.remove('hidden');
           statusText.textContent = 'OUVINDO';
           statusText.style.color = '#00ff88';
-          statusSub.textContent = 'Fale naturalmente...';
+          statusSub.textContent = 'Fale naturalmente — envio automático ao pausar';
           orbPing.style.background = 'radial-gradient(circle,#00ff88 0%,transparent 70%)';
           orbRing.style.borderColor = 'rgba(0,255,136,0.4)';
           orbInner.style.borderColor = 'rgba(0,255,136,0.2)';
