@@ -2120,7 +2120,7 @@ app.post('/dashboard/chat/voice', auth, express.raw({ type: ['audio/*', 'applica
       msgs,
       DASHBOARD_TOOLS,
       { senderJid: CONFIG.GUI_JID, chatId: 'dashboard', channel: 'voice' },
-      { thinking: false, maxTokens: 2048 } // Sem thinking pra velocidade no voice
+      { thinking: false, maxTokens: 600 } // Voice: curto e rápido
     );
 
     console.log(`[VOICE] agentLoop (${Date.now() - startTime}ms): ${finalText.length} chars`);
@@ -2128,30 +2128,33 @@ app.post('/dashboard/chat/voice', auth, express.raw({ type: ['audio/*', 'applica
     dashboardChatHistory.push({ role: 'assistant', content: finalText });
     send('response', { text: finalText });
 
-    // 3. TTS streaming por frases — começa a falar rápido
+    // 3. TTS streaming por frases — pipeline paralelo
     send('status', { phase: 'speaking' });
 
-    // Dividir em frases naturais
+    // Dividir em frases naturais (chunks menores = primeiro áudio chega mais rápido)
     const sentences = finalText.match(/[^.!?…]+[.!?…]+|[^.!?…]+$/g) || [finalText];
     const chunks = [];
     let currentChunk = '';
     for (const s of sentences) {
       currentChunk += s;
-      // Enviar chunks de ~80-200 chars (frases naturais)
-      if (currentChunk.length >= 60) {
+      if (currentChunk.length >= 40) {
         chunks.push(currentChunk.trim());
         currentChunk = '';
       }
     }
     if (currentChunk.trim()) chunks.push(currentChunk.trim());
 
-    for (let i = 0; i < chunks.length; i++) {
-      try {
-        const audioOut = await generateAudio(chunks[i]);
-        send('audio', { data: audioOut.toString('base64'), index: i, total: chunks.length });
-      } catch (ttsErr) {
-        console.error(`[VOICE] TTS erro chunk ${i}:`, ttsErr.message);
-      }
+    // Gerar TTS em paralelo (todas as frases ao mesmo tempo)
+    const ttsPromises = chunks.map((chunk, i) =>
+      generateAudio(chunk)
+        .then(audioOut => ({ index: i, data: audioOut.toString('base64'), ok: true }))
+        .catch(err => { console.error(`[VOICE] TTS erro chunk ${i}:`, err.message); return { index: i, ok: false }; })
+    );
+
+    // Enviar na ordem correta conforme ficam prontos
+    const ttsResults = await Promise.all(ttsPromises);
+    for (const result of ttsResults.sort((a, b) => a.index - b.index)) {
+      if (result.ok) send('audio', { data: result.data, index: result.index, total: chunks.length });
     }
 
     console.log(`[VOICE] Completo em ${((Date.now() - startTime) / 1000).toFixed(1)}s — ${chunks.length} chunks de áudio`);

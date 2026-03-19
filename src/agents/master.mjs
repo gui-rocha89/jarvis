@@ -147,11 +147,12 @@ Para ficar em silêncio: responda APENAS "[SILENCIO]"`,
 - Gui é o dono — acesso total`,
 
   // Dashboard — modo voz
-  dashboard_voice: `CANAL: Dashboard voz (Gui falando por voz)
-- Responda como se estivesse FALANDO, não escrevendo
-- CONCISO: máximo 3-4 frases
-- Sem listas, sem *negrito*, sem markdown
-- Fale naturalmente como o Jarvis responderia verbalmente`,
+  dashboard_voice: `CANAL: Dashboard voz (conversa por voz em tempo real com o Gui)
+- VELOCIDADE É TUDO: responda em 1-2 frases curtas. Máximo absoluto 3 frases.
+- Fale como se estivesse conversando pessoalmente — tom natural, direto
+- PROIBIDO: listas, *negrito*, markdown, emojis, formatação
+- Se a pergunta é simples, responda em UMA frase
+- Prefira respostas de ação ("Feito", "Vou verificar", "Tá no Asana") em vez de explicações longas`,
 };
 
 
