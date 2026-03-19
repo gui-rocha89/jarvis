@@ -291,10 +291,10 @@ export async function generateResponse(text, chatId, senderJid, pushName, isGrou
       const isJarvisMsg = m.push_name === 'Jarvis' ||
         m.message_id?.startsWith('jarvis_') ||
         (botNumber && m.sender && m.sender.includes(botNumber));
-      // Timestamp para noção temporal
+      // Timestamp só nas mensagens dos usuários — NUNCA nas do assistente (o Claude copia o padrão)
       const timeTag = m.hora_br ? `[${new Date(m.hora_br).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}] ` : '';
       if (isJarvisMsg) {
-        chatHistory.push({ role: 'assistant', content: `${timeTag}${m.text}` });
+        chatHistory.push({ role: 'assistant', content: m.text });
       } else {
         const name = m.push_name || 'Desconhecido';
         chatHistory.push({ role: 'user', content: `${timeTag}[${name}]: ${m.text}` });
@@ -480,10 +480,10 @@ export async function handleManagedClientMessage(text, senderJid, pushName, chat
       const isJarvisMsg = m.push_name === 'Jarvis' ||
         m.message_id?.startsWith('jarvis_') ||
         (botNum && m.sender && m.sender.includes(botNum));
-      // Incluir timestamp no histórico para noção temporal
+      // Timestamp só nas mensagens dos usuários (para noção temporal). NUNCA nas do assistente — o Claude copia o padrão e inclui [HH:MM] na resposta
       const timeTag = m.hora_br ? `[${new Date(m.hora_br).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}] ` : '';
       if (isJarvisMsg) {
-        chatHistory.push({ role: 'assistant', content: `${timeTag}${m.text}` });
+        chatHistory.push({ role: 'assistant', content: m.text });
       } else {
         const name = m.push_name || 'Desconhecido';
         chatHistory.push({ role: 'user', content: `${timeTag}[${name}]: ${m.text}` });
@@ -1170,6 +1170,9 @@ REGRAS DE TOM:
 6. Feche de forma leve — "qualquer coisa grita!", "me avisa se precisar de algo", "tmj!"
 7. Use emojis com moderação (1-2 no máximo)
 8. A mensagem TEM que começar com @${personName} pra funcionar a menção no WhatsApp
+9. NUNCA inclua timestamps como [11:57] ou horários entre colchetes na mensagem
+10. Seja CURTO e DIRETO — máximo 3-4 linhas por task. Ninguém lê textão no WhatsApp
+11. NUNCA repita o nome da pessoa depois do @menção inicial
 
 Responda SOMENTE o texto da mensagem, sem aspas nem prefixo.`,
       messages: [{ role: 'user', content: `Pessoa: ${personName}\n\nTasks para mencionar:\n${tasksSummary}` }],
@@ -1372,7 +1375,17 @@ export async function runOverdueCheck() {
         }
 
         if (whatsappJid && sendWithMentions) {
-          await sendWithMentions(CONFIG.GROUP_TAREFAS, whatsappMsg, [{ jid: whatsappJid }]);
+          // Substituir @Nome pelo @número no texto (WhatsApp exige @número para renderizar menção)
+          let msgText = whatsappMsg;
+          const phoneNum = whatsappJid.replace(/@s\.whatsapp\.net$/, '').replace(/@lid$/, '');
+          // Substituir qualquer @NomePessoa pelo @número (case-insensitive, nome completo ou primeiro nome)
+          const firstName = person.split(/\s+/)[0];
+          const namePatterns = [person, firstName].filter(Boolean);
+          for (const name of namePatterns) {
+            const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            msgText = msgText.replace(new RegExp(`@${escaped}`, 'gi'), `@${phoneNum}`);
+          }
+          await sendWithMentions(CONFIG.GROUP_TAREFAS, msgText, [{ jid: whatsappJid }]);
           console.log(`[PIPELINE] ✍️ WhatsApp enviado pra ${person} com menção real (${whatsappJid})`);
         } else {
           await sendFn(CONFIG.GROUP_TAREFAS, whatsappMsg);
