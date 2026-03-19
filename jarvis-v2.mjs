@@ -976,10 +976,19 @@ app.get('/dashboard/agents', auth, async (req, res) => {
     const profileMap = {};
     for (const row of profiles.rows) profileMap[row.entity_type] = row.cnt;
 
-    // 6. Estudo Asana (progresso)
+    // 6. Estudo Asana (progresso) — agregado por entity_type
     const asanaStudy = await pool.query(`
-      SELECT phase, status, items_total, items_done, facts_extracted, started_at, completed_at
-      FROM asana_study_log ORDER BY started_at DESC LIMIT 5
+      SELECT
+        entity_type as phase,
+        CASE WHEN bool_and(processed) THEN 'completed' ELSE 'pending' END as status,
+        COUNT(*)::int as items_total,
+        COUNT(*) FILTER (WHERE processed)::int as items_done,
+        COALESCE(SUM(facts_extracted), 0)::int as facts_extracted,
+        MIN(created_at) as started_at,
+        MAX(created_at) as completed_at
+      FROM asana_study_log
+      GROUP BY entity_type
+      ORDER BY MIN(created_at) DESC
     `).catch(() => ({ rows: [] }));
 
     // 7. Mensagens processadas (volume de aprendizado WhatsApp)
