@@ -577,18 +577,12 @@ export async function handleManagedClientMessage(text, senderJid, pushName, chat
     }
 
     // SALVAGUARDA ANTI-VAZAMENTO: bloquear menções a processos internos na resposta ao cliente
+    // REGRA ABSOLUTA: detectou vazamento → SILÊNCIO TOTAL. Nunca tentar sanitizar — risco alto demais.
     const leakCheck = checkInternalLeak(finalText);
     if (leakCheck.leaked) {
       console.warn(`[PROACTIVE] ⚠️ VAZAMENTO BLOQUEADO para ${managedClient.groupName}: "${leakCheck.match}"`);
-      console.warn(`[PROACTIVE] Texto original: ${finalText.substring(0, 300)}`);
-      // Tentar sanitizar removendo a parte que vaza — se sobrar algo útil, envia
-      const sanitized = sanitizeClientResponse(finalText);
-      if (sanitized && isValidResponse(sanitized)) {
-        console.log(`[PROACTIVE] Resposta sanitizada: ${sanitized.substring(0, 80)}`);
-        clientGroupCooldown.set(chatId, Date.now());
-        return { text: sanitized };
-      }
-      return null; // Não conseguiu sanitizar — silêncio
+      console.warn(`[PROACTIVE] Texto bloqueado (silêncio total): ${finalText.substring(0, 300)}`);
+      return null; // SILÊNCIO TOTAL — nunca sanitizar parcialmente
     }
 
     // SALVAGUARDA ANTI-ALUCINAÇÃO: no grupo do cliente é CRÍTICO não inventar dados
@@ -775,6 +769,10 @@ const INTERNAL_LEAK_PATTERNS = [
   /\b(task criada|task registrada|tarefa criada|equipe (avisada|notificada|informada)|notificad[oa] internamente|registrad[oa] internamente|grupo (tarefas|interno)|notifica[çc][ãa]o interna)\b/i,
   // Ações internas expostas
   /\b(avisei (a |o |ao |à )?(equipe|bruna|nicolas|arthur|gui)|mandei (pra|para|pro|no) (grupo|equipe)|criei (uma |a )?(task|tarefa) (no|do|na))\b/i,
+  // Resumos/relatórios internos expostos ao cliente
+  /\b(feito,?\s*gui|aqui o resumo|no grupo d[ao]|grupo d[ao]\s+\w+:|resumo.*interno|repassei|encaminhei.*(equipe|interno))\b/i,
+  // Referências ao próprio Jarvis como sistema/bot
+  /\b(vou anexar|vou registrar|já registrei|preciso do gid|gid da task|anexar na task)\b/i,
 ];
 
 function checkInternalLeak(text) {
