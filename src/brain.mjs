@@ -424,7 +424,13 @@ export async function generateResponse(text, chatId, senderJid, pushName, isGrou
     // Nota: processMemory agora roda no handler principal (aprendizado passivo em tempo real)
     // Não precisa rodar aqui de novo — evita duplicação
 
-    return { text: finalText || null, mentions, agent: intent.agent };
+    // Detectar respostas curtas de humor/brincadeira → sugerir envio como áudio (mais humano)
+    const sendAsAudio = isGroup && finalText && finalText.length <= 120 && finalText.length >= 5
+      && !finalText.includes('http') && !finalText.includes('asana.com')
+      && mentions.length === 0
+      && Math.random() < 0.35; // 35% de chance de mandar como áudio em respostas curtas
+
+    return { text: finalText || null, mentions, agent: intent.agent, sendAsAudio };
   } catch (err) {
     console.error('[AI] Erro ao gerar resposta:', err.message);
     return { text: null, mentions: [], agent: 'master' };

@@ -441,7 +441,7 @@ async function handleIncomingMessage(m) {
 
   // Enviar resposta
   const quotedMsg = isGroup ? m : null;
-  if (isAudio && AUDIO_ALLOWED.has(from)) {
+  if ((isAudio || result.sendAsAudio) && AUDIO_ALLOWED.has(from)) {
     await sendAudio(from, responseText);
   } else if (result.mentions?.length > 0) {
     await sendTextWithMentions(from, responseText, result.mentions, quotedMsg);
