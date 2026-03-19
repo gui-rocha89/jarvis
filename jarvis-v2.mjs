@@ -1200,11 +1200,29 @@ app.get('/dashboard/groups', auth, async (req, res) => {
       listedJids.add(jid);
     }
 
-    // 3. TODOS os outros grupos do WhatsApp (do banco jarvis_groups)
+    // 3. Sync com WhatsApp real (quais grupos o bot está de verdade)
+    let realGroupJids = new Set();
+    try {
+      if (sock?.ws?.isOpen) {
+        const chats = await sock.groupFetchAllParticipating();
+        for (const [gid, meta] of Object.entries(chats)) {
+          realGroupJids.add(gid);
+          // Atualizar nome no banco
+          await upsertGroup(gid, meta.subject || gid);
+        }
+      }
+    } catch (e) {
+      console.error('[GROUPS] Erro ao sincronizar grupos do WhatsApp:', e.message);
+    }
+
+    // 4. TODOS os outros grupos do WhatsApp (do banco jarvis_groups)
     const { rows: allGroups } = await pool.query("SELECT jid, name FROM jarvis_groups WHERE jid LIKE '%@g.us' ORDER BY name");
     for (const g of allGroups) {
       if (listedJids.has(g.jid)) continue;
-      groups.push({ jid: g.jid, name: g.name || g.jid, type: 'other', active: false, canToggle: false });
+      // Se fez sync e o grupo não está no WhatsApp real, pula (saiu do grupo)
+      if (realGroupJids.size > 0 && !realGroupJids.has(g.jid)) continue;
+      const isActive = JARVIS_ALLOWED_GROUPS.has(g.jid);
+      groups.push({ jid: g.jid, name: g.name || g.jid, type: 'other', active: isActive, canToggle: true });
     }
 
     res.json({ groups });
@@ -1228,7 +1246,16 @@ app.post('/dashboard/groups/toggle', auth, async (req, res) => {
       console.log(`[DASHBOARD] Cliente ${client.groupName} ${active ? 'ATIVADO' : 'DESATIVADO'}`);
       res.json({ success: true, jid, active, message: `${client.groupName || 'Cliente'} ${active ? 'ativado' : 'desativado'}.` });
     } else {
-      res.status(404).json({ success: false, message: 'Grupo não encontrado' });
+      // Qualquer outro grupo (toggle livre via dashboard)
+      const { rows } = await pool.query("SELECT name FROM jarvis_groups WHERE jid = $1", [jid]);
+      const groupName = rows[0]?.name || jid;
+      if (active) {
+        JARVIS_ALLOWED_GROUPS.add(jid);
+      } else {
+        JARVIS_ALLOWED_GROUPS.delete(jid);
+      }
+      console.log(`[DASHBOARD] Grupo "${groupName}" ${active ? 'ATIVADO' : 'DESATIVADO'}`);
+      res.json({ success: true, jid, active, message: `${groupName} ${active ? 'ativado' : 'desativado'}. Volta ao padrão ao reiniciar.` });
     }
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
