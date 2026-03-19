@@ -1,6 +1,6 @@
 # Jarvis 4.0
 
-**Agente de IA multi-agente autônomo no WhatsApp** para a [Stream Lab](https://streamlab.com.br) — agência de marketing digital.
+**Agente de IA multi-agente autônomo no WhatsApp** para a [Stream Lab](https://streamlab.com.br) — laboratório criativo de marketing.
 
 Personalidade inspirada no J.A.R.V.I.S. do Tony Stark: elegante, eficiente, com humor inteligente.
 
@@ -264,6 +264,8 @@ Para menções funcionarem no WhatsApp (highlight azul + push notification), o J
 | `POST` | `/dashboard/memory/add` | Adicionar memória manualmente |
 | `POST` | `/dashboard/chat` | Chat com Jarvis via dashboard |
 | `GET` | `/dashboard/agents` | Agentes e distribuição de conhecimento |
+| `GET` | `/dashboard/groups` | Listar todos os grupos WhatsApp |
+| `POST` | `/dashboard/groups/toggle` | Ativar/desativar grupo |
 | `GET` | `/dashboard/profiles` | Listar perfis sintetizados |
 | `POST` | `/dashboard/asana/study/start` | Iniciar estudo exaustivo do Asana |
 | `GET` | `/dashboard/asana/study/status` | Progresso do estudo em tempo real |
@@ -283,6 +285,7 @@ SPA com interface temática do JARVIS (Iron Man). Acesso via **guardiaolab.com.b
 - **Configuração de Voz** — Sliders para stability, similarity, style (ElevenLabs)
 - **Chat Integrado** — Conversar com Jarvis diretamente pelo dashboard
 - **Estudo do Asana** — Painel com progresso em tempo real
+- **Grupos** — Toggle on/off de grupos WhatsApp em tempo real (internos + clientes)
 - **Segurança** — Login com 2FA via WhatsApp, log de acessos com geolocalização
 
 ---
@@ -317,7 +320,7 @@ git push origin master
   │
   ├─ CI (ci.yml)
   │   ├─ Node 20 + npm ci
-  │   └─ npm test (47 testes + scan de credenciais)
+  │   └─ npm test (60 testes + scan de credenciais)
   │
   └─ Deploy (deploy.yml) — executa apenas se CI passou
       ├─ SSH via chave Ed25519 (GitHub Secrets)
@@ -339,7 +342,7 @@ git push origin master
 npm test
 ```
 
-**47 casos de teste cobrindo:**
+**60 casos de teste cobrindo:**
 - Detecção de tipos de mídia (`getMediaType`)
 - Extração de remetente em DMs e grupos (`extractSender`)
 - Validação de respostas do Jarvis (`isValidResponse`)
@@ -373,6 +376,16 @@ Ambos com health check e bind exclusivo em localhost (sem exposição externa).
 ---
 
 ## Changelog
+
+### v4.1.0 (2026-03-19)
+- Toggle de grupos no dashboard — ativa/desativa Jarvis por grupo em tempo real
+- Tool `buscar_mensagens` — busca no histórico real do WhatsApp por palavras-chave
+- Anti-leak reforçado — silêncio total em vez de sanitização parcial
+- Cobrança inteligente — lê atividades do Asana (não só comentários)
+- Áudio em respostas de humor (35% de chance em respostas curtas)
+- App Meta Ads publicado (modo Live)
+- Deploy pipeline corrigido (ssh-keyscan com fallback)
+- "Agência" → "Laboratório criativo" em toda a identidade
 
 ### v4.0.0 (2026-03-16)
 - 6 agentes especializados (+ Traffic e Social)

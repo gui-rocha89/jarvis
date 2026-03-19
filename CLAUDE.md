@@ -1,7 +1,7 @@
 # Jarvis 4.0 — Technical Reference
 
 > **Projeto:** Jarvis · **Organização:** Stream Lab · **Versão:** 4.0.0
-> **Última atualização:** 2026-03-17 · **Autores:** Equipe Stream Lab + Claude Code
+> **Última atualização:** 2026-03-19 · **Autores:** Equipe Stream Lab + Claude Code
 
 ---
 
@@ -101,7 +101,7 @@ O Gui é direto e reclama quando algo não funciona. Padrões comuns:
 
 ## 1. Visão Geral da Arquitetura
 
-Jarvis 4.0 é um **sistema de IA multi-agente autônomo** que opera via WhatsApp como gestor de projetos virtual 24/7 para a Stream Lab (agência de marketing digital). A arquitetura é inspirada na [Claude Code](https://claude.com/claude-code), com Agent Loop real, Extended Thinking, Prompt Caching e Model Routing dinâmico.
+Jarvis 4.0 é um **sistema de IA multi-agente autônomo** que opera via WhatsApp como gestor de projetos virtual 24/7 para a Stream Lab (laboratório criativo de marketing). A arquitetura é inspirada na [Claude Code](https://claude.com/claude-code), com Agent Loop real, Extended Thinking, Prompt Caching e Model Routing dinâmico.
 
 ### 1.1 Capacidades Principais
 
@@ -156,7 +156,7 @@ src/
 dashboard/
 └── index.html                    # SPA do dashboard (Tailwind, Chart.js, auto-refresh)
 tests/
-└── unit.test.mjs                 # Suite de testes (47 casos + scan de credenciais)
+└── unit.test.mjs                 # Suite de testes (60 casos + scan de credenciais)
 .github/workflows/
 ├── ci.yml                        # CI — Node 20, npm ci, npm test
 └── deploy.yml                    # CD — rsync para VPS via SSH (auto após CI)
@@ -336,6 +336,7 @@ Mensagem recebida
 | `enviar_mensagem_grupo` | Todos | Envia mensagem no WhatsApp com menções reais | grupo, mensagem |
 | `anexar_midia_asana` | Manager | Upload de mídia do WhatsApp como anexo em task | task_id |
 | `comentar_task` | Manager | Adiciona comentário em task do Asana | task_id, comentario |
+| `buscar_mensagens` | Todos | Busca mensagens reais do WhatsApp no banco (links, aprovações, etc.) | palavras_chave |
 | `criar_campanha` | Traffic | Cria campanha Meta Ads (SEMPRE pausada) | nome, objetivo, orcamento_diario |
 | `relatorio_ads` | Traffic | Relatório de métricas (CPC, CTR, ROAS, CPA) | periodo |
 | `pausar_campanha` | Traffic | Pausa ou retoma campanha | campanha_id, acao |
@@ -589,7 +590,7 @@ git push origin master
   ├─ GitHub Actions: CI (ci.yml)
   │   ├─ Node 20
   │   ├─ npm ci
-  │   └─ npm test (47 testes + scan de credenciais)
+  │   └─ npm test (60 testes + scan de credenciais)
   │
   └─ Se CI passou → Deploy (deploy.yml)
       ├─ SSH via chave Ed25519 (GitHub Secrets: VPS_SSH_KEY, VPS_HOST, VPS_USER)
@@ -661,7 +662,7 @@ ssh root@31.97.160.141 "cd /opt/jarvis && npx pm2 restart jarvis"
 ## 12. Testes
 
 ```bash
-npm test   # Roda suite completa (47 testes)
+npm test   # Roda suite completa (60 testes)
 ```
 
 **Cobertura:**
@@ -757,6 +758,17 @@ Consulte `.env.example` para a lista completa. Variáveis organizadas por domín
 ---
 
 ## 14. Changelog
+
+### v4.1.0 (2026-03-19)
+- **Toggle de grupos** — dashboard com aba Grupos para ativar/desativar Jarvis por grupo em tempo real
+- **Tool `buscar_mensagens`** — busca no histórico real do WhatsApp por palavras-chave (até 30 dias)
+- **Anti-leak v2** — silêncio total em vez de sanitização parcial; novos padrões de detecção
+- **Cobrança inteligente** — lê atividades do Asana (mudanças de seção, atribuições) além de comentários
+- **Menções na cobrança** — substituição @Nome → @número no pipeline de cobrança automática
+- **Áudio em humor** — 35% de chance de responder com áudio em respostas curtas nos grupos internos
+- **Deploy pipeline** — ssh-keyscan com fallback StrictHostKeyChecking=no
+- **Identidade** — "agência" → "laboratório criativo" em toda a base de código
+- **App Meta Ads** — publicado em modo Live (criativos via API desbloqueados)
 
 ### v4.0.0 (2026-03-16)
 - **6 agentes** — adicionados Traffic (Meta Ads) e Social (redes sociais orgânicas)
