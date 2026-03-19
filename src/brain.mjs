@@ -904,8 +904,10 @@ async function agentResearcher(task, { asanaRequest, searchMemories, getProfile 
     task: t, daysLate,
     asana: { description: '', section: '', project: t.project, customFields: [], followers: [], subtasks: 0 },
     comments: [],
+    activities: [],
     memories: { asana: [], whatsapp: [], people: [] },
     profiles: { assignee: null, client: null },
+    recentWhatsApp: [],
   };
 
   // 1. Detalhes completos da task no Asana
@@ -922,10 +924,11 @@ async function agentResearcher(task, { asanaRequest, searchMemories, getProfile 
     }
   } catch (e) { console.error(`[RESEARCHER] Erro detalhes task ${t.gid}:`, e.message); }
 
-  // 2. Comentários da task (histórico de interações)
+  // 2. Comentários E atividades da task (histórico completo de interações)
   try {
-    const stories = await asanaRequest(`/tasks/${t.gid}/stories?opt_fields=text,created_by.name,created_at,type&limit=20`);
+    const stories = await asanaRequest(`/tasks/${t.gid}/stories?opt_fields=text,created_by.name,created_at,type,resource_subtype&limit=50`);
     if (stories?.data) {
+      // Comentários reais
       intel.comments = stories.data
         .filter(s => s.type === 'comment' && s.text)
         .slice(-8)
@@ -933,6 +936,14 @@ async function agentResearcher(task, { asanaRequest, searchMemories, getProfile 
           author: c.created_by?.name || '?',
           date: new Date(c.created_at).toLocaleDateString('pt-BR'),
           text: c.text.substring(0, 400),
+        }));
+      // Atividades do sistema (movimentações, atribuições, mudanças de seção, etc.)
+      intel.activities = stories.data
+        .filter(s => s.type === 'system' && s.text)
+        .slice(-6)
+        .map(a => ({
+          date: new Date(a.created_at).toLocaleDateString('pt-BR'),
+          text: a.text.substring(0, 200),
         }));
     }
   } catch (e) { console.error(`[RESEARCHER] Erro stories task ${t.gid}:`, e.message); }
@@ -976,6 +987,24 @@ async function agentResearcher(task, { asanaRequest, searchMemories, getProfile 
     console.log(`[RESEARCHER] Task ${t.gid}: ${seen.size} memórias únicas (asana:${intel.memories.asana.length} whatsapp:${intel.memories.whatsapp.length} people:${intel.memories.people.length})`);
   } catch (e) { console.error(`[RESEARCHER] Erro memórias:`, e.message); }
 
+  // 3.5 Conversas recentes do WhatsApp (últimas 24h) sobre este cliente/task
+  try {
+    const { searchRecentMessagesByKeyword } = await import('./database.mjs');
+    const searchTerms = [clientName, ...taskKeywords].filter(k => k && k.length >= 3);
+    if (searchTerms.length > 0) {
+      const recentMsgs = await searchRecentMessagesByKeyword(searchTerms, 24, 15);
+      intel.recentWhatsApp = recentMsgs.map(m => ({
+        from: m.push_name || '?',
+        text: (m.text || '').substring(0, 300),
+        date: m.hora_br ? new Date(m.hora_br).toLocaleString('pt-BR') : '?',
+        chat: m.chat_id,
+      }));
+      if (intel.recentWhatsApp.length > 0) {
+        console.log(`[RESEARCHER] Task ${t.gid}: ${intel.recentWhatsApp.length} mensagens recentes do WhatsApp sobre "${searchTerms.join(', ')}"`);
+      }
+    }
+  } catch (e) { console.error(`[RESEARCHER] Erro busca WhatsApp:`, e.message); }
+
   // 4. Perfis sintetizados (responsável + cliente)
   try {
     if (t.assignee && t.assignee !== 'Sem responsável') {
@@ -1018,7 +1047,11 @@ async function agentManager(intel, { anthropic, teamList }) {
     dossier += `\n\nHISTÓRICO DE COMENTÁRIOS (${intel.comments.length}):`;
     for (const c of intel.comments) dossier += `\n- ${c.author} (${c.date}): ${c.text}`;
   } else {
-    dossier += `\n\nSEM COMENTÁRIOS — nunca houve interação na task.`;
+    dossier += `\n\nSEM COMENTÁRIOS escritos na task.`;
+  }
+  if (intel.activities?.length > 0) {
+    dossier += `\n\nATIVIDADES RECENTES NA TASK (movimentações, atribuições, mudanças):`;
+    for (const a of intel.activities) dossier += `\n- (${a.date}): ${a.text}`;
   }
 
   if (intel.memories.asana.length > 0) {
@@ -1032,6 +1065,11 @@ async function agentManager(intel, { anthropic, teamList }) {
   if (intel.memories.people.length > 0) {
     dossier += `\n\nCONHECIMENTO SOBRE PESSOAS:`;
     for (const m of intel.memories.people) dossier += `\n- [${m.category}] ${m.content}`;
+  }
+
+  if (intel.recentWhatsApp?.length > 0) {
+    dossier += `\n\n⚠️ CONVERSAS RECENTES NO WHATSAPP (últimas 24h sobre este cliente/task):`;
+    for (const m of intel.recentWhatsApp) dossier += `\n- ${m.from} (${m.date}): ${m.text}`;
   }
 
   if (intel.profiles.assignee) {
@@ -1057,18 +1095,20 @@ EQUIPE: ${teamList}
 
 Você recebe dados REAIS — do Asana, das conversas do WhatsApp, dos perfis da equipe. CRUZE TUDO:
 - Comentários mostram progresso? Reconheça e pergunte O QUE FALTA
+- ATIVIDADES RECENTES (movimentações, atribuições, mudanças de seção) = sinal de que HOUVE TRABALHO. NUNCA diga "sem atualização" ou "sem comentário" se existem atividades recentes. Reconheça o progresso e pergunte o próximo passo
 - WhatsApp mostra que o cliente já cobrou? Mencione isso na cobrança
 - Perfil do membro mostra padrão de atraso? Adapte a abordagem
 - Seção indica fase específica? Cobre sobre aquela fase
-- Nunca teve comentário? Pergunte se já iniciou
+- Sem comentários E sem atividades recentes? Aí sim pergunte se já iniciou
 - Memórias mostram decisões/reuniões? Referencie
+- ⚠️ CONVERSAS RECENTES DO WHATSAPP mostram que o assunto JÁ FOI DISCUTIDO nas últimas 24h? Retorne comentario_asana: null — NÃO cobrar, o assunto está sendo tratado ativamente
 
 Responda em JSON:
 {
   "analise": "sua análise em 1-2 frases do que está acontecendo",
   "urgencia": "baixa|media|alta|critica",
-  "comentario_asana": "o texto do comentário pro Asana (2-4 frases, específico, humano)",
-  "resumo_whatsapp": "resumo de 1 frase pro grupo do WhatsApp"
+  "comentario_asana": "o texto do comentário pro Asana (2-4 frases, específico, humano) OU null se o assunto já foi discutido recentemente",
+  "resumo_whatsapp": "resumo de 1 frase pro grupo do WhatsApp OU null se não cobrar"
 }
 
 REGRAS:
@@ -1076,7 +1116,8 @@ REGRAS:
 2. Tom de colega, não de robô
 3. Pode mencionar nomes de CLIENTES dos dados. NUNCA invente nomes
 4. NUNCA comece com "@NomeDaPessoa" — a menção é automática
-5. Responda SOMENTE o JSON, sem markdown nem explicação`,
+5. Se há CONVERSAS RECENTES sobre o tema (últimas 24h), NÃO COBRE — retorne null em comentario_asana
+6. Responda SOMENTE o JSON, sem markdown nem explicação`,
       messages: [{ role: 'user', content: dossier }],
     });
 
@@ -1240,7 +1281,11 @@ export async function runOverdueCheck() {
     for (const { intel, decision } of decisions) {
       const t = intel.task;
       const commentText = decision.comentario_asana;
-      if (!commentText) continue;
+      if (!commentText || commentText === 'null') {
+        notified[t.gid] = today;
+        console.log(`[PIPELINE] ⏭️ Task ${t.gid} pulada — assunto já discutido recentemente`);
+        continue;
+      }
 
       // Montar menções dos envolvidos
       const allInvolved = new Set();

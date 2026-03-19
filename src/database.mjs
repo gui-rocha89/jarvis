@@ -230,6 +230,27 @@ export async function getRecentMessages(chatId, limit = 30) {
   }
 }
 
+export async function searchRecentMessagesByKeyword(keywords, hoursBack = 24, limit = 20) {
+  if (!keywords || keywords.length === 0) return [];
+  try {
+    const patterns = keywords.filter(Boolean).map(k => `%${k}%`);
+    if (patterns.length === 0) return [];
+    const result = await pool.query(
+      `SELECT push_name, text, chat_id, timestamp, created_at AT TIME ZONE 'America/Sao_Paulo' as hora_br
+       FROM jarvis_messages
+       WHERE text ILIKE ANY($1)
+         AND created_at >= NOW() - INTERVAL '${parseInt(hoursBack)} hours'
+         AND text IS NOT NULL AND text != ''
+       ORDER BY timestamp DESC LIMIT $2`,
+      [patterns, limit]
+    );
+    return result.rows;
+  } catch (err) {
+    console.error('[DB] Erro ao buscar mensagens por keyword:', err.message);
+    return [];
+  }
+}
+
 export async function getContactInfo(jid) {
   try {
     const result = await pool.query('SELECT * FROM jarvis_contacts WHERE jid = $1', [jid]);
