@@ -1429,27 +1429,35 @@
           return (a.name || '').localeCompare(b.name || '');
         });
         container.innerHTML = data.groups.map(g => {
-          const isInternal = g.type === 'internal';
-          const badge = isInternal
-            ? '<span class="text-[10px] px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 font-mono">INTERNO</span>'
-            : '<span class="text-[10px] px-2 py-0.5 rounded bg-green-500/20 text-green-400 font-mono">CLIENTE</span>';
-          const details = isInternal ? ''
-            : `<div class="text-[10px] text-stark-dim mt-1">${g.defaultAssignee ? 'Responsável: ' + g.defaultAssignee : ''}${g.authorizedAt ? ' | Desde: ' + new Date(g.authorizedAt).toLocaleDateString('pt-BR') : ''}</div>`;
-          const warning = !g.active && isInternal ? '<div class="text-[10px] text-yellow-500 mt-1">Volta ao ativo ao reiniciar</div>' : '';
-          return `<div class="flex items-center justify-between p-4 rounded-lg border transition-all ${g.active ? 'border-stark-border bg-white/5' : 'border-stark-border/30 bg-white/[0.02] opacity-50'}" data-group-jid="${g.jid}">
+          const badges = {
+            internal: '<span class="text-[10px] px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 font-mono">INTERNO</span>',
+            client: '<span class="text-[10px] px-2 py-0.5 rounded bg-green-500/20 text-green-400 font-mono">CLIENTE</span>',
+            other: '<span class="text-[10px] px-2 py-0.5 rounded bg-gray-500/20 text-gray-400 font-mono">GRUPO</span>',
+          };
+          const emojis = { internal: '🏠', client: '👥', other: '💬' };
+          const badge = badges[g.type] || badges.other;
+          const emoji = emojis[g.type] || '💬';
+          const details = g.type === 'client'
+            ? `<div class="text-[10px] text-stark-dim mt-1">${g.defaultAssignee ? 'Responsável: ' + g.defaultAssignee : ''}${g.authorizedAt ? ' | Desde: ' + new Date(g.authorizedAt).toLocaleDateString('pt-BR') : ''}</div>`
+            : '';
+          const warning = !g.active && g.type === 'internal' ? '<div class="text-[10px] text-yellow-500 mt-1">Volta ao ativo ao reiniciar</div>' : '';
+          const toggleBtn = g.canToggle
+            ? `<button onclick="toggleGroup('${g.jid}', ${!g.active})" class="flex-shrink-0 ml-3 w-12 h-6 rounded-full transition-all relative ${g.active ? 'bg-green-500' : 'bg-gray-600'}">
+                <div class="w-5 h-5 rounded-full bg-white absolute top-0.5 transition-all ${g.active ? 'left-[26px]' : 'left-0.5'}"></div>
+              </button>`
+            : '<span class="text-[10px] text-stark-dim ml-3">Inativo</span>';
+          return `<div class="flex items-center justify-between p-4 rounded-lg border transition-all ${g.active ? 'border-stark-border bg-white/5' : 'border-stark-border/30 bg-white/[0.02] opacity-40'}" data-group-jid="${g.jid}">
             <div class="flex items-center gap-3 flex-1 min-w-0">
-              <span class="text-xl flex-shrink-0">${isInternal ? '🏠' : '👥'}</span>
+              <span class="text-xl flex-shrink-0">${emoji}</span>
               <div class="min-w-0">
                 <div class="flex items-center gap-2 flex-wrap">
-                  <span class="text-sm font-semibold text-white truncate">${g.name || g.jid}</span>
+                  <span class="text-sm font-semibold ${g.active ? 'text-white' : 'text-gray-500'} truncate">${g.name || g.jid}</span>
                   ${badge}
                 </div>
                 ${details}${warning}
               </div>
             </div>
-            <button onclick="toggleGroup('${g.jid}', ${!g.active})" class="flex-shrink-0 ml-3 w-12 h-6 rounded-full transition-all relative ${g.active ? 'bg-green-500' : 'bg-gray-600'}">
-              <div class="w-5 h-5 rounded-full bg-white absolute top-0.5 transition-all ${g.active ? 'left-[26px]' : 'left-0.5'}"></div>
-            </button>
+            ${toggleBtn}
           </div>`;
         }).join('');
       } catch (err) {

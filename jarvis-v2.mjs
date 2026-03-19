@@ -1172,17 +1172,32 @@ app.post('/send/audio', auth, async (req, res) => {
 app.get('/dashboard/groups', auth, async (req, res) => {
   try {
     const groups = [];
+    const listedJids = new Set();
     const internalJids = [CONFIG.GROUP_TAREFAS, CONFIG.GROUP_GALAXIAS].filter(Boolean);
+
+    // 1. Grupos internos
     if (internalJids.length > 0) {
       const { rows } = await pool.query('SELECT jid, name FROM jarvis_groups WHERE jid = ANY($1)', [internalJids]);
       const nameMap = Object.fromEntries(rows.map(r => [r.jid, r.name]));
       for (const jid of internalJids) {
         groups.push({ jid, name: nameMap[jid] || jid, type: 'internal', active: JARVIS_ALLOWED_GROUPS.has(jid), canToggle: true });
+        listedJids.add(jid);
       }
     }
+
+    // 2. Clientes gerenciados
     for (const [jid, client] of managedClients) {
       groups.push({ jid, name: client.groupName || jid, type: 'client', active: !!client.active, canToggle: true, slug: client.slug, defaultAssignee: client.defaultAssignee, authorizedAt: client.authorizedAt });
+      listedJids.add(jid);
     }
+
+    // 3. TODOS os outros grupos do WhatsApp (do banco jarvis_groups)
+    const { rows: allGroups } = await pool.query("SELECT jid, name FROM jarvis_groups WHERE jid LIKE '%@g.us' ORDER BY name");
+    for (const g of allGroups) {
+      if (listedJids.has(g.jid)) continue;
+      groups.push({ jid: g.jid, name: g.name || g.jid, type: 'other', active: false, canToggle: false });
+    }
+
     res.json({ groups });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
