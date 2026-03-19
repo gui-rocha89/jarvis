@@ -681,7 +681,7 @@ async function getClientFullContext(chatId, senderJid, managedClient, text) {
     // 4. Conhecimento operacional do Jarvis (processos, regras) — busca ampla
     const agentMemories = await smartSearchMemories(text + ' cliente demanda task fluxo processo regra', 'agent', null, 15);
     if (agentMemories.length > 0) {
-      contexts.push('\nCONHECIMENTO OPERACIONAL (como a agência funciona):');
+      contexts.push('\nCONHECIMENTO OPERACIONAL (como o Lab funciona):');
       agentMemories.forEach(m => contexts.push(`- ${m.content}`));
     }
 

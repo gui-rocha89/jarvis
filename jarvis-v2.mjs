@@ -887,7 +887,7 @@ app.get('/dashboard/intelligence', auth, async (req, res) => {
       { id: 'comandante', nome: 'Comandante', cor: '#ff8a00', icon: '🟠', min: 40000, max: 79999, desc: 'Conhecimento profundo de tudo e todos' },
       { id: 'vingador', nome: 'Vingador', cor: '#a855f7', icon: '🟣', min: 80000, max: 149999, desc: 'Participa ativamente nas operações' },
       { id: 'lider', nome: 'Líder dos Vingadores', cor: '#ec4899', icon: '💎', min: 150000, max: 249999, desc: 'Lidera com inteligência e visão estratégica' },
-      { id: 'conselheiro', nome: 'Conselheiro de Asgard', cor: '#06b6d4', icon: '⚡', min: 250000, max: 399999, desc: 'Sabedoria institucional da agência' },
+      { id: 'conselheiro', nome: 'Conselheiro de Asgard', cor: '#06b6d4', icon: '⚡', min: 250000, max: 399999, desc: 'Sabedoria institucional do Lab' },
       { id: 'sentinela', nome: 'Sentinela Cósmico', cor: '#f59e0b', icon: '🌟', min: 400000, max: 699999, desc: 'Inteligência transcendente, visão total' },
       { id: 'diretor', nome: 'Diretor da S.H.I.E.L.D.', cor: '#ff3b3b', icon: '🔴', min: 700000, max: Infinity, desc: 'Onisciência operacional — sabe tudo' },
     ];

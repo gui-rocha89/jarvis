@@ -63,7 +63,7 @@ export async function synthesizeProfile(entityType, entityId, entityName = null)
     const memoriesText = memories.map(m => `[${m.category}] ${m.content}`).join('\n');
 
     const prompts = {
-      client_contact: `Analise as memorias abaixo sobre um CONTATO DE CLIENTE (pessoa de fora que é cliente da agência Stream Lab) e sintetize um perfil JSON:
+      client_contact: `Analise as memorias abaixo sobre um CONTATO DE CLIENTE (pessoa de fora que é cliente da Stream Lab) e sintetize um perfil JSON:
 {
   "nome": "nome da pessoa",
   "empresa": "empresa/marca que representa",
@@ -98,14 +98,14 @@ IMPORTANTE: Esta pessoa NAO é da equipe Stream Lab. É um CLIENTE externo.`,
       team_member: `Analise as memorias abaixo sobre um membro da equipe e sintetize um perfil JSON:
 {
   "nome": "nome da pessoa",
-  "cargo_funcao": "o que faz na agencia",
+  "cargo_funcao": "o que faz no Lab",
   "habilidades": ["lista de habilidades"],
   "pontos_fortes": "no que se destaca",
   "estilo_trabalho": "como trabalha (rapido, detalhista, etc)",
   "horario_ativo": "quando costuma estar mais ativo",
   "observacoes": "outras observacoes importantes"
 }`,
-      process: `Analise as memorias abaixo sobre processos da agencia e sintetize um perfil JSON:
+      process: `Analise as memorias abaixo sobre processos do Lab e sintetize um perfil JSON:
 {
   "nome": "nome do processo/fluxo",
   "etapas": ["lista de etapas"],
@@ -119,7 +119,7 @@ IMPORTANTE: Esta pessoa NAO é da equipe Stream Lab. É um CLIENTE externo.`,
     const response = await anthropic.messages.create({
       model: PROFILE_MODEL,
       max_tokens: 500,
-      system: `Voce sintetiza perfis a partir de memorias de uma agencia de marketing (Stream Lab).
+      system: `Voce sintetiza perfis a partir de memorias da Stream Lab (laboratorio criativo de marketing).
 Responda APENAS com o JSON, sem texto adicional. Se nao tiver informacao suficiente para um campo, use null.
 ${prompts[entityType] || prompts.client}`,
       messages: [{ role: 'user', content: `Nome da entidade: ${entityName || entityId}\n\nMemórias:\n${memoriesText}` }],

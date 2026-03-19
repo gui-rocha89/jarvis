@@ -187,7 +187,7 @@ export async function startAsanaStudy(options = {}) {
           continue;
         }
 
-        const projectText = `Projeto da agência Stream Lab: "${project.name}" (${project.archived ? 'ARQUIVADO' : 'ATIVO'}). Dono: ${project.owner?.name || 'desconhecido'}. Membros: ${(project.members || []).map(m => m.name).join(', ') || 'nenhum listado'}.`;
+        const projectText = `Projeto da Stream Lab: "${project.name}" (${project.archived ? 'ARQUIVADO' : 'ATIVO'}). Dono: ${project.owner?.name || 'desconhecido'}. Membros: ${(project.members || []).map(m => m.name).join(', ') || 'nenhum listado'}.`;
 
         try {
           const facts = await extractAsanaFacts(projectText, `Projeto ${project.name}`);

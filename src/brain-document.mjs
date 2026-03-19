@@ -204,7 +204,7 @@ ${managedText || '(nenhum)'}`;
       model: BRAIN_MODEL,
       max_tokens: 16000,
       thinking: { type: 'enabled', budget_tokens: 8192 },
-      system: `Você é o arquiteto de conhecimento do JARVIS, assistente de IA da Stream Lab (agência de marketing digital).
+      system: `Você é o arquiteto de conhecimento do JARVIS, assistente de IA da Stream Lab (laboratório criativo de marketing).
 
 Sua tarefa: receber TODAS as memórias, perfis e instruções acumulados pelo Jarvis e sintetizar um DOCUMENTO DE CONHECIMENTO OPERACIONAL — o "cérebro" do Jarvis.
 
@@ -237,7 +237,7 @@ Use exatamente estas seções (pule se não houver dados):
 (Cada cliente: quem é, o que faz, como se comunica, preferências, cuidados)
 
 ### 3. PROCESSOS E FLUXOS
-(Como a agência funciona: criação de conteúdo, aprovação, tráfego, captação, etc.)
+(Como o Lab funciona: criação de conteúdo, aprovação, tráfego, captação, etc.)
 
 ### 4. REGRAS E RESTRIÇÕES
 (O que NUNCA fazer, o que SEMPRE fazer, protocolos de segurança)

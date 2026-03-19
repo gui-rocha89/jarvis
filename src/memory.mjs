@@ -49,14 +49,14 @@ export async function extractFacts(text, senderName, chatId, isGroup, groupConte
     if (isGroup && groupContext) {
       groupHint = `\n\nCONTEXTO IMPORTANTE:
 - Grupo: "${groupContext.groupName}"
-- Tipo: ${groupContext.isClientGroup ? 'GRUPO DE CLIENTE (empresa externa)' : 'grupo interno da agência'}
+- Tipo: ${groupContext.isClientGroup ? 'GRUPO DE CLIENTE (empresa externa)' : 'grupo interno do Lab'}
 ${groupContext.isClientGroup ? `- ${senderName} é CONTATO DO CLIENTE (NÃO é membro da equipe Stream Lab). Use categoria "client_profile" para fatos sobre esta pessoa, NUNCA "team_member".` : `- ${senderName} é da equipe interna Stream Lab.`}`;
     }
 
     const response = await anthropic.messages.create({
       model: MEMORY_MODEL,
       max_tokens: 800,
-      system: `Voce e um extrator de fatos de uma agencia de marketing (Stream Lab). Analise a mensagem e extraia APENAS fatos relevantes sobre:
+      system: `Voce e um extrator de fatos da Stream Lab (laboratorio criativo de marketing). Analise a mensagem e extraia APENAS fatos relevantes sobre:
 - Preferencias da pessoa (gosta de X, nao gosta de Y)
 - Informacoes sobre clientes (empresa, contato, projeto, marca)
 - Perfil de clientes (quem decide, tom de voz da marca, preferencias de conteudo)

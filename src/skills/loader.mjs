@@ -993,7 +993,7 @@ export async function executeJarvisTool(toolName, input, context = {}) {
       if (leaked) {
         console.warn(`[TOOL] ⚠️ BLOQUEADO: mensagem com conteúdo interno para grupo de cliente ${input.grupo}`);
         console.warn(`[TOOL] Mensagem bloqueada: ${input.mensagem.substring(0, 120)}`);
-        return { error: 'BLOQUEADO: essa mensagem contém informações internas da agência. Nunca envie detalhes sobre Asana, tasks, ferramentas ou processos internos para o grupo do cliente. Reformule a mensagem com tom 100% profissional.' };
+        return { error: 'BLOQUEADO: essa mensagem contém informações internas do Lab. Nunca envie detalhes sobre Asana, tasks, ferramentas ou processos internos para o grupo do cliente. Reformule a mensagem com tom 100% profissional.' };
       }
     }
 
