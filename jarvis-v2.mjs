@@ -26,7 +26,7 @@ import { WebSocketServer } from 'ws';
 import { CONFIG, AUDIO_ALLOWED, JARVIS_ALLOWED_GROUPS, teamPhones, teamWhatsApp, managedClients, loadManagedClients, saveManagedClients, isManagedClientGroup } from './src/config.mjs';
 import { pool, initDB, storeMessage, getRecentMessages, getContactInfo, getGroupInfo, upsertContact, upsertGroup, getMessageCount } from './src/database.mjs';
 import { initMemory, processMemory, getMemoryContext, getMemoryStats, searchMemories, smartSearchMemories, storeFacts, extractFacts, backfillEmbeddings } from './src/memory.mjs';
-import { shouldJarvisRespond, isValidResponse, generateResponse, markConversationActive, isConversationActive, findTeamJid, extractMentionsFromText, generateDailyReport, handleManagedClientMessage, runOverdueCheck, handlePublicDM } from './src/brain.mjs';
+import { shouldJarvisRespond, isValidResponse, generateResponse, markConversationActive, isConversationActive, findTeamJid, extractMentionsFromText, generateDailyReport, handleManagedClientMessage, runOverdueCheck, handlePublicDM, handleShowcaseMessage } from './src/brain.mjs';
 import { voiceConfig, loadVoiceConfig, saveVoiceConfig, transcribeAudio, generateAudio } from './src/audio.mjs';
 import { synthesizeProfile, getProfile, listProfiles, syncProfiles } from './src/profiles.mjs';
 import { asanaRequest, getOverdueTasks, getGCalClient, JARVIS_TOOLS, registerSendFunction, registerSendWithMentionsFunction } from './src/skills/loader.mjs';
@@ -49,6 +49,45 @@ const sentByBot = new Set();
 // JIDs da equipe REAL (participantes dos grupos internos Tarefas/Galáxias)
 // NÃO inclui clientes — usado exclusivamente pelo agente proativo
 const realTeamJids = new Set();
+
+// ============================================
+// MODO APRESENTAÇÃO (Showcase)
+// Map<jid, { startedAt, messageCount, lastActivity }>
+// Expira após 2 horas de inatividade
+// ============================================
+const showcaseConversations = new Map();
+const SHOWCASE_TTL = 2 * 60 * 60 * 1000; // 2 horas
+
+function normalizeForShowcaseTrigger(text) {
+  // Remove acentos e converte para lowercase
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+}
+
+function isShowcaseTrigger(text) {
+  const normalized = normalizeForShowcaseTrigger(text);
+  const triggers = [
+    'quero conhecer o jarvis',
+    'quero falar com o jarvis',
+    'quero testar o jarvis',
+    'me apresenta o jarvis',
+    'conhecer o jarvis',
+    'quero ver o jarvis',
+    'apresenta o jarvis',
+    'mostra o jarvis',
+  ];
+  return triggers.some(t => normalized.includes(t));
+}
+
+function isShowcaseActive(jid) {
+  const session = showcaseConversations.get(jid);
+  if (!session) return false;
+  // Expirar após 2 horas de inatividade
+  if (Date.now() - session.lastActivity > SHOWCASE_TTL) {
+    showcaseConversations.delete(jid);
+    return false;
+  }
+  return true;
+}
 
 // ============================================
 // VALIDADOR DE HOMEWORK — Usa Haiku pra confirmar se é realmente uma instrução pro Jarvis
@@ -392,7 +431,7 @@ async function handleIncomingMessage(m) {
   }
 
   // ATENDIMENTO PÚBLICO: DM de desconhecidos (leads)
-  // Se NÃO é grupo E sender NÃO é GUI_JID E sender NÃO é membro da equipe → handlePublicDM
+  // Se NÃO é grupo E sender NÃO é GUI_JID E sender NÃO é membro da equipe → handlePublicDM ou Showcase
   if (!isGroup && sender !== CONFIG.GUI_JID && !realTeamJids.has(sender)) {
     console.log(`[PUBLIC-DM] DM de desconhecido: ${pushName} (${sender.substring(0, 15)})`);
 
@@ -401,6 +440,108 @@ async function handleIncomingMessage(m) {
       console.log('[PUBLIC-DM] PAUSADO - ignorando');
       return;
     }
+
+    // ============================================
+    // MODO APRESENTAÇÃO (Showcase) — ANTES do fluxo público normal
+    // ============================================
+
+    // Verificar se é trigger de showcase
+    if (isShowcaseTrigger(text) && !isShowcaseActive(sender)) {
+      console.log(`[SHOWCASE] 🎯 Modo apresentação ativado para ${pushName} (${sender.substring(0, 15)})`);
+
+      // Registrar sessão showcase
+      showcaseConversations.set(sender, {
+        startedAt: Date.now(),
+        messageCount: 1,
+        lastActivity: Date.now(),
+      });
+
+      // Notificar Gui sobre novo lead no modo apresentação
+      try {
+        const phone = sender.replace('@s.whatsapp.net', '');
+        const notifyMsg = `🎯 *Novo lead no modo apresentação*\n\nNome: ${pushName || 'Desconhecido'}\nNúmero: ${phone}\n\nEntrou no Showcase Mode agora.`;
+        await sendText(CONFIG.GUI_JID, notifyMsg);
+      } catch (notifyErr) {
+        console.error('[SHOWCASE] Erro ao notificar Gui:', notifyErr.message);
+      }
+
+      // Gerar intro impressionante
+      const introText = `E aí, ${pushName || 'tudo bem'}! 👋 Prazer, eu sou o *Jarvis* — a inteligência artificial da Stream Lab.\n\nEu opero 24 horas por dia gerenciando projetos, criando estratégias de conteúdo, analisando campanhas de tráfego pago e ajudando marcas a se destacarem no digital.\n\nMas não vou ficar só falando de mim — me conta: o que te trouxe até aqui? Quero entender como posso impressionar você de verdade. 🚀`;
+
+      // Enviar intro como texto primeiro
+      await sendText(from, introText);
+      await storeMessage({
+        messageId: 'jarvis_showcase_' + randomUUID(), chatId: from, sender: CONFIG.GUI_JID,
+        pushName: 'Jarvis', text: introText, isGroup: false, isAudio: false,
+        timestamp: Math.floor(Date.now() / 1000),
+      });
+
+      // Enviar áudio de apresentação (SEMPRE áudio no primeiro contato)
+      try {
+        const audioIntro = `Fala, ${pushName || 'meu caro'}! Aqui é o Jarvis, a inteligência artificial da Stream Lab. Eu sou tipo o cérebro digital por trás de um laboratório criativo de marketing. Gerencio projetos, crio estratégias de conteúdo, analiso campanhas de tráfego pago, e o melhor: funciono vinte e quatro horas por dia, sete dias por semana. Me conta o que você tá procurando que eu te mostro do que sou capaz!`;
+        await sock.sendPresenceUpdate('recording', from).catch(() => {});
+        const audioBuffer = await generateAudio(audioIntro);
+        const audioResult = await sock.sendMessage(from, { audio: audioBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
+        if (audioResult?.key?.id) sentByBot.add(audioResult.key.id);
+        await sock.sendPresenceUpdate('paused', from).catch(() => {});
+      } catch (audioErr) {
+        console.error('[SHOWCASE] Erro ao enviar áudio intro:', audioErr.message);
+      }
+
+      return;
+    }
+
+    // Verificar se já está em modo showcase
+    if (isShowcaseActive(sender)) {
+      const session = showcaseConversations.get(sender);
+      session.messageCount++;
+      session.lastActivity = Date.now();
+
+      console.log(`[SHOWCASE] Mensagem #${session.messageCount} de ${pushName} no modo apresentação`);
+
+      const result = await handleShowcaseMessage(text, sender, pushName, mediaFiles, session.messageCount);
+      if (result?.text) {
+        // Enviar como áudio ou texto
+        if (result.sendAsAudio) {
+          try {
+            await sock.sendPresenceUpdate('recording', from).catch(() => {});
+            const audioBuffer = await generateAudio(result.text);
+            const audioResult = await sock.sendMessage(from, { audio: audioBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
+            if (audioResult?.key?.id) sentByBot.add(audioResult.key.id);
+            await sock.sendPresenceUpdate('paused', from).catch(() => {});
+          } catch (audioErr) {
+            console.error('[SHOWCASE] Erro ao enviar áudio, enviando como texto:', audioErr.message);
+            await sendText(from, result.text);
+          }
+        } else {
+          await sendText(from, result.text);
+        }
+
+        // Salvar resposta
+        await storeMessage({
+          messageId: 'jarvis_showcase_' + randomUUID(), chatId: from, sender: CONFIG.GUI_JID,
+          pushName: 'Jarvis', text: result.text, isGroup: false, isAudio: result.sendAsAudio || false,
+          timestamp: Math.floor(Date.now() / 1000),
+        });
+
+        // Notificar Gui se é lead quente (perguntou sobre preço/contratação)
+        if (result.isHotLead) {
+          try {
+            const phone = sender.replace('@s.whatsapp.net', '');
+            const hotMsg = `🔥 *Lead quente!* ${pushName || 'Desconhecido'} perguntou sobre contratação\n\nNúmero: ${phone}\nMensagem: "${text.substring(0, 150)}"`;
+            await sendText(CONFIG.GUI_JID, hotMsg);
+            console.log(`[SHOWCASE] 🔥 Lead quente notificado: ${pushName}`);
+          } catch (notifyErr) {
+            console.error('[SHOWCASE] Erro ao notificar lead quente:', notifyErr.message);
+          }
+        }
+      }
+      return;
+    }
+
+    // ============================================
+    // FLUXO PÚBLICO NORMAL (não showcase)
+    // ============================================
 
     const result = await handlePublicDM(text, sender, pushName, mediaFiles);
     if (result?.text) {

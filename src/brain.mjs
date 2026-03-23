@@ -1640,3 +1640,126 @@ export async function handlePublicDM(text, senderJid, pushName, mediaFiles = [])
     return null;
   }
 }
+
+/**
+ * Trata mensagens no Modo Apresentação (Showcase).
+ * Usa Opus para máxima inteligência. Sem limite de mensagens.
+ * Retorna { text, sendAsAudio } onde sendAsAudio indica se deve enviar como voz.
+ *
+ * @param {string} text - Texto da mensagem
+ * @param {string} senderJid - JID do remetente
+ * @param {string} pushName - Nome do remetente
+ * @param {Array} mediaFiles - Arquivos de mídia recebidos
+ * @param {number} messageCount - Contagem de mensagens na conversa showcase
+ * @returns {{ text: string, sendAsAudio: boolean } | null}
+ */
+export async function handleShowcaseMessage(text, senderJid, pushName, mediaFiles = [], messageCount = 1) {
+  try {
+    // Buscar histórico da conversa (últimas 20 mensagens)
+    const recentMessages = await getRecentMessages(senderJid, 20);
+    const chatHistory = [];
+    for (const m of recentMessages) {
+      const isJarvisMsg = m.push_name === 'Jarvis' || m.message_id?.startsWith('jarvis_');
+      if (isJarvisMsg) {
+        chatHistory.push({ role: 'assistant', content: m.text });
+      } else {
+        chatHistory.push({ role: 'user', content: m.text });
+      }
+    }
+    // Adicionar mensagem atual
+    chatHistory.push({ role: 'user', content: text });
+
+    // Buscar memórias genéricas (sem dados internos) para conhecimento geral
+    let memoryContext = '';
+    try {
+      const memories = await searchMemories(text, 'agent', null, 5);
+      if (memories?.length > 0) {
+        const safeMemories = memories.filter(m => {
+          const check = checkInternalLeak(m.content);
+          return !check.leaked;
+        });
+        if (safeMemories.length > 0) {
+          memoryContext = '\n\nCONHECIMENTO RELEVANTE:\n' + safeMemories.map(m => `- ${m.content}`).join('\n');
+        }
+      }
+    } catch (memErr) {
+      // Silencioso — memória é complementar
+    }
+
+    // System prompt: identidade + canal showcase + contexto
+    const systemPrompt = [
+      {
+        type: 'text',
+        text: JARVIS_IDENTITY + '\n\n' + CHANNEL_CONTEXT.whatsapp_showcase,
+        cache_control: { type: 'ephemeral' },
+      },
+      {
+        type: 'text',
+        text: `CONTEXTO DA CONVERSA:
+- Remetente: ${pushName || 'Visitante'}
+- Mensagem #${messageCount} no modo apresentação
+- Horário: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
+- DICA: responda de forma que IMPRESSIONE. Mostre inteligência, criatividade e personalidade.
+- Para respostas mais longas (insights, explicações, estratégia) → marque para enviar como ÁUDIO
+- Inclua no final da sua resposta, em uma linha separada, exatamente: [AUDIO:sim] ou [AUDIO:nao] para indicar se esta resposta deve ser enviada como áudio de voz.${memoryContext}`,
+      },
+    ];
+
+    // Usar Opus para máxima inteligência
+    const model = CONFIG.AI_MODEL_STRONG || CONFIG.AI_MODEL;
+    console.log(`[SHOWCASE] Gerando resposta com ${model} para ${pushName} (msg #${messageCount})`);
+
+    const response = await anthropic.messages.create({
+      model,
+      max_tokens: 2048,
+      system: systemPrompt,
+      messages: chatHistory,
+    });
+
+    let responseText = '';
+    for (const block of response.content) {
+      if (block.type === 'text') responseText += block.text;
+    }
+
+    if (!responseText || responseText.trim().length < 3) return null;
+
+    // Detectar marcação de áudio
+    let sendAsAudio = false;
+    const audioMatch = responseText.match(/\[AUDIO:(sim|nao|não)\]/i);
+    if (audioMatch) {
+      sendAsAudio = audioMatch[1].toLowerCase() === 'sim';
+      responseText = responseText.replace(/\[AUDIO:(sim|nao|não)\]/i, '').trim();
+    } else {
+      // Fallback: ~60% das respostas longas como áudio
+      sendAsAudio = responseText.length > 100 && Math.random() < 0.6;
+    }
+
+    // Anti-leak check: garantir que não vaza informação interna
+    const leakCheck = checkInternalLeak(responseText);
+    if (leakCheck.leaked) {
+      console.warn(`[SHOWCASE] ⚠️ Vazamento detectado: "${leakCheck.match}"`);
+      const sanitized = sanitizeClientResponse(responseText);
+      if (!sanitized) {
+        responseText = `Boa pergunta! A Stream Lab é um laboratório criativo de marketing que combina inteligência artificial com criatividade humana. Quer saber mais sobre como posso ajudar o seu negócio?`;
+        sendAsAudio = false;
+      } else {
+        responseText = sanitized;
+      }
+    }
+
+    // Detectar interesse em contratação/preço para notificar Gui
+    const hotLeadPatterns = /\b(pre[çc]o|valor|quanto custa|or[çc]amento|contratar|fechar|proposta|investimento|pacote|plano|mensalidade)\b/i;
+    const isHotLead = hotLeadPatterns.test(text);
+
+    console.log(`[SHOWCASE] Resposta para ${pushName} (msg #${messageCount}, audio=${sendAsAudio}): ${responseText.substring(0, 80)}`);
+
+    return {
+      text: responseText,
+      sendAsAudio,
+      isHotLead,
+    };
+  } catch (err) {
+    console.error('[SHOWCASE] Erro:', err.message);
+    return null;
+  }
+}
