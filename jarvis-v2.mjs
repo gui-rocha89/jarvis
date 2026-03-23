@@ -3067,8 +3067,7 @@ async function startWhatsApp() {
         const { rows: alreadySent } = await pool.query("SELECT value FROM jarvis_config WHERE key = $1", [desculpaKey]).catch(() => ({ rows: [] }));
         if (!alreadySent.length) {
           try {
-            const { generateAudio } = await import('./src/audio.mjs');
-            const audioBuffer = await generateAudio('Galera, desculpa pelas reinicializações seguidas aí. Tava passando por umas atualizações importantes no sistema e cada ajuste pedia um restart. Já estabilizou — não vai mais ficar pipocando mensagem de reinício no grupo. Qualquer coisa, tô aqui.');
+            const audioBuffer = await generateAudio('Galera, desculpa pelas reinicializações seguidas aí. Tava passando por umas atualizações importantes no sistema e cada ajuste pedia um restart. Já estabilizou, não vai mais ficar pipocando mensagem de reinício no grupo. Qualquer coisa, tô aqui.');
             await sock.sendMessage(CONFIG.GROUP_TAREFAS, { audio: audioBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
             await pool.query("INSERT INTO jarvis_config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2", [desculpaKey, JSON.stringify(true)]).catch(() => {});
             console.log('[STARTUP] Áudio de desculpa enviado no grupo');
