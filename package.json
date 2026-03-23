@@ -1,8 +1,8 @@
 {
   "name": "jarvis",
-  "version": "4.0.0",
+  "version": "5.0.0",
   "type": "module",
-  "description": "Jarvis 4.0 - Agente de IA autonomo no WhatsApp (6 agentes, Meta Ads, mencoes inteligentes)",
+  "description": "Jarvis 5.0 - Agente de IA multi-canal autonomo (WhatsApp, Instagram, Email, pgvector, MCP, WebSocket Voice)",
   "main": "jarvis-v2.mjs",
   "scripts": {
     "start": "node jarvis-v2.mjs",
