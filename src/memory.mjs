@@ -1,18 +1,60 @@
 // ============================================
-// JARVIS 3.0 - Sistema de Memória Inteligente
-// Inspirado no Mem0 (3 escopos + extração de fatos)
+// JARVIS 5.0 - Sistema de Memória Inteligente
+// Mem0-inspired + pgvector (busca semântica)
 // ============================================
 import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import { pool } from './database.mjs';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
 const MEMORY_MODEL = process.env.MEMORY_MODEL || 'claude-haiku-3-5-20241022';
+const EMBEDDING_MODEL = 'text-embedding-3-small'; // 1536 dimensões
+let pgvectorEnabled = false;
+
+// Cache de embeddings pra queries repetidas (TTL 1h)
+const embeddingCache = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of embeddingCache) {
+    if (now - val.cachedAt > 3600000) embeddingCache.delete(key);
+  }
+}, 600000); // limpa a cada 10 min
+
+/**
+ * Gera embedding via OpenAI text-embedding-3-small (1536 dims)
+ */
+async function generateEmbedding(text) {
+  if (!text || text.length < 5) return null;
+  const cacheKey = text.substring(0, 200);
+  const cached = embeddingCache.get(cacheKey);
+  if (cached) return cached.embedding;
+
+  try {
+    const resp = await openai.embeddings.create({
+      model: EMBEDDING_MODEL,
+      input: text.substring(0, 8000), // limite do modelo
+    });
+    const embedding = resp.data[0]?.embedding;
+    if (embedding) {
+      embeddingCache.set(cacheKey, { embedding, cachedAt: Date.now() });
+    }
+    return embedding;
+  } catch (err) {
+    console.error('[MEMORY] Erro ao gerar embedding:', err.message);
+    return null;
+  }
+}
 
 export async function initMemory() {
   try {
-    await pool.query('CREATE EXTENSION IF NOT EXISTS vector').catch(() => {
-      console.log('[MEMORY] pgvector nao instalado - usando busca por texto');
-    });
+    try {
+      await pool.query('CREATE EXTENSION IF NOT EXISTS vector');
+      pgvectorEnabled = true;
+      console.log('[MEMORY] pgvector habilitado — busca semântica ativa');
+    } catch {
+      console.log('[MEMORY] pgvector não instalado — usando busca por texto');
+    }
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS jarvis_memories (
@@ -33,6 +75,15 @@ export async function initMemory() {
     await pool.query('CREATE INDEX IF NOT EXISTS idx_memories_scope ON jarvis_memories(scope, scope_id)').catch(() => {});
     await pool.query('CREATE INDEX IF NOT EXISTS idx_memories_category ON jarvis_memories(category)').catch(() => {});
     await pool.query('CREATE INDEX IF NOT EXISTS idx_memories_importance ON jarvis_memories(importance DESC)').catch(() => {});
+
+    // pgvector: adicionar coluna embedding se não existe
+    if (pgvectorEnabled) {
+      await pool.query('ALTER TABLE jarvis_memories ADD COLUMN IF NOT EXISTS embedding vector(1536)').catch(() => {});
+      // Índice HNSW (mais rápido que IVFFlat pra datasets < 1M)
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_memories_embedding ON jarvis_memories USING hnsw (embedding vector_cosine_ops)').catch(e => {
+        console.log('[MEMORY] Índice HNSW não criado (pode precisar de mais dados):', e.message);
+      });
+    }
 
     console.log('[MEMORY] Sistema de memoria inicializado');
     return true;
@@ -103,17 +154,33 @@ export async function storeFacts(facts, scope, scopeId) {
       );
 
       if (existing.length > 0) {
-        await pool.query(
-          `UPDATE jarvis_memories SET content = $1, importance = GREATEST(importance, $2),
-           access_count = access_count + 1, updated_at = NOW() WHERE id = $3`,
-          [fact.content, fact.importance || 5, existing[0].id]
-        );
+        // Atualizar conteúdo + re-gerar embedding se mudou
+        const embedding = pgvectorEnabled ? await generateEmbedding(fact.content) : null;
+        const updateSql = embedding
+          ? `UPDATE jarvis_memories SET content = $1, importance = GREATEST(importance, $2),
+             access_count = access_count + 1, updated_at = NOW(), embedding = $4 WHERE id = $3`
+          : `UPDATE jarvis_memories SET content = $1, importance = GREATEST(importance, $2),
+             access_count = access_count + 1, updated_at = NOW() WHERE id = $3`;
+        const updateParams = embedding
+          ? [fact.content, fact.importance || 5, existing[0].id, JSON.stringify(embedding)]
+          : [fact.content, fact.importance || 5, existing[0].id];
+        await pool.query(updateSql, updateParams);
       } else {
-        await pool.query(
-          `INSERT INTO jarvis_memories (scope, scope_id, category, content, importance)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [scope, scopeId, fact.category || 'general', fact.content, fact.importance || 5]
-        );
+        // Gerar embedding pro novo fato
+        const embedding = pgvectorEnabled ? await generateEmbedding(fact.content) : null;
+        if (embedding) {
+          await pool.query(
+            `INSERT INTO jarvis_memories (scope, scope_id, category, content, importance, embedding)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [scope, scopeId, fact.category || 'general', fact.content, fact.importance || 5, JSON.stringify(embedding)]
+          );
+        } else {
+          await pool.query(
+            `INSERT INTO jarvis_memories (scope, scope_id, category, content, importance)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [scope, scopeId, fact.category || 'general', fact.content, fact.importance || 5]
+          );
+        }
         stored++;
       }
     } catch (err) {
@@ -126,28 +193,53 @@ export async function storeFacts(facts, scope, scopeId) {
 
 export async function searchMemories(query, scope = null, scopeId = null, limit = 10) {
   try {
-    let sql = `SELECT content, category, importance, scope, scope_id FROM jarvis_memories WHERE 1=1`;
-    const params = [];
-    let paramIdx = 1;
+    // Busca HÍBRIDA: vetor (semântica) + ILIKE (texto) combinados
+    const embedding = pgvectorEnabled && query ? await generateEmbedding(query) : null;
 
-    if (scope) { sql += ` AND scope = $${paramIdx++}`; params.push(scope); }
-    if (scopeId) { sql += ` AND (scope_id = $${paramIdx++} OR scope_id IS NULL)`; params.push(scopeId); }
+    let sql, params;
 
-    if (query) {
-      const keywords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2).slice(0, 10);
-      if (keywords.length > 0) {
-        const conditions = keywords.map(k => { params.push(`%${k}%`); return `content ILIKE $${paramIdx++}`; });
-        sql += ` AND (${conditions.join(' OR ')})`;
+    if (embedding) {
+      // Busca híbrida: combina score de similaridade vetorial + importância
+      sql = `SELECT content, category, importance, scope, scope_id,
+             1 - (embedding <=> $1::vector) as similarity
+             FROM jarvis_memories
+             WHERE embedding IS NOT NULL`;
+      params = [JSON.stringify(embedding)];
+      let paramIdx = 2;
+
+      if (scope) { sql += ` AND scope = $${paramIdx++}`; params.push(scope); }
+      if (scopeId) { sql += ` AND (scope_id = $${paramIdx++} OR scope_id IS NULL)`; params.push(scopeId); }
+
+      sql += ` ORDER BY (1 - (embedding <=> $1::vector)) * 0.7 + (importance::float / 10.0) * 0.3 DESC
+               LIMIT $${paramIdx}`;
+      params.push(limit);
+    } else {
+      // Fallback: busca por texto (ILIKE)
+      sql = `SELECT content, category, importance, scope, scope_id FROM jarvis_memories WHERE 1=1`;
+      params = [];
+      let paramIdx = 1;
+
+      if (scope) { sql += ` AND scope = $${paramIdx++}`; params.push(scope); }
+      if (scopeId) { sql += ` AND (scope_id = $${paramIdx++} OR scope_id IS NULL)`; params.push(scopeId); }
+
+      if (query) {
+        const keywords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2).slice(0, 10);
+        if (keywords.length > 0) {
+          const conditions = keywords.map(k => { params.push(`%${k}%`); return `content ILIKE $${paramIdx++}`; });
+          sql += ` AND (${conditions.join(' OR ')})`;
+        }
       }
-    }
 
-    sql += ` ORDER BY importance DESC, updated_at DESC LIMIT $${paramIdx}`;
-    params.push(limit);
+      sql += ` ORDER BY importance DESC, updated_at DESC LIMIT $${paramIdx}`;
+      params.push(limit);
+    }
 
     const { rows } = await pool.query(sql, params);
 
-    for (const row of rows) {
-      await pool.query('UPDATE jarvis_memories SET access_count = access_count + 1, last_accessed = NOW() WHERE content = $1', [row.content]).catch(() => {});
+    // Atualizar access_count em batch (não bloqueia)
+    if (rows.length > 0) {
+      const contents = rows.map(r => r.content);
+      pool.query('UPDATE jarvis_memories SET access_count = access_count + 1, last_accessed = NOW() WHERE content = ANY($1)', [contents]).catch(() => {});
     }
 
     return rows;
@@ -164,7 +256,13 @@ export async function searchMemories(query, scope = null, scopeId = null, limit 
  */
 export async function smartSearchMemories(query, scope = null, scopeId = null, limit = 15) {
   try {
-    // 1. Usar Haiku pra gerar queries de busca inteligentes
+    if (pgvectorEnabled) {
+      // COM pgvector: busca semântica direta (sem precisar de Haiku pra expandir)
+      // Uma única busca vetorial já captura sinônimos e contexto
+      return searchMemories(query, scope, scopeId, limit);
+    }
+
+    // SEM pgvector: fallback com Haiku pra expandir queries (mais lento, mais caro)
     const response = await anthropic.messages.create({
       model: MEMORY_MODEL,
       max_tokens: 300,
@@ -174,7 +272,7 @@ Responda APENAS em JSON array de strings. Exemplo: ["query1", "query2", "query3"
       messages: [{ role: 'user', content: query }],
     });
 
-    let queries = [query]; // sempre inclui a original
+    let queries = [query];
     try {
       const raw = response.content[0]?.text || '[]';
       const match = raw.match(/\[.*\]/s);
@@ -184,13 +282,11 @@ Responda APENAS em JSON array de strings. Exemplo: ["query1", "query2", "query3"
       }
     } catch {}
 
-    // 2. Executar TODAS as queries em paralelo
     const searchPromises = queries.slice(0, 8).map(q =>
       searchMemories(q, scope, scopeId, Math.ceil(limit / 2))
     );
     const results = await Promise.allSettled(searchPromises);
 
-    // 3. Deduplicar e ordenar por importância
     const seen = new Set();
     const allMemories = [];
     for (const result of results) {
@@ -202,7 +298,6 @@ Responda APENAS em JSON array de strings. Exemplo: ["query1", "query2", "query3"
       }
     }
 
-    // Ordenar: importância DESC, depois por quantas queries bateram (relevância)
     allMemories.sort((a, b) => b.importance - a.importance);
     return allMemories.slice(0, limit);
   } catch (err) {
@@ -376,8 +471,50 @@ export async function getMemoryStats() {
     const byScope = await pool.query('SELECT scope, COUNT(*) as count FROM jarvis_memories GROUP BY scope ORDER BY count DESC');
     const byCategory = await pool.query('SELECT category, COUNT(*) as count FROM jarvis_memories GROUP BY category ORDER BY count DESC');
     const topMemories = await pool.query('SELECT content, importance, access_count, scope FROM jarvis_memories ORDER BY importance DESC, access_count DESC LIMIT 10');
-    return { total: parseInt(total.rows[0].count), byScope: byScope.rows, byCategory: byCategory.rows, topMemories: topMemories.rows };
+    const withEmbedding = await pool.query('SELECT COUNT(*) as count FROM jarvis_memories WHERE embedding IS NOT NULL').catch(() => ({ rows: [{ count: 0 }] }));
+    return {
+      total: parseInt(total.rows[0].count),
+      withEmbedding: parseInt(withEmbedding.rows[0].count),
+      pgvectorEnabled,
+      byScope: byScope.rows,
+      byCategory: byCategory.rows,
+      topMemories: topMemories.rows,
+    };
   } catch (err) {
-    return { total: 0, byScope: [], byCategory: [], topMemories: [], error: err.message };
+    return { total: 0, withEmbedding: 0, pgvectorEnabled, byScope: [], byCategory: [], topMemories: [], error: err.message };
   }
 }
+
+/**
+ * Backfill: gera embeddings pra memórias que ainda não têm.
+ * Processa em batches de 50 pra não sobrecarregar a API.
+ */
+export async function backfillEmbeddings(batchSize = 50) {
+  if (!pgvectorEnabled) return { error: 'pgvector não habilitado' };
+
+  const { rows: pending } = await pool.query(
+    'SELECT id, content FROM jarvis_memories WHERE embedding IS NULL ORDER BY importance DESC LIMIT $1',
+    [batchSize]
+  );
+
+  if (pending.length === 0) return { processed: 0, message: 'Todas as memórias já têm embedding' };
+
+  let processed = 0;
+  for (const mem of pending) {
+    try {
+      const embedding = await generateEmbedding(mem.content);
+      if (embedding) {
+        await pool.query('UPDATE jarvis_memories SET embedding = $1 WHERE id = $2', [JSON.stringify(embedding), mem.id]);
+        processed++;
+      }
+    } catch (err) {
+      console.error(`[BACKFILL] Erro no ID ${mem.id}:`, err.message);
+    }
+  }
+
+  const { rows: stats } = await pool.query('SELECT COUNT(*) as total, COUNT(embedding) as with_emb FROM jarvis_memories');
+  console.log(`[BACKFILL] ${processed}/${pending.length} processados. Total: ${stats[0].with_emb}/${stats[0].total} com embedding`);
+  return { processed, total: parseInt(stats[0].total), withEmbedding: parseInt(stats[0].with_emb) };
+}
+
+export { generateEmbedding, pgvectorEnabled };

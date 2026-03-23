@@ -24,7 +24,7 @@ import cors from 'cors';
 // Módulos do Jarvis 4.0
 import { CONFIG, AUDIO_ALLOWED, JARVIS_ALLOWED_GROUPS, teamPhones, teamWhatsApp, managedClients, loadManagedClients, saveManagedClients, isManagedClientGroup } from './src/config.mjs';
 import { pool, initDB, storeMessage, getRecentMessages, getContactInfo, getGroupInfo, upsertContact, upsertGroup, getMessageCount } from './src/database.mjs';
-import { initMemory, processMemory, getMemoryContext, getMemoryStats, searchMemories, smartSearchMemories, storeFacts, extractFacts } from './src/memory.mjs';
+import { initMemory, processMemory, getMemoryContext, getMemoryStats, searchMemories, smartSearchMemories, storeFacts, extractFacts, backfillEmbeddings } from './src/memory.mjs';
 import { shouldJarvisRespond, isValidResponse, generateResponse, markConversationActive, isConversationActive, findTeamJid, extractMentionsFromText, generateDailyReport, handleManagedClientMessage, runOverdueCheck } from './src/brain.mjs';
 import { voiceConfig, loadVoiceConfig, saveVoiceConfig, transcribeAudio, generateAudio } from './src/audio.mjs';
 import { synthesizeProfile, getProfile, listProfiles, syncProfiles } from './src/profiles.mjs';
@@ -1481,6 +1481,15 @@ app.post('/dashboard/memory/batch/stop', auth, async (req, res) => {
   batchState.running = false;
   batchState.stoppedAt = new Date().toISOString();
   res.json({ success: true, message: 'Batch parado', processed: batchState.processed });
+});
+
+// Backfill embeddings (pgvector) — processa memórias sem embedding
+app.post('/dashboard/memory/backfill', auth, async (req, res) => {
+  try {
+    const batchSize = Math.min(parseInt(req.body.batchSize) || 50, 200);
+    const result = await backfillEmbeddings(batchSize);
+    res.json(result);
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // --- Memory: Browse (listagem paginada) ---
