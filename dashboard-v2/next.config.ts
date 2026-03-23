@@ -2,8 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: 'export',
-  basePath: '/dashboard',
-  // API e dashboard no mesmo domínio — URLs relativas funcionam
+  // Sem basePath — Nginx serve static files direto do root
 };
 
 export default nextConfig;
