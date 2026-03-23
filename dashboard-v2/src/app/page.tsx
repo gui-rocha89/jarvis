@@ -104,7 +104,7 @@ export default function OverviewPage() {
             <>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                  <RadarChart data={intel.data.axes}>
+                  <RadarChart data={intel.data?.axes || []}>
                     <PolarGrid stroke="#1a2332" />
                     <PolarAngleAxis
                       dataKey="name"
@@ -131,7 +131,7 @@ export default function OverviewPage() {
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-2 mt-4">
-                {intel.data.axes.map((axis) => (
+                {(intel.data?.axes || []).map((axis) => (
                   <div key={axis.name} className="flex items-center gap-1.5 text-xs text-stark-text-dim">
                     {axisIcons[axis.name] || <Zap className="w-3 h-3" />}
                     <span>{axis.name}: {axis.value}</span>
