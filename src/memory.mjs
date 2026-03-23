@@ -9,7 +9,7 @@ import { CONFIG, TEAM_ASANA } from './config.mjs';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
-const MEMORY_MODEL = process.env.MEMORY_MODEL || 'claude-haiku-3-5-20241022';
+const MEMORY_MODEL = process.env.MEMORY_MODEL || 'claude-sonnet-4-6-20250514';
 const EMBEDDING_MODEL = 'text-embedding-3-small'; // 1536 dimensões
 let pgvectorEnabled = false;
 
