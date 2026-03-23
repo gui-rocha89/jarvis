@@ -22,12 +22,11 @@ interface HealthData {
 }
 
 interface IntelligenceData {
-  score: number;
-  patent: string;
-  axes: {
-    name: string;
-    value: number;
-  }[];
+  score?: number;
+  overallScore?: number;
+  patent?: string;
+  patente?: { nome: string; cor: string; icon: string };
+  axes: Record<string, number> | { name: string; value: number }[];
 }
 
 interface MemoryStats {
