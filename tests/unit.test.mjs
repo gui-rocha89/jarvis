@@ -633,7 +633,7 @@ describe('Atendimento Público (Sprint 2.1)', () => {
     assert.ok(CHANNEL_CONTEXT.whatsapp_public.includes('PROIBIDO'), 'Falta regras de proibição');
     assert.ok(CHANNEL_CONTEXT.whatsapp_public.includes('laboratório criativo'), 'Falta descrição da Stream Lab');
     assert.ok(CHANNEL_CONTEXT.whatsapp_public.includes('10 mensagens'), 'Falta limite de mensagens');
-    assert.ok(CHANNEL_CONTEXT.whatsapp_public.includes('horário'), 'Falta regra de horário');
+    assert.ok(CHANNEL_CONTEXT.whatsapp_public.includes('HORÁRIO') || CHANNEL_CONTEXT.whatsapp_public.includes('horário'), 'Falta regra de horário');
   });
 
   it('handlePublicDM é exportada do brain.mjs', async () => {
