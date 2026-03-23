@@ -37,7 +37,10 @@ export function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [online, setOnline] = useState<boolean | null>(null);
 
+  const isLoginPage = pathname === '/login';
+
   useEffect(() => {
+    if (isLoginPage) return;
     const checkHealth = async () => {
       try {
         const data = await apiGet<{ whatsapp?: string }>('/dashboard/health');
@@ -49,9 +52,9 @@ export function Sidebar() {
     checkHealth();
     const interval = setInterval(checkHealth, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [isLoginPage]);
 
-  if (pathname === '/login') return null;
+  if (isLoginPage) return null;
 
   const navContent = (
     <>

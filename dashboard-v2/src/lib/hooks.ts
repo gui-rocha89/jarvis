@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { apiGet } from './api';
+import { apiGet, isAuthenticated } from './api';
 
 interface UseApiOptions {
   refreshInterval?: number;
@@ -16,6 +16,15 @@ export function useApi<T>(path: string, options: UseApiOptions = {}) {
 
   const fetchData = useCallback(async () => {
     if (!enabled) return;
+    // Verifica auth antes de fazer API call — evita 401 desnecessário
+    if (!isAuthenticated()) {
+      setLoading(false);
+      setError('Não autenticado');
+      if (typeof window !== 'undefined' && !window.location.pathname.endsWith('/login')) {
+        window.location.href = '/login';
+      }
+      return;
+    }
     try {
       const result = await apiGet<T>(path);
       setData(result);
