@@ -246,6 +246,7 @@
         <button onclick="switchTab('prompt')" data-tab="prompt" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Prompt</button>
         <button onclick="switchTab('security')" data-tab="security" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Segurança</button>
         <button onclick="switchTab('groups')" data-tab="groups" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Grupos</button>
+        <button onclick="switchTab('channels')" data-tab="channels" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Canais</button>
       </nav>
 
       <!-- Status -->
@@ -292,6 +293,10 @@
       <button onclick="switchTab('groups')" data-tab-m="groups" class="mobile-tab flex flex-col items-center gap-1 px-3 py-1 text-stark-dim">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
         <span class="text-[10px]">Grupos</span>
+      </button>
+      <button onclick="switchTab('channels')" data-tab-m="channels" class="mobile-tab flex flex-col items-center gap-1 px-3 py-1 text-stark-dim">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+        <span class="text-[10px]">Canais</span>
       </button>
     </div>
   </div>
@@ -1171,6 +1176,98 @@
       </div>
     </div>
 
+    <!-- ==================== CHANNELS TAB ==================== -->
+    <div id="tab-channels" class="tab-content hidden space-y-6">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        <!-- Instagram DM -->
+        <div class="panel p-5">
+          <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-3">
+              <span class="text-2xl">📸</span>
+              <h3 class="font-orbitron text-sm tracking-wider" style="color:#E1306C">INSTAGRAM DM</h3>
+            </div>
+            <div id="ch-ig-toggle" class="toggle-switch" onclick="toggleChannelSwitch(this)"></div>
+          </div>
+          <p class="text-xs text-stark-dim mb-5">Receba e responda DMs do Instagram automaticamente via webhook Meta Graph API.</p>
+          <div class="space-y-4">
+            <div>
+              <label class="text-xs text-stark-dim uppercase tracking-wider block mb-2">Verify Token</label>
+              <input id="ch-ig-verify-token" type="text" placeholder="Token de verificação do webhook"
+                class="w-full bg-stark-bg border border-stark-border rounded px-4 py-2.5 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors">
+              <p class="text-[10px] text-stark-dim mt-1">Definido no Meta for Developers ao configurar o webhook.</p>
+            </div>
+            <div>
+              <label class="text-xs text-stark-dim uppercase tracking-wider block mb-2">Page IDs Permitidos</label>
+              <div id="ch-ig-pages-list" class="space-y-2 mb-2"></div>
+              <div class="flex gap-2">
+                <input id="ch-ig-new-page" type="text" placeholder="ID da página"
+                  class="flex-1 bg-stark-bg border border-stark-border rounded px-4 py-2 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors"
+                  onkeydown="if(event.key==='Enter')addPageId()">
+                <button onclick="addPageId()" class="bg-stark-blue/20 border border-stark-blue text-stark-blue px-4 py-2 rounded hover:bg-stark-blue/30 transition-colors text-xs font-semibold tracking-wider">+ ADD</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Email Monitor -->
+        <div class="panel p-5">
+          <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-3">
+              <span class="text-2xl">📧</span>
+              <h3 class="font-orbitron text-sm tracking-wider" style="color:#00d4ff">EMAIL MONITOR</h3>
+            </div>
+            <div id="ch-email-toggle" class="toggle-switch" onclick="toggleChannelSwitch(this)"></div>
+          </div>
+          <p class="text-xs text-stark-dim mb-5">Monitora caixa de entrada via IMAP e envia auto-respostas via SMTP.</p>
+          <div class="space-y-4">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs text-stark-dim uppercase tracking-wider block mb-2">IMAP Host</label>
+                <input id="ch-email-imap-host" type="text" placeholder="imap.gmail.com"
+                  class="w-full bg-stark-bg border border-stark-border rounded px-4 py-2.5 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors">
+              </div>
+              <div>
+                <label class="text-xs text-stark-dim uppercase tracking-wider block mb-2">IMAP Port</label>
+                <input id="ch-email-imap-port" type="number" placeholder="993"
+                  class="w-full bg-stark-bg border border-stark-border rounded px-4 py-2.5 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors">
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs text-stark-dim uppercase tracking-wider block mb-2">SMTP Host</label>
+                <input id="ch-email-smtp-host" type="text" placeholder="smtp.gmail.com"
+                  class="w-full bg-stark-bg border border-stark-border rounded px-4 py-2.5 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors">
+              </div>
+              <div>
+                <label class="text-xs text-stark-dim uppercase tracking-wider block mb-2">SMTP Port</label>
+                <input id="ch-email-smtp-port" type="number" placeholder="587"
+                  class="w-full bg-stark-bg border border-stark-border rounded px-4 py-2.5 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors">
+              </div>
+            </div>
+            <div>
+              <label class="text-xs text-stark-dim uppercase tracking-wider block mb-2">Usuário (Email)</label>
+              <input id="ch-email-user" type="email" placeholder="contato@streamlab.com.br"
+                class="w-full bg-stark-bg border border-stark-border rounded px-4 py-2.5 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors">
+            </div>
+            <div>
+              <label class="text-xs text-stark-dim uppercase tracking-wider block mb-2">Senha</label>
+              <input id="ch-email-password" type="password" placeholder="••••••••"
+                class="w-full bg-stark-bg border border-stark-border rounded px-4 py-2.5 text-sm font-mono text-white focus:border-stark-blue focus:outline-none transition-colors">
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Save Button -->
+      <div class="flex justify-end">
+        <button onclick="saveChannels()" class="bg-stark-green/20 border border-stark-green text-stark-green px-8 py-3 rounded hover:bg-stark-green/30 transition-colors text-sm font-orbitron tracking-wider">
+          SALVAR CONFIGURAÇÃO
+        </button>
+      </div>
+    </div>
+
   </main>
 
   <!-- Notification Container -->
@@ -1409,6 +1506,7 @@
       if (tab === 'prompt') loadPrompt();
       if (tab === 'security') loadAccessLog();
       if (tab === 'groups') loadGroups();
+      if (tab === 'channels') loadChannels();
     }
 
     // ============================================
@@ -1479,6 +1577,107 @@
         }
       } catch (err) {
         notify('Erro ao alterar grupo', 'error');
+      }
+    }
+
+    // ============================================
+    // CHANNELS
+    // ============================================
+    let channelsPageIds = [];
+
+    async function loadChannels() {
+      try {
+        const res = await api('/dashboard/channels');
+        const data = await res.json();
+
+        // Instagram
+        const ig = data.instagram || {};
+        const igToggle = document.getElementById('ch-ig-toggle');
+        if (ig.enabled) igToggle.classList.add('active');
+        else igToggle.classList.remove('active');
+        document.getElementById('ch-ig-verify-token').value = ig.verifyToken || '';
+        channelsPageIds = ig.allowedPageIds || [];
+        renderPageIds();
+
+        // Email
+        const em = data.email || {};
+        const emToggle = document.getElementById('ch-email-toggle');
+        if (em.enabled) emToggle.classList.add('active');
+        else emToggle.classList.remove('active');
+        document.getElementById('ch-email-imap-host').value = em.imapHost || '';
+        document.getElementById('ch-email-imap-port').value = em.imapPort || '';
+        document.getElementById('ch-email-smtp-host').value = em.smtpHost || '';
+        document.getElementById('ch-email-smtp-port').value = em.smtpPort || '';
+        document.getElementById('ch-email-user').value = em.user || '';
+        document.getElementById('ch-email-password').value = em.password || '';
+      } catch (err) {
+        notify('Erro ao carregar configuração de canais', 'error');
+      }
+    }
+
+    function toggleChannelSwitch(el) {
+      el.classList.toggle('active');
+    }
+
+    function renderPageIds() {
+      const container = document.getElementById('ch-ig-pages-list');
+      if (channelsPageIds.length === 0) {
+        container.innerHTML = '<div class="text-[10px] text-stark-dim font-mono">Nenhum Page ID cadastrado</div>';
+        return;
+      }
+      container.innerHTML = channelsPageIds.map((id, i) => `
+        <div class="flex items-center justify-between bg-stark-bg border border-stark-border rounded px-3 py-2">
+          <span class="text-sm font-mono text-white">${id}</span>
+          <button onclick="removePageId(${i})" class="text-stark-red hover:text-red-400 transition-colors text-xs font-mono">REMOVER</button>
+        </div>
+      `).join('');
+    }
+
+    function addPageId() {
+      const input = document.getElementById('ch-ig-new-page');
+      const val = input.value.trim();
+      if (!val) return;
+      if (channelsPageIds.includes(val)) { notify('Page ID já cadastrado', 'warn'); return; }
+      channelsPageIds.push(val);
+      renderPageIds();
+      input.value = '';
+    }
+
+    function removePageId(index) {
+      channelsPageIds.splice(index, 1);
+      renderPageIds();
+    }
+
+    async function saveChannels() {
+      const body = {
+        instagram: {
+          enabled: document.getElementById('ch-ig-toggle').classList.contains('active'),
+          verifyToken: document.getElementById('ch-ig-verify-token').value.trim(),
+          allowedPageIds: channelsPageIds,
+        },
+        email: {
+          enabled: document.getElementById('ch-email-toggle').classList.contains('active'),
+          imapHost: document.getElementById('ch-email-imap-host').value.trim(),
+          imapPort: parseInt(document.getElementById('ch-email-imap-port').value) || 993,
+          smtpHost: document.getElementById('ch-email-smtp-host').value.trim(),
+          smtpPort: parseInt(document.getElementById('ch-email-smtp-port').value) || 587,
+          user: document.getElementById('ch-email-user').value.trim(),
+          password: document.getElementById('ch-email-password').value,
+        },
+      };
+      try {
+        const res = await api('/dashboard/channels', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          notify('Configuração de canais salva com sucesso!', 'success');
+        } else {
+          notify(data.error || 'Erro ao salvar configuração', 'error');
+        }
+      } catch (err) {
+        notify('Erro ao salvar configuração de canais', 'error');
       }
     }
 
