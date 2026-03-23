@@ -36,6 +36,9 @@ jobs:
             --exclude='.env' \
             --exclude='google-calendar-key.json' \
             --exclude='*.bak' \
+            --exclude='audio_files' \
+            --exclude='media_files' \
+            --exclude='*.log' \
             -e "ssh -i ~/.ssh/deploy_key -o ConnectTimeout=30 -o ServerAliveInterval=15" \
             ./ ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/jarvis/
 

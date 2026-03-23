@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 3.0 - Cérebro (Agent Loop + Extended Thinking + Prompt Caching)
+// JARVIS 4.0 - Cérebro (Agent Loop + Extended Thinking + Prompt Caching)
 // ============================================
 import Anthropic from '@anthropic-ai/sdk';
 import { CONFIG, JARVIS_ALLOWED_GROUPS, teamPhones, teamWhatsApp, isManagedClientGroup } from './config.mjs';

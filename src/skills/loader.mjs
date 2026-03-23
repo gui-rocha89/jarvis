@@ -1237,6 +1237,32 @@ export async function executeJarvisTool(toolName, input, context = {}) {
     const texto = input.texto;
     if (!taskGid || !texto) return { error: 'task_gid e texto são obrigatórios' };
 
+    // Buscar comentários recentes ANTES de postar (evitar duplicatas e dar contexto)
+    let comentariosExistentes = [];
+    try {
+      const stories = await asanaRequest(`/tasks/${taskGid}/stories?opt_fields=text,created_by.name,created_at,type&limit=10`);
+      if (stories) {
+        comentariosExistentes = stories
+          .filter(s => s.type === 'comment' && s.text)
+          .slice(-5);
+        // Anti-duplicata: se último comentário do Jarvis < 1h e texto similar, não duplicar
+        const lastJarvisComment = comentariosExistentes
+          .filter(c => c.created_by?.name?.toLowerCase().includes('jarvis'))
+          .pop();
+        if (lastJarvisComment) {
+          const commentAge = (Date.now() - new Date(lastJarvisComment.created_at).getTime()) / 1000 / 60;
+          const isSimilar = lastJarvisComment.text.substring(0, 80) === texto.substring(0, 80);
+          if (commentAge < 60 && isSimilar) {
+            return {
+              bloqueado: true,
+              motivo: 'Comentário similar já postado pelo Jarvis há menos de 1 hora',
+              ultimo_comentario: { texto: lastJarvisComment.text.substring(0, 200), data: lastJarvisComment.created_at },
+            };
+          }
+        }
+      }
+    } catch {}
+
     // Resolver menção se informada
     let commentText = texto;
     if (input.mencionar) {
@@ -1257,7 +1283,13 @@ export async function executeJarvisTool(toolName, input, context = {}) {
     if (resp.error) return { error: `Erro ao comentar: ${resp.error}` };
 
     console.log(`[TOOL] Comentário adicionado na task ${taskGid}: ${texto.substring(0, 60)}`);
-    return { success: true, task_gid: taskGid, comentario: texto.substring(0, 100) };
+    return {
+      success: true, task_gid: taskGid, comentario: texto.substring(0, 100),
+      comentarios_anteriores: comentariosExistentes.slice(-3).map(c => ({
+        autor: c.created_by?.name || '?', texto: c.text?.substring(0, 200) || '',
+        data: c.created_at ? new Date(c.created_at).toLocaleDateString('pt-BR') : '',
+      })),
+    };
   }
 
   if (toolName === 'atualizar_task') {

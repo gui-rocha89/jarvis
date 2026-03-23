@@ -35,6 +35,11 @@ export async function initDB() {
       )
     `);
 
+    // Índices para performance de busca de mensagens
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON jarvis_messages(chat_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_messages_created_at ON jarvis_messages(created_at)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON jarvis_messages(timestamp)`);
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS jarvis_contacts (
         jid TEXT PRIMARY KEY,

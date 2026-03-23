@@ -593,7 +593,7 @@
       <div class="max-w-3xl mx-auto">
         <div class="panel p-5 relative">
           <div class="flex items-center justify-between mb-4">
-            <h3 class="font-orbitron text-sm text-stark-blue tracking-wider">COMUNICACAO DIRETA</h3>
+            <h3 class="font-orbitron text-sm text-stark-blue tracking-wider">COMUNICAÇÃO DIRETA</h3>
             <button onclick="clearChat()" class="text-xs text-stark-dim hover:text-stark-red transition-colors font-mono">LIMPAR</button>
           </div>
 
@@ -768,7 +768,7 @@
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <!-- Voice Config -->
         <div class="panel p-5">
-          <h3 class="font-orbitron text-sm text-stark-blue mb-4 tracking-wider">CONFIGURACAO DE VOZ</h3>
+          <h3 class="font-orbitron text-sm text-stark-blue mb-4 tracking-wider">CONFIGURAÇÃO DE VOZ</h3>
           <div class="space-y-4" id="voice-config">
             <div>
               <label class="text-xs text-stark-dim uppercase tracking-wider block mb-2">Provider</label>
@@ -823,7 +823,7 @@
                 <option value="shimmer">Shimmer</option>
               </select>
             </div>
-            <button onclick="saveVoice()" class="w-full bg-stark-blue/20 border border-stark-blue text-stark-blue py-2.5 rounded hover:bg-stark-blue/30 transition-colors text-sm font-orbitron tracking-wider">SALVAR CONFIGURACAO</button>
+            <button onclick="saveVoice()" class="w-full bg-stark-blue/20 border border-stark-blue text-stark-blue py-2.5 rounded hover:bg-stark-blue/30 transition-colors text-sm font-orbitron tracking-wider">SALVAR CONFIGURAÇÃO</button>
           </div>
         </div>
 
@@ -1561,7 +1561,7 @@
       } catch (e) {
         console.error('Health error:', e);
         const connEl = document.getElementById('conn-status');
-        connEl.innerHTML = '<div class="pulse-dot bg-stark-red"></div><span class="text-xs font-mono text-stark-red">SEM CONEXAO</span>';
+        connEl.innerHTML = '<div class="pulse-dot bg-stark-red"></div><span class="text-xs font-mono text-stark-red">SEM CONEXÃO</span>';
       }
     }
 
@@ -2456,7 +2456,7 @@
           headers: { 'Authorization': `Bearer ${AUTH_TOKEN}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ text }),
         });
-        if (res.status === 401) { localStorage.removeItem('jarvis_api_key'); location.reload(); return; }
+        if (res.status === 401) { localStorage.removeItem('jarvis_token'); location.reload(); return; }
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           throw new Error(err.error || 'Falha na sintese');

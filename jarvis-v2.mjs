@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 3.0 - Stream Lab AI Bot
+// JARVIS 4.0 - Stream Lab AI Bot
 // Agent Loop + Extended Thinking + Prompt Caching + Model Routing
 // ============================================
 import 'dotenv/config';
@@ -18,6 +18,8 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import helmet from 'helmet';
+import cors from 'cors';
 
 // Módulos do Jarvis 4.0
 import { CONFIG, AUDIO_ALLOWED, JARVIS_ALLOWED_GROUPS, teamPhones, teamWhatsApp, managedClients, loadManagedClients, saveManagedClients, isManagedClientGroup } from './src/config.mjs';
@@ -464,7 +466,9 @@ async function handleIncomingMessage(m) {
 // EXPRESS API
 // ============================================
 const app = express();
-app.use(express.json());
+app.use(helmet({ contentSecurityPolicy: false })); // Headers de segurança (CSP desabilitado pra CDNs do dashboard)
+app.use(cors({ origin: ['https://guardiaolab.com.br', 'http://localhost:3100'], credentials: true }));
+app.use(express.json({ limit: '1mb' }));
 
 // --- Auth: API key (interno) OU JWT (dashboard) ---
 function auth(req, res, next) {
@@ -1246,7 +1250,7 @@ app.post('/dashboard/groups/toggle', auth, async (req, res) => {
       console.log(`[DASHBOARD] Cliente ${client.groupName} ${active ? 'ATIVADO' : 'DESATIVADO'}`);
       res.json({ success: true, jid, active, message: `${client.groupName || 'Cliente'} ${active ? 'ativado' : 'desativado'}.` });
     } else {
-      // Qualquer outro grupo (toggle livre via dashboard)
+      // Qualquer outro grupo — toggle livre via dashboard, persiste no banco
       const { rows } = await pool.query("SELECT name FROM jarvis_groups WHERE jid = $1", [jid]);
       const groupName = rows[0]?.name || jid;
       if (active) {
@@ -1254,8 +1258,17 @@ app.post('/dashboard/groups/toggle', auth, async (req, res) => {
       } else {
         JARVIS_ALLOWED_GROUPS.delete(jid);
       }
-      console.log(`[DASHBOARD] Grupo "${groupName}" ${active ? 'ATIVADO' : 'DESATIVADO'}`);
-      res.json({ success: true, jid, active, message: `${groupName} ${active ? 'ativado' : 'desativado'}. Volta ao padrão ao reiniciar.` });
+      // Persistir no banco (sobrevive restart)
+      const existing = await pool.query("SELECT value FROM jarvis_config WHERE key = 'group_toggles'").catch(() => ({ rows: [] }));
+      const toggles = existing.rows[0]?.value || {};
+      toggles[jid] = active;
+      await pool.query(
+        `INSERT INTO jarvis_config (key, value) VALUES ('group_toggles', $1)
+         ON CONFLICT (key) DO UPDATE SET value = $1`,
+        [JSON.stringify(toggles)]
+      );
+      console.log(`[DASHBOARD] Grupo "${groupName}" ${active ? 'ATIVADO' : 'DESATIVADO'} (persistido)`);
+      res.json({ success: true, jid, active, message: `${groupName} ${active ? 'ativado' : 'desativado'}.` });
     }
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
@@ -2264,6 +2277,25 @@ app.listen(CONFIG.API_PORT, async () => {
 // CRON JOBS
 // ============================================
 function setupCronJobs() {
+  // Limpeza periódica de Maps/Sets em memória (evita memory leak)
+  setInterval(() => {
+    const now = Date.now();
+    // sentByBot: manter só últimos 100
+    if (sentByBot.size > 100) {
+      const arr = [...sentByBot];
+      arr.slice(0, arr.length - 100).forEach(id => sentByBot.delete(id));
+    }
+    // authRateLimit: remover entradas expiradas
+    for (const [ip, data] of authRateLimit) {
+      if (now > data.resetAt) authRateLimit.delete(ip);
+    }
+    // geoCache: remover entradas > 2 horas
+    for (const [ip, data] of geoCache) {
+      if (now - data.cachedAt > 2 * 60 * 60 * 1000) geoCache.delete(ip);
+    }
+    console.log(`[CLEANUP] sentByBot: ${sentByBot.size}, authRateLimit: ${authRateLimit.size}, geoCache: ${geoCache.size}`);
+  }, 60 * 60 * 1000); // A cada 1 hora
+
   // Sync de perfis a cada 6 horas (0h, 6h, 12h, 18h)
   cron.schedule('0 */6 * * *', async () => {
     console.log('[CRON] Iniciando sync de perfis...');
@@ -2636,8 +2668,20 @@ initDB().then(async () => {
   await initMemory();
   await loadTeamContacts();
   await loadManagedClients(pool);
+  // Restaurar toggles de grupos salvos no dashboard
+  try {
+    const { rows } = await pool.query("SELECT value FROM jarvis_config WHERE key = 'group_toggles'");
+    if (rows[0]?.value) {
+      const toggles = typeof rows[0].value === 'string' ? JSON.parse(rows[0].value) : rows[0].value;
+      for (const [jid, active] of Object.entries(toggles)) {
+        if (active) JARVIS_ALLOWED_GROUPS.add(jid);
+        else JARVIS_ALLOWED_GROUPS.delete(jid);
+      }
+      console.log(`[STARTUP] ${Object.keys(toggles).length} toggle(s) de grupo restaurados do banco`);
+    }
+  } catch {}
   startWhatsApp();
   setupCronJobs();
   startEmailMonitor();
-  console.log('[JARVIS] Todos os sistemas 3.0 inicializados.');
+  console.log('[JARVIS] Todos os sistemas 4.0 inicializados.');
 });
