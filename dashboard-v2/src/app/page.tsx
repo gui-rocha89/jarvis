@@ -34,7 +34,7 @@ interface MemoryStats {
   user: number;
   chat: number;
   agent: number;
-  byCategory: Record<string, number>;
+  byCategory: { category: string; count: string | number }[] | Record<string, unknown>;
   topMemories?: unknown[];
 }
 
@@ -183,12 +183,16 @@ export default function OverviewPage() {
                 <div>
                   <p className="text-xs text-stark-dim mb-2">Por Categoria</p>
                   <div className="space-y-1">
-                    {Object.entries(memory.data.byCategory)
+                    {(Array.isArray(memory.data.byCategory)
+                      ? memory.data.byCategory.map((c: { category: string; count: string | number }) => [c.category, Number(c.count)] as [string, number])
+                      : Object.entries(memory.data.byCategory).map(([cat, val]) => [cat, typeof val === 'object' && val !== null ? Number((val as { count: number }).count) : Number(val)] as [string, number])
+                    )
                       .sort(([, a], [, b]) => b - a)
+                      .slice(0, 10)
                       .map(([cat, count]) => (
                         <div key={cat} className="flex items-center justify-between">
                           <span className="text-xs text-stark-text-dim">{cat}</span>
-                          <span className="text-xs font-mono text-stark-text-dim">{count}</span>
+                          <span className="text-xs font-mono text-stark-text-dim">{count.toLocaleString('pt-BR')}</span>
                         </div>
                       ))}
                   </div>
