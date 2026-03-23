@@ -21,11 +21,45 @@ export const channelEmailState = {
 let emailMonitorInterval = null;
 
 /**
+ * Carrega configurações de email do banco (jarvis_config) ou .env como fallback
+ */
+async function loadEmailConfig() {
+  try {
+    const { rows } = await pool.query("SELECT value FROM jarvis_config WHERE key = 'channel_settings'");
+    const settings = rows[0]?.value?.email;
+    if (settings && settings.imap_host && settings.user) {
+      return {
+        imap_host: settings.imap_host,
+        imap_port: settings.imap_port || 993,
+        smtp_host: settings.smtp_host || '',
+        smtp_port: settings.smtp_port || 587,
+        user: settings.user,
+        password: settings.password || '',
+        enabled: settings.enabled !== false,
+      };
+    }
+  } catch (err) {
+    console.log('[EMAIL-CHANNEL] Erro ao ler config do banco, usando .env:', err.message);
+  }
+  // Fallback para variáveis de ambiente
+  return {
+    imap_host: process.env.EMAIL_IMAP_HOST || '',
+    imap_port: parseInt(process.env.EMAIL_IMAP_PORT) || 993,
+    smtp_host: process.env.EMAIL_SMTP_HOST || '',
+    smtp_port: parseInt(process.env.EMAIL_SMTP_PORT) || 587,
+    user: process.env.EMAIL_USER || '',
+    password: process.env.EMAIL_PASSWORD || '',
+    enabled: true,
+  };
+}
+
+/**
  * Inicia o monitor de email genérico (leads/contato)
  * Diferente do asana-email-monitor que só processa @menções do Asana
  */
 export async function startChannelEmailMonitor() {
-  if (!process.env.EMAIL_IMAP_HOST || !process.env.EMAIL_USER) {
+  const config = await loadEmailConfig();
+  if (!config.imap_host || !config.user) {
     console.log('[EMAIL-CHANNEL] Não configurado — monitor desativado');
     return;
   }
@@ -58,13 +92,16 @@ async function checkEmails() {
 
   let client = null;
   try {
+    const config = await loadEmailConfig();
+    if (!config.imap_host || !config.user) return;
+
     client = new ImapFlow({
-      host: process.env.EMAIL_IMAP_HOST,
-      port: parseInt(process.env.EMAIL_IMAP_PORT) || 993,
+      host: config.imap_host,
+      port: config.imap_port,
       secure: true,
       auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD,
+        user: config.user,
+        pass: config.password,
       },
       logger: false,
     });
@@ -179,21 +216,24 @@ function classifyEmail(from, subject, text) {
  * Envia auto-resposta via SMTP
  */
 async function sendAutoReply(toAddress, originalSubject) {
-  if (!toAddress || !process.env.EMAIL_SMTP_HOST) return;
+  if (!toAddress) return;
 
   try {
+    const config = await loadEmailConfig();
+    if (!config.smtp_host || !config.user) return;
+
     const transporter = nodemailer.createTransport({
-      host: process.env.EMAIL_SMTP_HOST,
-      port: parseInt(process.env.EMAIL_SMTP_PORT) || 587,
-      secure: (parseInt(process.env.EMAIL_SMTP_PORT) || 587) === 465,
+      host: config.smtp_host,
+      port: config.smtp_port,
+      secure: config.smtp_port === 465,
       auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD,
+        user: config.user,
+        pass: config.password,
       },
     });
 
     await transporter.sendMail({
-      from: `"Stream Lab" <${process.env.EMAIL_USER}>`,
+      from: `"Stream Lab" <${config.user}>`,
       to: toAddress,
       subject: `Re: ${originalSubject}`,
       text: 'Recebemos seu email! Nossa equipe irá retornar em breve.\n\nStream Lab — Laboratório Criativo',

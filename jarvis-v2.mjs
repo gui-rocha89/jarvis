@@ -1151,6 +1151,45 @@ app.get('/dashboard/email-channel', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// --- Channel Settings (Instagram + Email config via dashboard) ---
+app.get('/dashboard/channels', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT value FROM jarvis_config WHERE key = 'channel_settings'");
+    const settings = rows[0]?.value || {
+      instagram: { enabled: false, verify_token: '', allowed_pages: [] },
+      email: { enabled: false, imap_host: '', imap_port: 993, smtp_host: '', smtp_port: 587, user: '', password: '' },
+    };
+    // Não expor senhas no GET
+    if (settings.email?.password) {
+      settings.email.password = '••••••••';
+    }
+    res.json(settings);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/dashboard/channels', auth, async (req, res) => {
+  try {
+    const settings = req.body;
+
+    // Merge com existente (não sobrescrever senha se mascarada)
+    const { rows } = await pool.query("SELECT value FROM jarvis_config WHERE key = 'channel_settings'");
+    const existing = rows[0]?.value || {};
+
+    if (settings.email?.password === '••••••••') {
+      settings.email.password = existing.email?.password || '';
+    }
+
+    await pool.query(
+      `INSERT INTO jarvis_config (key, value) VALUES ('channel_settings', $1)
+       ON CONFLICT (key) DO UPDATE SET value = $1`,
+      [JSON.stringify(settings)]
+    );
+
+    console.log('[DASHBOARD] Channel settings atualizadas');
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.get('/dashboard/health', auth, async (req, res) => {
   try {
     const msgCount = await getMessageCount();
@@ -1330,6 +1369,20 @@ app.use('/dashboard', express.static(path.join(__dirname, 'dashboard'), {
     }
   }
 }));
+
+// Dashboard v2 (Next.js static export)
+app.use('/v2', express.static(path.join(__dirname, 'dashboard-v2', 'out'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store');
+    }
+  }
+}));
+
+// SPA fallback para rotas do dashboard v2
+app.get('/v2/*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dashboard-v2', 'out', 'index.html'));
+});
 
 app.get('/groups', auth, async (req, res) => {
   try {
@@ -2346,6 +2399,20 @@ app.post('/webhooks/instagram', async (req, res) => {
   if (body.object !== 'instagram') return;
 
   for (const entry of body.entry || []) {
+    // Verificar whitelist de páginas
+    try {
+      const channelConfig = await pool.query("SELECT value FROM jarvis_config WHERE key = 'channel_settings'");
+      const channelSettings = channelConfig.rows[0]?.value;
+      const allowedPages = channelSettings?.instagram?.allowed_pages || [];
+      const pageId = entry.id;
+      if (allowedPages.length > 0 && !allowedPages.includes(pageId)) {
+        console.log(`[INSTAGRAM] Page ${pageId} não está na whitelist, ignorando`);
+        continue;
+      }
+    } catch (err) {
+      console.error('[INSTAGRAM] Erro ao verificar whitelist:', err.message);
+    }
+
     for (const event of entry.messaging || []) {
       try {
         await processInstagramMessage(event);

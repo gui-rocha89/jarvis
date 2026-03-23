@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3100';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
 
 class ApiError extends Error {
   status: number;
@@ -16,7 +16,7 @@ function getToken(): string | null {
 function clearAuth() {
   if (typeof window === 'undefined') return;
   localStorage.removeItem('jarvis_token');
-  window.location.href = '/login';
+  window.location.href = '/v2/login';
 }
 
 export async function apiGet<T = unknown>(path: string): Promise<T> {

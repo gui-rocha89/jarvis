@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  output: 'export',
+  basePath: '/v2',
+  // API e dashboard no mesmo domínio — URLs relativas funcionam
 };
 
 export default nextConfig;
