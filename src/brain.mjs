@@ -1701,6 +1701,7 @@ export async function handleShowcaseMessage(text, senderJid, pushName, mediaFile
 - Horário: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
 - DICA: responda de forma que IMPRESSIONE. Mostre inteligência, criatividade e personalidade.
 - Para respostas mais longas (insights, explicações, estratégia) → marque para enviar como ÁUDIO
+- REGRA DE ÁUDIO: quando marcar [AUDIO:sim], a resposta DEVE ter NO MÁXIMO 500 caracteres (≈40 segundos de fala). Ninguém gosta de áudio longo. Seja conciso e impactante.
 - Inclua no final da sua resposta, em uma linha separada, exatamente: [AUDIO:sim] ou [AUDIO:nao] para indicar se esta resposta deve ser enviada como áudio de voz.${memoryContext}`,
       },
     ];
@@ -1732,6 +1733,11 @@ export async function handleShowcaseMessage(text, senderJid, pushName, mediaFile
     } else {
       // Fallback: ~60% das respostas longas como áudio
       sendAsAudio = responseText.length > 100 && Math.random() < 0.6;
+    }
+
+    // Hard limit: áudio máximo ~50 segundos (≈600 caracteres)
+    if (sendAsAudio && responseText.length > 600) {
+      sendAsAudio = false;
     }
 
     // Anti-leak check: garantir que não vaza informação interna
