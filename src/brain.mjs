@@ -2,7 +2,7 @@
 // JARVIS 3.0 - Cérebro (Agent Loop + Extended Thinking + Prompt Caching)
 // ============================================
 import Anthropic from '@anthropic-ai/sdk';
-import { CONFIG, JARVIS_ALLOWED_GROUPS, teamPhones, teamWhatsApp } from './config.mjs';
+import { CONFIG, JARVIS_ALLOWED_GROUPS, teamPhones, teamWhatsApp, isManagedClientGroup } from './config.mjs';
 import { pool } from './database.mjs';
 import { getRecentMessages, getContactInfo, getGroupInfo, getMessageCount } from './database.mjs';
 import { getMemoryContext, processMemory, searchMemories, smartSearchMemories } from './memory.mjs';
@@ -415,6 +415,25 @@ export async function generateResponse(text, chatId, senderJid, pushName, isGrou
       model, systemPrompt, consolidatedHistory, JARVIS_TOOLS, { senderJid, chatId }
     );
 
+    // ANTI-LEAK: se está em grupo de cliente, aplicar filtros de segurança
+    if (isGroup && finalText) {
+      const managedClient = isManagedClientGroup(chatId);
+      if (managedClient) {
+        // Check [SILENCIO] normalizado
+        if (/\[\s*sil[eê]ncio\s*\]/i.test(finalText)) {
+          console.log(`[BRAIN] Silêncio detectado em grupo de cliente ${managedClient.groupName}`);
+          return { text: null, mentions: [], agent: intent.agent };
+        }
+        // Anti-leak: bloquear vazamento de info interna
+        const leakCheck = checkInternalLeak(finalText);
+        if (leakCheck.leaked) {
+          console.warn(`[BRAIN] ⚠️ VAZAMENTO BLOQUEADO em ${managedClient.groupName}: "${leakCheck.match}"`);
+          console.warn(`[BRAIN] Texto bloqueado: ${finalText.substring(0, 300)}`);
+          return { text: null, mentions: [], agent: intent.agent };
+        }
+      }
+    }
+
     // Auto-detectar @mentions adicionais no texto
     const textMentions = extractMentionsFromText(finalText);
     for (const tm of textMentions) {
@@ -558,16 +577,9 @@ export async function handleManagedClientMessage(text, senderJid, pushName, chat
       CONFIG.AI_MODEL, systemPrompt, consolidatedHistory, JARVIS_TOOLS, { senderJid, chatId }
     );
 
-    // Decisão do modelo: se retornou texto vazio ou [SILENCIO], não responde
-    if (!finalText || finalText.trim() === '' || finalText.includes('[SILENCIO]')) {
+    // Decisão do modelo: se retornou texto vazio ou [SILENCIO] (normalizado), não responde
+    if (!finalText || finalText.trim() === '' || /\[\s*sil[eê]ncio\s*\]/i.test(finalText)) {
       console.log(`[PROACTIVE] Jarvis decidiu ficar em silêncio para ${managedClient.groupName}`);
-      return null;
-    }
-
-    // FILTRO: bloquear respostas que expõem raciocínio interno (ex: "não respondo", "não direcionada", "mensagem casual")
-    const lowerText = finalText.toLowerCase();
-    if (lowerText.includes('não respondo') || lowerText.includes('não direcionada') || lowerText.includes('mensagem casual') || lowerText.includes('não vou responder') || lowerText.includes('silêncio')) {
-      console.log(`[PROACTIVE] Resposta expõe raciocínio interno, suprimida: "${finalText.substring(0, 100)}"`);
       return null;
     }
 
@@ -651,12 +663,14 @@ async function getClientFullContext(chatId, senderJid, managedClient, text) {
   const contexts = [];
 
   try {
-    // 1. Memórias de ALTA IMPORTÂNCIA — SEMPRE presentes no contexto do cliente
+    // 1. Memórias de ALTA IMPORTÂNCIA — filtradas por escopo do cliente (NUNCA vazar dados de outro cliente)
     try {
       const { rows: topMems } = await pool.query(
         `SELECT DISTINCT ON (content) content, category, importance
          FROM jarvis_memories WHERE importance >= 8
-         ORDER BY content, importance DESC LIMIT 20`
+         AND (scope = 'agent' OR scope_id = $1 OR scope_id = $2)
+         ORDER BY content, importance DESC LIMIT 20`,
+        [chatId, senderJid]
       );
       if (topMems.length > 0) {
         contexts.push('🧠 CONHECIMENTO FUNDAMENTAL (alta importância):');
@@ -719,14 +733,8 @@ async function getClientFullContext(chatId, senderJid, managedClient, text) {
       }
     } catch {}
 
-    // 6. Homework (instruções diretas do Gui)
-    try {
-      const { rows } = await pool.query('SELECT content FROM homework ORDER BY created_at DESC LIMIT 20');
-      if (rows.length > 0) {
-        contexts.push('\n⚠️ INSTRUÇÕES DIRETAS DO GUI (PRIORIDADE MÁXIMA):');
-        rows.forEach(r => contexts.push(`- ${r.content}`));
-      }
-    } catch {}
+    // 6. Homework — NÃO injetar em contexto de cliente (são instruções internas do Gui)
+    // Homework só aparece em generateResponse() via getMemoryContext() (contextos internos)
   } catch (err) {
     console.error('[PROACTIVE] Erro ao buscar contexto:', err.message);
   }
@@ -763,8 +771,16 @@ async function getClientProfile(chatId, groupName) {
 const INTERNAL_LEAK_PATTERNS = [
   // Nomes da equipe (case-insensitive)
   /\b(bruna|nicolas|nícolas|arthur|bruno|rigon|guilherme)\b/i,
+  // "Gui" case-sensitive (evita pegar "guia", "guitarra", etc)
+  /\bGui\b/,
+  // Nomes de outros clientes (cross-client leak)
+  /\b(rossato|minner|pippi|digal|quintino|villa rica|masterleds|subsolo|carrion|barazzetti)\b/i,
   // Ferramentas internas
   /\b(asana|trello|cabine de comando|monday|notion)\b/i,
+  // Termos de AI/sistema
+  /\b(claude|sonnet|opus|anthropic|brain document|c[eé]rebro persistente|model[oa]? de ia|token[s]? de ia)\b/i,
+  // Termos de aprendizado interno
+  /\b(homework|instru[çc][ãa]o do gui|mem[oó]ria[s]? do jarvis|processMemory|agentLoop)\b/i,
   // Termos de processo interno
   /\b(task criada|task registrada|tarefa criada|equipe (avisada|notificada|informada)|notificad[oa] internamente|registrad[oa] internamente|grupo (tarefas|interno)|notifica[çc][ãa]o interna)\b/i,
   // Ações internas expostas
@@ -773,6 +789,8 @@ const INTERNAL_LEAK_PATTERNS = [
   /\b(feito,?\s*gui|aqui o resumo|no grupo d[ao]|grupo d[ao]\s+\w+:|resumo.*interno|repassei|encaminhei.*(equipe|interno))\b/i,
   // Referências ao próprio Jarvis como sistema/bot
   /\b(vou anexar|vou registrar|já registrei|preciso do gid|gid da task|anexar na task)\b/i,
+  // Raciocínio interno exposto
+  /\b(n[ãa]o respondo|n[ãa]o direcionada|mensagem casual|n[ãa]o vou responder|n[ãa]o preciso intervir|vou ignorar|sem necessidade de resposta)\b/i,
 ];
 
 function checkInternalLeak(text) {
@@ -812,12 +830,11 @@ CONTEXTO DO GRUPO:
 - Data/hora: ${dayOfWeek}, ${dateStr} ${timeStr} (horário de Brasília)
 - Grupo: ${managedClient.groupName || clientName}
 - Cliente: ${clientName}
-- Responsável padrão: ${managedClient.defaultAssignee || 'bruna'}
+- Responsável: equipe interna
 
 INTELIGÊNCIA ATIVA:
 - Se NÃO SABE algo → PERGUNTE no grupo "tarefas" (tool enviar_mensagem_grupo)
-- Dúvida operacional → pergunte pra Bruna
-- Dúvida estratégica → pergunte pro Gui
+- Dúvida → escale internamente via grupo "tarefas"
 - Quando aprender algo novo → salve com a tool "lembrar"
 
 QUANDO AGIR:
