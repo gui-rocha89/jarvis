@@ -1,0 +1,56 @@
+@import 'tailwindcss';
+
+@theme inline {
+  --color-stark-bg: #0a0e17;
+  --color-stark-panel: #0d1321;
+  --color-stark-border: #1a2332;
+  --color-stark-cyan: #00f0ff;
+  --color-stark-blue: #1e90ff;
+  --color-stark-gold: #ffd700;
+  --color-stark-green: #00ff88;
+  --color-stark-red: #ff4444;
+  --color-stark-dim: #4a5568;
+  --color-stark-text: #e2e8f0;
+  --color-stark-text-dim: #94a3b8;
+}
+
+body {
+  background: var(--color-stark-bg);
+  color: var(--color-stark-text);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-stark-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-stark-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-stark-cyan);
+}
+
+/* Glow effects */
+.glow-cyan {
+  box-shadow: 0 0 15px rgba(0, 240, 255, 0.3);
+}
+.glow-green {
+  box-shadow: 0 0 15px rgba(0, 255, 136, 0.3);
+}
+.glow-red {
+  box-shadow: 0 0 15px rgba(255, 68, 68, 0.3);
+}
+
+/* Pulse animation */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}

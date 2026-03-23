@@ -6,7 +6,9 @@
   "main": "jarvis-v2.mjs",
   "scripts": {
     "start": "node jarvis-v2.mjs",
-    "test": "node --test tests/unit.test.mjs"
+    "test": "node --test tests/unit.test.mjs",
+    "dashboard:dev": "cd dashboard-v2 && npm run dev",
+    "dashboard:build": "cd dashboard-v2 && npm run build"
   },
   "keywords": [
     "whatsapp",
