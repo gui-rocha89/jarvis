@@ -1359,21 +1359,7 @@ app.post('/dashboard/groups/toggle', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-// --- Dashboard v2 (Next.js) como principal ---
-app.use('/dashboard', express.static(path.join(__dirname, 'dashboard-v2', 'out'), {
-  setHeaders: (res, filePath) => {
-    if (filePath.endsWith('.html')) {
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-    }
-  }
-}));
-
-// SPA fallback para rotas do dashboard (Express 5 não aceita wildcard *)
-app.get(/^\/dashboard\/.*/, (req, res) => {
-  res.sendFile(path.join(__dirname, 'dashboard-v2', 'out', 'index.html'));
-});
+// Dashboard v2 servido pelo Nginx direto (express.static removido pra evitar conflito com rotas de API)
 
 app.get('/groups', auth, async (req, res) => {
   try {
