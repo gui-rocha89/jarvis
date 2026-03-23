@@ -22,14 +22,14 @@ export default function LoginPage() {
     setError('');
     setLoading(true);
     try {
-      const data = await apiPost<{ tempToken?: string; error?: string }>(
+      const data = await apiPost<{ requires_2fa?: boolean; tempToken?: string; error?: string }>(
         '/dashboard/auth/login',
         { email, password }
       );
       if (data.error) {
         setError(data.error);
-      } else if (data.tempToken) {
-        setTempToken(data.tempToken);
+      } else if (data.requires_2fa || data.tempToken) {
+        if (data.tempToken) setTempToken(data.tempToken);
         setStep('verify');
       }
     } catch {
@@ -46,7 +46,7 @@ export default function LoginPage() {
     try {
       const data = await apiPost<{ token?: string; error?: string }>(
         '/dashboard/auth/verify',
-        { tempToken, code }
+        { email, code }
       );
       if (data.error) {
         setError(data.error);
