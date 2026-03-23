@@ -1379,8 +1379,8 @@ app.use('/v2', express.static(path.join(__dirname, 'dashboard-v2', 'out'), {
   }
 }));
 
-// SPA fallback para rotas do dashboard v2
-app.get('/v2/*', (req, res) => {
+// SPA fallback para rotas do dashboard v2 (Express 5 não aceita wildcard *)
+app.get(/^\/v2\/.*/, (req, res) => {
   res.sendFile(path.join(__dirname, 'dashboard-v2', 'out', 'index.html'));
 });
 
