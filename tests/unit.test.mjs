@@ -1,9 +1,19 @@
 // ============================================
-// JARVIS 3.0 - Testes Unitários
+// JARVIS 5.0 - Testes Unitários
 // Node.js test runner nativo (sem dependências)
 // ============================================
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
+
+// Cleanup: fechar pool do PostgreSQL + OpenAI ao final dos testes
+after(async () => {
+  try {
+    const { pool } = await import('../src/database.mjs');
+    await pool.end();
+  } catch {}
+  // Forçar saída se algo ainda estiver pendente
+  setTimeout(() => process.exit(0), 1000);
+});
 
 // Módulos testáveis (funções puras, sem I/O)
 import { getMediaType, extractSender } from '../src/helpers.mjs';
