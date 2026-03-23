@@ -5,6 +5,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { pool } from './database.mjs';
+import { TEAM_ASANA } from './config.mjs';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
@@ -104,6 +105,10 @@ export async function extractFacts(text, senderName, chatId, isGroup, groupConte
 ${groupContext.isClientGroup ? `- ${senderName} é CONTATO DO CLIENTE (NÃO é membro da equipe Stream Lab). Use categoria "client_profile" para fatos sobre esta pessoa, NUNCA "team_member".` : `- ${senderName} é da equipe interna Stream Lab.`}`;
     }
 
+    // Build team names list from TEAM_ASANA config
+    const teamNames = Object.keys(TEAM_ASANA || {}).map(n => n.charAt(0).toUpperCase() + n.slice(1));
+    const teamListStr = teamNames.length > 0 ? teamNames.join(', ') : 'Gui, Nicolas, Arthur, Bruno, Bruna, Rigon, Jarvis';
+
     const response = await anthropic.messages.create({
       model: MEMORY_MODEL,
       max_tokens: 800,
@@ -120,9 +125,11 @@ ${groupContext.isClientGroup ? `- ${senderName} é CONTATO DO CLIENTE (NÃO é m
 - Padroes comportamentais (frequencia, horarios, preferencias de comunicacao)
 
 REGRA CRITICA DE CLASSIFICACAO:
+A equipe da Stream Lab e SOMENTE: ${teamListStr}. Qualquer outra pessoa mencionada e cliente ou contato externo — NUNCA classifique como "team_member".
+- Se a mensagem vem de um grupo de cliente, as pessoas mencionadas sao clientes, NAO equipe.
 - Pessoas que falam em GRUPOS DE CLIENTES (empresas externas) sao CONTATOS DO CLIENTE → use "client_profile", NUNCA "team_member"
-- Apenas pessoas dos grupos internos da Stream Lab (Tarefas Diárias, Galáxias) sao "team_member"
-- Na duvida entre client_profile e team_member, considere o contexto do grupo${groupHint}
+- Apenas as pessoas listadas acima, nos grupos internos da Stream Lab (Tarefas Diárias, Galáxias), sao "team_member"
+- Na duvida entre client_profile e team_member, use "client_profile" — e mais seguro${groupHint}
 
 Responda APENAS em JSON array. Se nao houver fatos relevantes, responda [].
 Cada fato: {"content": "fato claro e completo", "category": "preference|client|client_profile|decision|deadline|rule|style|team_member|process|pattern", "importance": 1-10}

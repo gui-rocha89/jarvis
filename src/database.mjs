@@ -221,6 +221,31 @@ export async function initDB() {
       ALTER TABLE jarvis_messages ADD COLUMN IF NOT EXISTS message_key JSONB
     `).catch(() => {});
 
+    // Migração: corrigir memórias classificadas incorretamente como team_member
+    // Apenas membros reais da equipe (Gui, Nicolas, Arthur, Bruno, Bruna, Rigon, Jarvis)
+    // devem ter categoria team_member. Todos os outros são client_profile.
+    try {
+      const result = await pool.query(`
+        UPDATE jarvis_memories
+        SET category = 'client_profile'
+        WHERE category = 'team_member'
+          AND content NOT ILIKE '%Gui%'
+          AND content NOT ILIKE '%Guilherme%'
+          AND content NOT ILIKE '%Nicolas%'
+          AND content NOT ILIKE '%Arthur%'
+          AND content NOT ILIKE '%Bruno%'
+          AND content NOT ILIKE '%Bruna%'
+          AND content NOT ILIKE '%Rigon%'
+          AND content NOT ILIKE '%Jarvis%'
+      `);
+      if (result.rowCount > 0) {
+        console.log(`[DB] Migração: ${result.rowCount} memórias reclassificadas de team_member para client_profile`);
+      }
+    } catch (err) {
+      // Tabela pode não existir ainda na primeira inicialização
+      console.log('[DB] Migração team_member skipped:', err.message);
+    }
+
     console.log('[DB] Tabelas verificadas/criadas');
   } catch (err) {
     console.error('[DB] Erro ao conectar:', err.message);
