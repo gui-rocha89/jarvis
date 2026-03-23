@@ -33,6 +33,7 @@ import { getMediaType, extractSender } from './src/helpers.mjs';
 import { startAsanaStudy, stopAsanaStudy, asanaBatchState } from './src/batch-asana.mjs';
 import { startEmailMonitor, stopEmailMonitor, emailMonitorState } from './src/asana-email-monitor.mjs';
 import { generateBrainDocument, loadBrainDocument, invalidateBrainCache, getBrainStatus } from './src/brain-document.mjs';
+import { processAsanaWebhookEvent, registerAsanaWebhooks } from './src/webhooks/asana-webhook.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2276,6 +2277,43 @@ app.get('/dashboard/qr-image', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ============================================
+// ASANA WEBHOOKS (público — Asana valida via X-Hook-Secret)
+// ============================================
+app.post('/webhooks/asana', async (req, res) => {
+  // Handshake: Asana envia X-Hook-Secret na primeira requisição
+  const hookSecret = req.headers['x-hook-secret'];
+  if (hookSecret) {
+    console.log('[WEBHOOK] Asana handshake recebido');
+    res.setHeader('X-Hook-Secret', hookSecret);
+    return res.sendStatus(200);
+  }
+
+  // Processar eventos
+  const events = req.body?.events || [];
+  res.sendStatus(200); // Responder imediatamente (Asana exige < 5s)
+
+  // Processar eventos de forma assíncrona
+  for (const event of events) {
+    try {
+      await processAsanaWebhookEvent(event);
+    } catch (err) {
+      console.error('[WEBHOOK] Erro ao processar evento:', err.message);
+    }
+  }
+});
+
+// Registrar webhooks nos projetos do Asana (protegido)
+app.post('/dashboard/webhooks/register', auth, async (req, res) => {
+  try {
+    const callbackUrl = 'https://guardiaolab.com.br/webhooks/asana';
+    const result = await registerAsanaWebhooks(callbackUrl);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Start API
 app.listen(CONFIG.API_PORT, async () => {
   console.log('[API] Rodando na porta', CONFIG.API_PORT);
@@ -2589,6 +2627,12 @@ async function startWhatsApp() {
       registerSendFunction(sendText);
       registerSendWithMentionsFunction(sendTextWithMentions);
       console.log('[PROACTIVE] sendText + sendTextWithMentions registradas para tools proativas');
+      // Notificação de deploy/reinício
+      if (CONFIG.GROUP_TAREFAS) {
+        sendText(CONFIG.GROUP_TAREFAS, 'Reiniciei. Versão 5.0. Todos os sistemas operacionais. ⚡').catch(err => {
+          console.error('[STARTUP] Erro ao enviar notificação de deploy:', err.message);
+        });
+      }
       setTimeout(async () => {
         try {
           realTeamJids.clear();

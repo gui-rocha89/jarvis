@@ -503,6 +503,55 @@ describe('Pipeline Meta Ads', () => {
 });
 
 // ============================================
+// TESTES: Asana Webhooks
+// ============================================
+describe('Asana Webhooks', () => {
+  it('processAsanaWebhookEvent é exportada', async () => {
+    const { processAsanaWebhookEvent } = await import('../src/webhooks/asana-webhook.mjs');
+    assert.equal(typeof processAsanaWebhookEvent, 'function');
+  });
+
+  it('registerAsanaWebhooks é exportada', async () => {
+    const { registerAsanaWebhooks } = await import('../src/webhooks/asana-webhook.mjs');
+    assert.equal(typeof registerAsanaWebhooks, 'function');
+  });
+
+  it('ignora eventos do próprio Jarvis (evita loop)', async () => {
+    const { processAsanaWebhookEvent } = await import('../src/webhooks/asana-webhook.mjs');
+    // Não deve lançar erro — evento do Jarvis é ignorado silenciosamente
+    await processAsanaWebhookEvent({
+      action: 'changed',
+      resource: { gid: '123', resource_type: 'task' },
+      user: { gid: '1213583219463912' }, // GID do Jarvis
+    });
+  });
+
+  it('ignora eventos de recursos que não são tasks', async () => {
+    const { processAsanaWebhookEvent } = await import('../src/webhooks/asana-webhook.mjs');
+    // Não deve lançar erro — evento de projeto é ignorado
+    await processAsanaWebhookEvent({
+      action: 'changed',
+      resource: { gid: '123', resource_type: 'project' },
+      user: { gid: '999' },
+    });
+  });
+
+  it('processa eventos deleted/removed sem erro', async () => {
+    const { processAsanaWebhookEvent } = await import('../src/webhooks/asana-webhook.mjs');
+    await processAsanaWebhookEvent({
+      action: 'deleted',
+      resource: { gid: '123', resource_type: 'task' },
+      user: { gid: '999' },
+    });
+    await processAsanaWebhookEvent({
+      action: 'removed',
+      resource: { gid: '456', resource_type: 'task' },
+      user: { gid: '999' },
+    });
+  });
+});
+
+// ============================================
 // TESTES: Validação de estrutura
 // ============================================
 describe('Estrutura do projeto', () => {
@@ -548,6 +597,7 @@ describe('Estrutura do projeto', () => {
       '../src/skills/loader.mjs',
       '../src/profiles.mjs',
       '../src/brain-document.mjs',
+      '../src/webhooks/asana-webhook.mjs',
     ];
 
     const dangerousPatterns = [
