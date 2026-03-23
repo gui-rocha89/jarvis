@@ -16,7 +16,10 @@ function getToken(): string | null {
 function clearAuth() {
   if (typeof window === 'undefined') return;
   localStorage.removeItem('jarvis_token');
-  window.location.href = '/login';
+  // Evita loop infinito: não redireciona se já está no login
+  if (!window.location.pathname.endsWith('/login')) {
+    window.location.href = '/login';
+  }
 }
 
 export async function apiGet<T = unknown>(path: string): Promise<T> {
