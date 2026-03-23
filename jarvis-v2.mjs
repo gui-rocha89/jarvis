@@ -2975,6 +2975,23 @@ async function startWhatsApp() {
               console.warn(`[TEAM] Erro ao mapear grupo ${gid}: ${err.message}`);
             }
           }
+          // Normalizar aliases da equipe — nomes de WhatsApp nem sempre batem com o nome real
+          // Ex: "bruSna" → alias "bruna", "brusna" → alias "bruna"
+          const teamAliases = Object.keys(TEAM_ASANA); // nomes reais da equipe
+          for (const realName of teamAliases) {
+            if (teamWhatsApp.has(realName)) continue; // já tem
+            // Busca fuzzy: algum mapeamento existente que contém o nome real?
+            for (const [mapped, jid] of teamWhatsApp.entries()) {
+              const clean = mapped.replace(/[^a-záàâãéêíóôõúç]/gi, '').toLowerCase();
+              if (clean.includes(realName) || realName.includes(clean)) {
+                teamWhatsApp.set(realName, jid);
+                if (!teamPhones.has(realName)) teamPhones.set(realName, jid);
+                console.log(`[TEAM] Alias normalizado: "${realName}" → ${jid} (de "${mapped}")`);
+                break;
+              }
+            }
+          }
+
           console.log(`[TEAM] ${realTeamJids.size} membros da equipe real identificados`);
           console.log(`[TEAM] ${teamWhatsApp.size} contatos mapeados para menções`);
           console.log('[TEAM] Mapeamento:', JSON.stringify(Object.fromEntries(teamWhatsApp)));
