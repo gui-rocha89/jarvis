@@ -582,7 +582,7 @@ describe('Estrutura do projeto', () => {
     }
   });
 
-  it('nenhum arquivo de código contém credenciais hardcoded', async () => {
+  it('nenhum arquivo de código contém credenciais hardcoded (inclui novos módulos)', async () => {
     const { readFile } = await import('fs/promises');
     const { glob } = await import('fs/promises').then(() => import('node:fs')).catch(() => ({ glob: null }));
 
@@ -620,5 +620,70 @@ describe('Estrutura do projeto', () => {
         );
       }
     }
+  });
+});
+
+// ============================================
+// TESTES: Sprint 2.1 — Atendimento Público (DM)
+// ============================================
+describe('Atendimento Público (Sprint 2.1)', () => {
+  it('CHANNEL_CONTEXT.whatsapp_public existe e contém regras', async () => {
+    const { CHANNEL_CONTEXT } = await import('../src/agents/master.mjs');
+    assert.ok(CHANNEL_CONTEXT.whatsapp_public, 'Canal whatsapp_public ausente');
+    assert.ok(CHANNEL_CONTEXT.whatsapp_public.includes('PROIBIDO'), 'Falta regras de proibição');
+    assert.ok(CHANNEL_CONTEXT.whatsapp_public.includes('laboratório criativo'), 'Falta descrição da Stream Lab');
+    assert.ok(CHANNEL_CONTEXT.whatsapp_public.includes('10 mensagens'), 'Falta limite de mensagens');
+    assert.ok(CHANNEL_CONTEXT.whatsapp_public.includes('horário'), 'Falta regra de horário');
+  });
+
+  it('handlePublicDM é exportada do brain.mjs', async () => {
+    const mod = await import('../src/brain.mjs');
+    assert.ok(typeof mod.handlePublicDM === 'function', 'handlePublicDM não é uma função');
+  });
+
+  it('database.mjs exporta funções de public_conversations', async () => {
+    const db = await import('../src/database.mjs');
+    assert.ok(typeof db.upsertPublicConversation === 'function', 'upsertPublicConversation ausente');
+    assert.ok(typeof db.getPublicConversation === 'function', 'getPublicConversation ausente');
+    assert.ok(typeof db.incrementPublicMessages === 'function', 'incrementPublicMessages ausente');
+  });
+
+  it('database.mjs exporta funções de cobranca_log', async () => {
+    const db = await import('../src/database.mjs');
+    assert.ok(typeof db.getCobrancaLog === 'function', 'getCobrancaLog ausente');
+    assert.ok(typeof db.upsertCobrancaLog === 'function', 'upsertCobrancaLog ausente');
+    assert.ok(typeof db.resetCobrancaLog === 'function', 'resetCobrancaLog ausente');
+  });
+});
+
+// ============================================
+// TESTES: Sprint 2.2 — Autonomia Nível 2
+// ============================================
+describe('Autonomia Nível 2 (Sprint 2.2)', () => {
+  it('JARVIS_TOOLS inclui mover_task_secao', async () => {
+    const { JARVIS_TOOLS } = await import('../src/skills/loader.mjs');
+    const tool = JARVIS_TOOLS.find(t => t.name === 'mover_task_secao');
+    assert.ok(tool, 'Tool mover_task_secao não encontrada');
+    assert.ok(tool.input_schema.properties.task_gid, 'task_gid ausente');
+    assert.ok(tool.input_schema.properties.projeto, 'projeto ausente');
+    assert.ok(tool.input_schema.properties.secao, 'secao ausente');
+    assert.deepEqual(tool.input_schema.required, ['task_gid', 'projeto', 'secao']);
+  });
+
+  it('JARVIS_TOOLS inclui atribuir_task', async () => {
+    const { JARVIS_TOOLS } = await import('../src/skills/loader.mjs');
+    const tool = JARVIS_TOOLS.find(t => t.name === 'atribuir_task');
+    assert.ok(tool, 'Tool atribuir_task não encontrada');
+    assert.ok(tool.input_schema.properties.task_gid, 'task_gid ausente');
+    assert.ok(tool.input_schema.properties.responsavel, 'responsavel ausente');
+    assert.deepEqual(tool.input_schema.required, ['task_gid', 'responsavel']);
+  });
+
+  it('antiHallucinationCheck permite mover_task_secao e atribuir_task', async () => {
+    const { antiHallucinationCheck } = await import('../src/brain.mjs');
+    const r1 = antiHallucinationCheck('Task movida para Em Andamento com sucesso. O responsável foi atualizado conforme solicitado.', new Set(['mover_task_secao']));
+    assert.equal(r1.safe, true, 'mover_task_secao deveria ser permitida');
+    const r2 = antiHallucinationCheck('Task atribuída ao Bruno com sucesso. Ele será notificado automaticamente pelo Asana.', new Set(['atribuir_task']));
+    assert.equal(r2.safe, true, 'atribuir_task deveria ser permitida');
   });
 });

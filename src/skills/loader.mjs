@@ -763,6 +763,34 @@ export const JARVIS_TOOLS = [
       required: ['campanha_id'],
     },
   },
+  // ============================================
+  // TOOLS — Autonomia Nível 2 (mover seção + atribuir)
+  // ============================================
+  {
+    name: 'mover_task_secao',
+    description: 'Mover uma task para outra seção dentro de um projeto no Asana. Use para atualizar o status da task (ex: mover de "A Fazer" para "Em Andamento").',
+    input_schema: {
+      type: 'object',
+      properties: {
+        task_gid: { type: 'string', description: 'GID da task no Asana' },
+        projeto: { type: 'string', description: 'Nome do projeto (ex: "cabine", "design", "audiovisual", "captacao")' },
+        secao: { type: 'string', description: 'Nome da seção de destino (ex: "a_fazer", "em_andamento", "concluido", "revisao")' },
+      },
+      required: ['task_gid', 'projeto', 'secao'],
+    },
+  },
+  {
+    name: 'atribuir_task',
+    description: 'Alterar o responsável de uma task no Asana. Atribui a task a um membro da equipe.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        task_gid: { type: 'string', description: 'GID da task no Asana' },
+        responsavel: { type: 'string', description: 'Primeiro nome do novo responsável (ex: "bruna", "bruno", "nicolas", "arthur", "rigon", "gui")' },
+      },
+      required: ['task_gid', 'responsavel'],
+    },
+  },
   {
     name: 'consultar_especialista',
     description: 'Consultar outro agente especialista do time do Jarvis para obter ajuda em uma área diferente. Use quando sua tarefa precisa de conhecimento de outra especialidade (ex: agente de tráfego precisa de uma legenda → consulta o criativo; gestor precisa de análise de dados → consulta o pesquisador). O especialista responde com sua análise e você integra na sua resposta final.',
@@ -1839,6 +1867,82 @@ export async function executeJarvisTool(toolName, input, context = {}) {
       };
     } catch (err) {
       return { error: `Erro ao listar conjuntos: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'mover_task_secao') {
+    try {
+      const projetoLower = (input.projeto || '').toLowerCase();
+      const secaoLower = (input.secao || '').toLowerCase();
+
+      // Resolver projeto → GID
+      const projectMap = {
+        cabine: ASANA_PROJECTS.CABINE,
+        design: ASANA_PROJECTS.DESIGN,
+        audiovisual: ASANA_PROJECTS.AUDIOVISUAL,
+        captacao: ASANA_PROJECTS.CAPTACAO,
+      };
+      const projectGid = projectMap[projetoLower];
+      if (!projectGid) {
+        return { error: `Projeto "${input.projeto}" não encontrado. Opções: cabine, design, audiovisual, captacao` };
+      }
+
+      // Resolver seção → GID (buscar no ASANA_SECTIONS com match parcial)
+      let sectionGid = null;
+      for (const [key, gid] of Object.entries(ASANA_SECTIONS)) {
+        if (key.toLowerCase().includes(secaoLower) || secaoLower.includes(key.toLowerCase())) {
+          sectionGid = gid;
+          break;
+        }
+      }
+
+      if (!sectionGid) {
+        // Fallback: buscar seções do projeto via API
+        const sections = await asanaRequest(`/projects/${projectGid}/sections?opt_fields=name`);
+        if (sections) {
+          for (const s of sections) {
+            if (s.name.toLowerCase().includes(secaoLower) || secaoLower.includes(s.name.toLowerCase())) {
+              sectionGid = s.gid;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!sectionGid) {
+        return { error: `Seção "${input.secao}" não encontrada no projeto "${input.projeto}"` };
+      }
+
+      const result = await asanaAddToProject(input.task_gid, projectGid, sectionGid);
+      if (result) {
+        console.log(`[TOOL] Task ${input.task_gid} movida para seção ${input.secao} no projeto ${input.projeto}`);
+        return { success: true, task_gid: input.task_gid, projeto: input.projeto, secao: input.secao };
+      } else {
+        return { error: 'Erro ao mover task para a seção' };
+      }
+    } catch (err) {
+      return { error: `Erro ao mover task: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'atribuir_task') {
+    try {
+      const responsavelLower = (input.responsavel || '').toLowerCase();
+      const asanaGid = TEAM_ASANA[responsavelLower];
+      if (!asanaGid) {
+        const availableNames = Object.keys(TEAM_ASANA).join(', ');
+        return { error: `Responsável "${input.responsavel}" não encontrado. Opções: ${availableNames}` };
+      }
+
+      const result = await asanaWrite('PUT', `/tasks/${input.task_gid}`, { assignee: asanaGid });
+      if (result.success) {
+        console.log(`[TOOL] Task ${input.task_gid} atribuída para ${input.responsavel} (${asanaGid})`);
+        return { success: true, task_gid: input.task_gid, responsavel: input.responsavel, asana_gid: asanaGid };
+      } else {
+        return { error: result.error || 'Erro ao atribuir task' };
+      }
+    } catch (err) {
+      return { error: `Erro ao atribuir task: ${err.message}` };
     }
   }
 

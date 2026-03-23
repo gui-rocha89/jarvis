@@ -4,7 +4,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { CONFIG, JARVIS_ALLOWED_GROUPS, teamPhones, teamWhatsApp, isManagedClientGroup } from './config.mjs';
 import { pool } from './database.mjs';
-import { getRecentMessages, getContactInfo, getGroupInfo, getMessageCount } from './database.mjs';
+import { getRecentMessages, getContactInfo, getGroupInfo, getMessageCount, upsertPublicConversation, getPublicConversation, incrementPublicMessages } from './database.mjs';
 import { getMemoryContext, processMemory, searchMemories, smartSearchMemories } from './memory.mjs';
 import { loadBrainDocument } from './brain-document.mjs';
 import { classifyIntent, JARVIS_IDENTITY, AGENT_EXPERTISE, CHANNEL_CONTEXT, MASTER_SYSTEM_PROMPT, AGENT_PROMPTS } from './agents/master.mjs';
@@ -160,8 +160,8 @@ export function antiHallucinationCheck(finalText, toolsUsed) {
     return { safe: true };
   }
 
-  // Se usou tools de ação (lembrar, criar_demanda, enviar_mensagem, ads, posts), tá agindo — não bloquear
-  if (toolsUsed.has('lembrar') || toolsUsed.has('criar_demanda_cliente') || toolsUsed.has('enviar_mensagem_grupo') || toolsUsed.has('autorizar_cliente') || toolsUsed.has('revogar_cliente') || toolsUsed.has('criar_campanha') || toolsUsed.has('pausar_campanha') || toolsUsed.has('agendar_post') || toolsUsed.has('criar_conjunto_anuncios') || toolsUsed.has('subir_imagem_ads') || toolsUsed.has('criar_criativo_ads') || toolsUsed.has('criar_anuncio') || toolsUsed.has('pipeline_asana_meta') || toolsUsed.has('ativar_desativar_ads')) {
+  // Se usou tools de ação (lembrar, criar_demanda, enviar_mensagem, ads, posts, mover, atribuir), tá agindo — não bloquear
+  if (toolsUsed.has('lembrar') || toolsUsed.has('criar_demanda_cliente') || toolsUsed.has('enviar_mensagem_grupo') || toolsUsed.has('autorizar_cliente') || toolsUsed.has('revogar_cliente') || toolsUsed.has('criar_campanha') || toolsUsed.has('pausar_campanha') || toolsUsed.has('agendar_post') || toolsUsed.has('criar_conjunto_anuncios') || toolsUsed.has('subir_imagem_ads') || toolsUsed.has('criar_criativo_ads') || toolsUsed.has('criar_anuncio') || toolsUsed.has('pipeline_asana_meta') || toolsUsed.has('ativar_desativar_ads') || toolsUsed.has('mover_task_secao') || toolsUsed.has('atribuir_task')) {
     return { safe: true };
   }
 
@@ -1146,7 +1146,7 @@ REGRAS:
 4. NUNCA comece com "@NomeDaPessoa" — a menção é automática
 5. Se há CONVERSAS RECENTES sobre o tema (últimas 24h), NÃO COBRE — retorne null em comentario_asana
 6. Responda SOMENTE o JSON, sem markdown nem explicação`,
-      messages: [{ role: 'user', content: dossier }],
+      messages: [{ role: 'user', content: dossier + (intel.escalationContext || '') }],
     });
 
     const text = response.content[0]?.text?.trim() || '';
@@ -1276,6 +1276,9 @@ export async function runOverdueCheck() {
     const teamNames = Object.keys(TEAM_ASANA).map(n => n.charAt(0).toUpperCase() + n.slice(1));
     const teamList = [...new Set(teamNames)].join(', ');
 
+    // Carregar log de cobranças para escalação
+    const { getCobrancaLog, upsertCobrancaLog } = await import('./database.mjs');
+
     console.log(`[PIPELINE] Iniciando pipeline multi-agente para ${toCobrar.slice(0, 10).length} tasks`);
     const allResults = [];
 
@@ -1286,7 +1289,31 @@ export async function runOverdueCheck() {
     const intelResults = [];
     for (const t of toCobrar.slice(0, 10)) {
       if (notified[t.gid]) continue;
+
+      // Verificar nível de escalação
+      const cobrancaInfo = await getCobrancaLog(t.gid);
+      const cobrancaCount = cobrancaInfo ? cobrancaInfo.cobranca_count : 0;
+      const lastCobrada = cobrancaInfo ? new Date(cobrancaInfo.last_cobrada_at) : null;
+      const hoursSinceLastCobranca = lastCobrada ? (Date.now() - lastCobrada.getTime()) / (1000 * 60 * 60) : Infinity;
+
+      // Lógica de escalação:
+      // 1ª cobrança: normal (sem histórico)
+      // 2ª cobrança: 24h após a 1ª → tom mais urgente
+      // 3ª cobrança: 48h após a 1ª → escalar para o Gui
+      let escalationLevel = 'normal';
+      if (cobrancaCount >= 2 && hoursSinceLastCobranca >= 24) {
+        escalationLevel = 'escalate_gui'; // 3ª+: escalar pro Gui
+      } else if (cobrancaCount >= 1 && hoursSinceLastCobranca >= 24) {
+        escalationLevel = 'urgent'; // 2ª: tom mais urgente
+      } else if (cobrancaCount >= 1 && hoursSinceLastCobranca < 24) {
+        // Já cobrado hoje, pular
+        notified[t.gid] = today;
+        continue;
+      }
+
       const intel = await agentResearcher(t, { asanaRequest, searchMemories, getProfile });
+      intel.escalationLevel = escalationLevel;
+      intel.cobrancaCount = cobrancaCount;
       intelResults.push(intel);
       await new Promise(r => setTimeout(r, 500)); // Rate limit Asana
     }
@@ -1298,7 +1325,13 @@ export async function runOverdueCheck() {
     console.log(`[PIPELINE] 🧠 Agente Manager analisando...`);
     const decisions = [];
     for (const intel of intelResults) {
-      const decision = await agentManager(intel, { anthropic, teamList });
+      // Passar informação de escalação para o Manager
+      const escalationContext = intel.escalationLevel === 'urgent'
+        ? '\n\n⚠️ ESCALAÇÃO: Esta é a 2ª cobrança. Use tom mais urgente e direto. Exija prazo concreto.'
+        : intel.escalationLevel === 'escalate_gui'
+        ? '\n\n🚨 ESCALAÇÃO NÍVEL 3: Esta task já foi cobrada 2+ vezes sem resolução. Sua análise será enviada diretamente ao Gui (dono). Seja claro sobre o problema e a gravidade.'
+        : '';
+      const decision = await agentManager({ ...intel, escalationContext }, { anthropic, teamList });
       decisions.push({ intel, decision });
       await new Promise(r => setTimeout(r, 300));
     }
@@ -1340,6 +1373,20 @@ export async function runOverdueCheck() {
       if (result.success) {
         console.log(`[PIPELINE] ✅ Asana ${t.gid} [${mentionedNames.join(',')}]: "${commentText.substring(0, 80)}..."`);
         commentResults.push({ intel, decision, mentionedNames });
+
+        // Registrar cobrança no log de escalação
+        await upsertCobrancaLog(t.gid);
+
+        // Escalação nível 3: notificar Gui diretamente com contexto completo
+        if (intel.escalationLevel === 'escalate_gui') {
+          try {
+            const guiMsg = `🚨 *Escalação — Task atrasada (${intel.cobrancaCount + 1}ª cobrança)*\n\n📋 *${t.name}*\n👤 Responsável: ${t.assignee}\n📅 Prazo: ${t.due_on} (${intel.daysLate || '?'} dias de atraso)\n📁 Projeto: ${t.project}\n\n💬 Análise: ${decision.analise || 'Sem análise'}\n\nJá cobrei ${intel.cobrancaCount} vez(es) sem resolução. Precisa de intervenção direta.`;
+            await sendFn(CONFIG.GUI_JID, guiMsg);
+            console.log(`[PIPELINE] 🚨 Escalação enviada ao Gui para task ${t.gid}`);
+          } catch (escErr) {
+            console.error(`[PIPELINE] Erro ao escalar pro Gui:`, escErr.message);
+          }
+        }
       } else {
         console.error(`[PIPELINE] ❌ Erro Asana ${t.gid}:`, result.error);
       }
@@ -1433,5 +1480,163 @@ export async function runOverdueCheck() {
 
   } catch (err) {
     console.error('[PIPELINE] Erro:', err.message);
+  }
+}
+
+// ============================================
+// ATENDIMENTO PÚBLICO — DM de desconhecidos (leads)
+// ============================================
+
+// Cache em memória de contagem de mensagens por conversa (TTL 24h)
+const publicDMCounters = new Map(); // jid → { count, lastReset }
+const PUBLIC_DM_TTL = 24 * 60 * 60 * 1000; // 24 horas
+
+function getPublicDMCount(jid) {
+  const entry = publicDMCounters.get(jid);
+  if (!entry) return 0;
+  if (Date.now() - entry.lastReset > PUBLIC_DM_TTL) {
+    publicDMCounters.delete(jid);
+    return 0;
+  }
+  return entry.count;
+}
+
+function incrementPublicDMCount(jid) {
+  const entry = publicDMCounters.get(jid);
+  if (!entry || Date.now() - entry.lastReset > PUBLIC_DM_TTL) {
+    publicDMCounters.set(jid, { count: 1, lastReset: Date.now() });
+    return 1;
+  }
+  entry.count++;
+  return entry.count;
+}
+
+/**
+ * Verifica se estamos no horário comercial (8h-18h BRT)
+ */
+function isBusinessHours() {
+  const now = new Date();
+  const brTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  const hour = brTime.getHours();
+  return hour >= 8 && hour < 18;
+}
+
+/**
+ * Trata DM de pessoas desconhecidas (leads/público externo).
+ * Usa JARVIS_IDENTITY + CHANNEL_CONTEXT.whatsapp_public.
+ *
+ * @param {string} text - Texto da mensagem
+ * @param {string} senderJid - JID do remetente
+ * @param {string} pushName - Nome do remetente
+ * @param {Array} mediaFiles - Arquivos de mídia recebidos
+ * @returns {{ text: string, isFirstContact: boolean } | null}
+ */
+export async function handlePublicDM(text, senderJid, pushName, mediaFiles = []) {
+  try {
+    // Verificar horário comercial
+    if (!isBusinessHours()) {
+      // Fora do horário: resposta automática
+      console.log(`[PUBLIC-DM] Mensagem fora do horário de ${pushName} (${senderJid})`);
+
+      // Registrar conversa no banco
+      await upsertPublicConversation(senderJid, pushName);
+
+      return {
+        text: 'Recebemos sua mensagem! Retornamos no próximo dia útil. 🕐',
+        isFirstContact: false,
+        notifyGui: true,
+      };
+    }
+
+    // Contar mensagens na conversa
+    const msgCount = incrementPublicDMCount(senderJid);
+
+    // Verificar se é primeiro contato
+    const existingConv = await getPublicConversation(senderJid);
+    const isFirstContact = !existingConv;
+
+    // Registrar/atualizar conversa no banco
+    await upsertPublicConversation(senderJid, pushName);
+
+    // Se excedeu 10 mensagens → sugerir reunião
+    if (msgCount > 10) {
+      console.log(`[PUBLIC-DM] Limite de ${msgCount} mensagens atingido para ${pushName}`);
+      return {
+        text: 'Que tal agendarmos uma reunião com nosso time pra conversarmos melhor sobre isso? 📅 Posso verificar os horários disponíveis!',
+        isFirstContact: false,
+        notifyGui: false,
+      };
+    }
+
+    // Gerar resposta com IA
+    const recentMessages = await getRecentMessages(senderJid, 15);
+    const chatHistory = [];
+    for (const m of recentMessages) {
+      const isJarvisMsg = m.push_name === 'Jarvis' || m.message_id?.startsWith('jarvis_');
+      if (isJarvisMsg) {
+        chatHistory.push({ role: 'assistant', content: m.text });
+      } else {
+        chatHistory.push({ role: 'user', content: m.text });
+      }
+    }
+    // Adicionar mensagem atual
+    chatHistory.push({ role: 'user', content: text });
+
+    // System prompt: identidade + canal público
+    const systemPrompt = [
+      {
+        type: 'text',
+        text: JARVIS_IDENTITY + '\n\n' + CHANNEL_CONTEXT.whatsapp_public,
+        cache_control: { type: 'ephemeral' },
+      },
+      {
+        type: 'text',
+        text: `CONTEXTO DA CONVERSA:
+- Remetente: ${pushName || 'Desconhecido'}
+- Mensagem #${msgCount} nesta conversa
+- ${isFirstContact ? 'PRIMEIRO CONTATO — seja especialmente acolhedor' : 'Conversa em andamento'}
+- Horário: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
+      },
+    ];
+
+    // Usar Sonnet para respostas rápidas
+    const model = CONFIG.AI_MODEL;
+    const response = await anthropic.messages.create({
+      model,
+      max_tokens: 512,
+      system: systemPrompt,
+      messages: chatHistory,
+    });
+
+    let responseText = '';
+    for (const block of response.content) {
+      if (block.type === 'text') responseText += block.text;
+    }
+
+    if (!responseText || responseText.trim().length < 3) return null;
+
+    // Anti-leak check: garantir que não vaza informação interna
+    const leakCheck = checkInternalLeak(responseText);
+    if (leakCheck.leaked) {
+      console.warn(`[PUBLIC-DM] ⚠️ Vazamento detectado na resposta pública: "${leakCheck.match}"`);
+      const sanitized = sanitizeClientResponse(responseText);
+      if (!sanitized) {
+        // Fallback seguro
+        responseText = `Obrigado pela mensagem, ${pushName || ''}! A Stream Lab é um laboratório criativo de marketing. Posso te ajudar a saber mais sobre nossos serviços ou agendar uma reunião com nosso time. Como posso ajudar?`;
+      } else {
+        responseText = sanitized;
+      }
+    }
+
+    console.log(`[PUBLIC-DM] Resposta gerada para ${pushName} (msg #${msgCount}): ${responseText.substring(0, 80)}`);
+
+    return {
+      text: responseText,
+      isFirstContact,
+      notifyGui: isFirstContact,
+    };
+  } catch (err) {
+    console.error('[PUBLIC-DM] Erro:', err.message);
+    return null;
   }
 }

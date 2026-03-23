@@ -179,6 +179,30 @@ export async function initDB() {
       )
     `);
 
+    // Tabela de conversas públicas (leads/desconhecidos no DM)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS public_conversations (
+        id SERIAL PRIMARY KEY,
+        jid TEXT UNIQUE NOT NULL,
+        name TEXT,
+        status TEXT DEFAULT 'active',
+        messages_count INTEGER DEFAULT 0,
+        first_message_at TIMESTAMPTZ DEFAULT NOW(),
+        last_message_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    // Tabela de log de cobranças (escalação)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS cobranca_log (
+        id SERIAL PRIMARY KEY,
+        task_gid TEXT NOT NULL,
+        cobranca_count INTEGER DEFAULT 1,
+        last_cobrada_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(task_gid)
+      )
+    `);
+
     // Migração: adicionar coluna message_key se não existe
     await pool.query(`
       ALTER TABLE jarvis_messages ADD COLUMN IF NOT EXISTS message_key JSONB
@@ -297,4 +321,66 @@ export async function getMessageCount() {
     const result = await pool.query('SELECT COUNT(*) as count FROM jarvis_messages');
     return parseInt(result.rows[0].count);
   } catch { return 0; }
+}
+
+// --- CRUD de Conversas Públicas (leads) ---
+export async function upsertPublicConversation(jid, name) {
+  try {
+    await pool.query(
+      `INSERT INTO public_conversations (jid, name, messages_count, first_message_at, last_message_at)
+       VALUES ($1, $2, 1, NOW(), NOW())
+       ON CONFLICT (jid) DO UPDATE SET
+         name = COALESCE(EXCLUDED.name, public_conversations.name),
+         messages_count = public_conversations.messages_count + 1,
+         last_message_at = NOW()`,
+      [jid, name || null]
+    );
+  } catch (err) {
+    console.error('[DB] Erro upsertPublicConversation:', err.message);
+  }
+}
+
+export async function getPublicConversation(jid) {
+  try {
+    const result = await pool.query('SELECT * FROM public_conversations WHERE jid = $1', [jid]);
+    return result.rows[0] || null;
+  } catch { return null; }
+}
+
+export async function incrementPublicMessages(jid) {
+  try {
+    await pool.query(
+      `UPDATE public_conversations SET messages_count = messages_count + 1, last_message_at = NOW() WHERE jid = $1`,
+      [jid]
+    );
+  } catch {}
+}
+
+// --- CRUD de Log de Cobranças (escalação) ---
+export async function getCobrancaLog(taskGid) {
+  try {
+    const result = await pool.query('SELECT * FROM cobranca_log WHERE task_gid = $1', [taskGid]);
+    return result.rows[0] || null;
+  } catch { return null; }
+}
+
+export async function upsertCobrancaLog(taskGid) {
+  try {
+    await pool.query(
+      `INSERT INTO cobranca_log (task_gid, cobranca_count, last_cobrada_at)
+       VALUES ($1, 1, NOW())
+       ON CONFLICT (task_gid) DO UPDATE SET
+         cobranca_count = cobranca_log.cobranca_count + 1,
+         last_cobrada_at = NOW()`,
+      [taskGid]
+    );
+  } catch (err) {
+    console.error('[DB] Erro upsertCobrancaLog:', err.message);
+  }
+}
+
+export async function resetCobrancaLog(taskGid) {
+  try {
+    await pool.query('DELETE FROM cobranca_log WHERE task_gid = $1', [taskGid]);
+  } catch {}
 }

@@ -20,12 +20,13 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import helmet from 'helmet';
 import cors from 'cors';
+import { WebSocketServer } from 'ws';
 
 // Módulos do Jarvis 4.0
 import { CONFIG, AUDIO_ALLOWED, JARVIS_ALLOWED_GROUPS, teamPhones, teamWhatsApp, managedClients, loadManagedClients, saveManagedClients, isManagedClientGroup } from './src/config.mjs';
 import { pool, initDB, storeMessage, getRecentMessages, getContactInfo, getGroupInfo, upsertContact, upsertGroup, getMessageCount } from './src/database.mjs';
 import { initMemory, processMemory, getMemoryContext, getMemoryStats, searchMemories, smartSearchMemories, storeFacts, extractFacts, backfillEmbeddings } from './src/memory.mjs';
-import { shouldJarvisRespond, isValidResponse, generateResponse, markConversationActive, isConversationActive, findTeamJid, extractMentionsFromText, generateDailyReport, handleManagedClientMessage, runOverdueCheck } from './src/brain.mjs';
+import { shouldJarvisRespond, isValidResponse, generateResponse, markConversationActive, isConversationActive, findTeamJid, extractMentionsFromText, generateDailyReport, handleManagedClientMessage, runOverdueCheck, handlePublicDM } from './src/brain.mjs';
 import { voiceConfig, loadVoiceConfig, saveVoiceConfig, transcribeAudio, generateAudio } from './src/audio.mjs';
 import { synthesizeProfile, getProfile, listProfiles, syncProfiles } from './src/profiles.mjs';
 import { asanaRequest, getOverdueTasks, getGCalClient, JARVIS_TOOLS, registerSendFunction, registerSendWithMentionsFunction } from './src/skills/loader.mjs';
@@ -386,6 +387,41 @@ async function handleIncomingMessage(m) {
         return; // Não continua o fluxo normal
       }
     }
+  }
+
+  // ATENDIMENTO PÚBLICO: DM de desconhecidos (leads)
+  // Se NÃO é grupo E sender NÃO é GUI_JID E sender NÃO é membro da equipe → handlePublicDM
+  if (!isGroup && sender !== CONFIG.GUI_JID && !realTeamJids.has(sender)) {
+    console.log(`[PUBLIC-DM] DM de desconhecido: ${pushName} (${sender.substring(0, 15)})`);
+
+    // Modo pausa: não responder
+    if (jarvisPaused) {
+      console.log('[PUBLIC-DM] PAUSADO - ignorando');
+      return;
+    }
+
+    const result = await handlePublicDM(text, sender, pushName, mediaFiles);
+    if (result?.text) {
+      await sendText(from, result.text);
+      // Salvar resposta do Jarvis
+      await storeMessage({
+        messageId: 'jarvis_public_' + randomUUID(), chatId: from, sender: CONFIG.GUI_JID,
+        pushName: 'Jarvis', text: result.text, isGroup: false, isAudio: false,
+        timestamp: Math.floor(Date.now() / 1000),
+      });
+
+      // Notificar Gui no primeiro contato de um lead novo
+      if (result.isFirstContact || result.notifyGui) {
+        try {
+          const notifyMsg = `📩 *Novo lead no WhatsApp*\n\nNome: ${pushName || 'Desconhecido'}\nNúmero: ${sender.replace('@s.whatsapp.net', '')}\nMensagem: "${text.substring(0, 150)}"\n\nJá respondi automaticamente.`;
+          await sendText(CONFIG.GUI_JID, notifyMsg);
+          console.log(`[PUBLIC-DM] Gui notificado sobre novo lead: ${pushName}`);
+        } catch (notifyErr) {
+          console.error('[PUBLIC-DM] Erro ao notificar Gui:', notifyErr.message);
+        }
+      }
+    }
+    return; // Não continua o fluxo normal
   }
 
   // Decidir se Jarvis deve responder
@@ -2315,10 +2351,179 @@ app.post('/dashboard/webhooks/register', auth, async (req, res) => {
 });
 
 // Start API
-app.listen(CONFIG.API_PORT, async () => {
+const server = app.listen(CONFIG.API_PORT, async () => {
   console.log('[API] Rodando na porta', CONFIG.API_PORT);
   await loadVoiceConfig().catch(() => {});
 });
+
+// ============================================
+// WEBSOCKET VOICE MODE — Streaming < 2s latência
+// ============================================
+const wss = new WebSocketServer({ server, path: '/ws/voice' });
+
+wss.on('connection', (ws, req) => {
+  // Validar JWT do query string: /ws/voice?token=xxx
+  const url = new URL(req.url, 'http://localhost');
+  const token = url.searchParams.get('token');
+  try {
+    jwt.verify(token, CONFIG.JWT_SECRET || process.env.JWT_SECRET);
+  } catch {
+    ws.close(4001, 'Unauthorized');
+    return;
+  }
+
+  console.log('[WS-VOICE] Cliente conectado');
+  let audioChunks = [];
+  let isProcessing = false;
+
+  ws.on('message', async (data, isBinary) => {
+    if (isBinary) {
+      // Chunk de áudio binário
+      audioChunks.push(data);
+      return;
+    }
+
+    // Comando de texto (JSON)
+    try {
+      const cmd = JSON.parse(data.toString());
+
+      if (cmd.type === 'stop') {
+        // Interromper TTS em andamento
+        isProcessing = false;
+        audioChunks = [];
+        ws.send(JSON.stringify({ type: 'stopped' }));
+        return;
+      }
+
+      if (cmd.type === 'end_speech' && audioChunks.length > 0 && !isProcessing) {
+        isProcessing = true;
+        const fullAudio = Buffer.concat(audioChunks);
+        audioChunks = [];
+        const startTime = Date.now();
+
+        try {
+          // 1. Transcrever
+          ws.send(JSON.stringify({ type: 'status', phase: 'transcribing' }));
+          console.log(`[WS-VOICE] Áudio recebido: ${(fullAudio.length / 1024).toFixed(1)}KB`);
+          const transcription = await transcribeAudio(fullAudio);
+          ws.send(JSON.stringify({ type: 'transcription', text: transcription }));
+
+          if (!transcription || transcription.trim().length < 2) {
+            isProcessing = false;
+            return;
+          }
+
+          console.log(`[WS-VOICE] Transcrição (${Date.now() - startTime}ms): "${transcription.substring(0, 80)}"`);
+
+          // 2. Gerar resposta com Agent Loop + Tools (mesmo cérebro do voice HTTP)
+          ws.send(JSON.stringify({ type: 'status', phase: 'thinking' }));
+          const { JARVIS_IDENTITY, CHANNEL_CONTEXT } = await import('./src/agents/master.mjs');
+          const { agentLoop } = await import('./src/brain.mjs');
+          const memoryCtx = await getMemoryContext(CONFIG.GUI_JID, 'dashboard', transcription);
+
+          dashboardChatHistory.push({ role: 'user', content: transcription });
+          while (dashboardChatHistory.length > 20) dashboardChatHistory.shift();
+
+          const msgs = [...dashboardChatHistory];
+          if (msgs.length > 0 && msgs[0].role !== 'user') msgs.shift();
+
+          const voiceSystemPrompt = JARVIS_IDENTITY + '\n\n' + CHANNEL_CONTEXT.dashboard_voice + memoryCtx;
+          const voiceModel = CONFIG.AI_MODEL || 'claude-sonnet-4-20250514';
+
+          const { text: response } = await agentLoop(
+            voiceModel,
+            voiceSystemPrompt,
+            msgs,
+            DASHBOARD_TOOLS,
+            { senderJid: CONFIG.GUI_JID, chatId: 'dashboard', channel: 'voice' },
+            { thinking: false, maxTokens: 600 }
+          );
+
+          console.log(`[WS-VOICE] agentLoop (${Date.now() - startTime}ms): ${response.length} chars`);
+          dashboardChatHistory.push({ role: 'assistant', content: response });
+          ws.send(JSON.stringify({ type: 'response', text: response }));
+
+          // 3. TTS streaming por frases
+          ws.send(JSON.stringify({ type: 'status', phase: 'speaking' }));
+          const sentences = splitIntoSentences(response);
+
+          for (let i = 0; i < sentences.length; i++) {
+            if (!isProcessing) break; // interrompido pelo usuário
+            try {
+              const audioData = await generateAudio(sentences[i]);
+              if (audioData && isProcessing) {
+                ws.send(JSON.stringify({
+                  type: 'audio',
+                  data: audioData.toString('base64'),
+                  index: i,
+                  total: sentences.length,
+                  text: sentences[i],
+                }));
+              }
+            } catch (ttsErr) {
+              console.error(`[WS-VOICE] TTS erro chunk ${i}:`, ttsErr.message);
+            }
+          }
+
+          ws.send(JSON.stringify({ type: 'done', duration: Date.now() - startTime }));
+          console.log(`[WS-VOICE] Completo em ${((Date.now() - startTime) / 1000).toFixed(1)}s — ${sentences.length} chunks`);
+
+          // Homework + memória em background (mesmo fluxo do voice HTTP)
+          const lower = transcription.toLowerCase();
+          const isDashboardInstruction = /\b(a partir de agora|nunca mais|sempre que|aprenda que|regra:|n[aã]o (fa[cç]a|chame|use|mande|envie|fale)|pode me chamar|me chame de|quero que voc[eê]|preciso que voc[eê]|jarvis.*(lembr|aprend|regra|entend)|autoriz|cuide|monitore|fique de olho|preste aten[cç][aã]o|tom[ea] conta|assuma|gerencie|acompanhe)\b/i.test(lower);
+          if (isDashboardInstruction) {
+            validateHomework(transcription, true).then(isValid => {
+              if (isValid) {
+                pool.query('INSERT INTO homework (type, content, source) VALUES ($1, $2, $3)', ['chat_instruction', transcription, 'dashboard_voice_ws']).catch(() => {});
+                console.log(`[HOMEWORK] Instrução do WS-voice salva: "${transcription.substring(0, 60)}..."`);
+              }
+            }).catch(() => {});
+          }
+          processMemory(transcription, 'Gui', CONFIG.GUI_JID, 'dashboard', false).catch(() => {});
+
+        } catch (err) {
+          console.error('[WS-VOICE] Erro no processamento:', err.message);
+          ws.send(JSON.stringify({ type: 'error', message: err.message }));
+        }
+
+        isProcessing = false;
+      }
+    } catch {
+      // JSON inválido — ignorar
+    }
+  });
+
+  ws.on('close', () => {
+    console.log('[WS-VOICE] Cliente desconectado');
+  });
+
+  ws.on('error', (err) => {
+    console.error('[WS-VOICE] Erro na conexão:', err.message);
+  });
+});
+
+// Helper: dividir texto em frases para TTS streaming
+function splitIntoSentences(text) {
+  const raw = text.match(/[^.!?…]+[.!?…]+|[^.!?…]+$/g) || [text];
+  const sentences = [];
+  let current = '';
+  for (const s of raw) {
+    current += s;
+    if (current.length >= 20) {
+      sentences.push(current.trim());
+      current = '';
+    }
+  }
+  if (current.trim()) {
+    // Merge tiny remainder with last sentence if possible
+    if (sentences.length > 0 && current.trim().length < 20) {
+      sentences[sentences.length - 1] += ' ' + current.trim();
+    } else {
+      sentences.push(current.trim());
+    }
+  }
+  return sentences.length > 0 ? sentences : [text];
+}
 
 // ============================================
 // CRON JOBS
