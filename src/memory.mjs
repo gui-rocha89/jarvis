@@ -5,7 +5,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { pool } from './database.mjs';
-import { TEAM_ASANA } from './config.mjs';
+import { CONFIG, TEAM_ASANA } from './config.mjs';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
@@ -21,6 +21,46 @@ setInterval(() => {
     if (now - val.cachedAt > 3600000) embeddingCache.delete(key);
   }
 }, 600000); // limpa a cada 10 min
+
+// Cache de contexto de pessoa (TTL 30min) — evita queries repetidas no DB
+const personContextCache = new Map();
+const PERSON_CONTEXT_TTL = 30 * 60 * 1000; // 30 minutos
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of personContextCache) {
+    if (now - val.cachedAt > PERSON_CONTEXT_TTL) personContextCache.delete(key);
+  }
+}, 600000); // limpa a cada 10 min
+
+/**
+ * Determina se uma pessoa é equipe ou cliente baseado no CONTEXTO (grupos onde interage).
+ * Consulta o DB pra ver em quais grupos a pessoa já mandou mensagem.
+ * Resultado cacheado por 30 minutos.
+ * @returns {'team' | 'client' | 'unknown'}
+ */
+async function getPersonContext(senderJid) {
+  if (!senderJid) return 'unknown';
+
+  const cached = personContextCache.get(senderJid);
+  if (cached) return cached.context;
+
+  try {
+    const { rows } = await pool.query(
+      'SELECT DISTINCT chat_id FROM jarvis_messages WHERE sender = $1 LIMIT 20',
+      [senderJid]
+    );
+
+    const internalGroups = [CONFIG.GROUP_TAREFAS, CONFIG.GROUP_GALAXIAS].filter(Boolean);
+    const appearsInInternal = rows.some(r => internalGroups.includes(r.chat_id));
+
+    const context = appearsInInternal ? 'team' : (rows.length > 0 ? 'client' : 'unknown');
+    personContextCache.set(senderJid, { context, cachedAt: Date.now() });
+    return context;
+  } catch (err) {
+    console.error('[MEMORY] getPersonContext erro:', err.message);
+    return 'unknown';
+  }
+}
 
 /**
  * Gera embedding via OpenAI text-embedding-3-small (1536 dims)
@@ -94,18 +134,46 @@ export async function initMemory() {
   }
 }
 
-export async function extractFacts(text, senderName, chatId, isGroup, groupContext = null) {
+export async function extractFacts(text, senderName, chatId, isGroup, groupContext = null, senderJid = null) {
   try {
-    // Montar contexto do grupo para o extrator saber quem é cliente vs equipe
-    let groupHint = '';
+    // Determinar contexto da pessoa pelo histórico de interações (DB-driven, não hardcoded)
+    const senderContext = senderJid ? await getPersonContext(senderJid) : 'unknown';
+    const senderLabel = senderContext === 'team' ? 'membro da equipe Stream Lab'
+      : senderContext === 'client' ? 'cliente/contato externo'
+      : 'desconhecido';
+
+    // Determinar tipo do grupo
+    let groupType = 'DM';
     if (isGroup && groupContext) {
-      groupHint = `\n\nCONTEXTO IMPORTANTE:
-- Grupo: "${groupContext.groupName}"
-- Tipo: ${groupContext.isClientGroup ? 'GRUPO DE CLIENTE (empresa externa)' : 'grupo interno do Lab'}
-${groupContext.isClientGroup ? `- ${senderName} é CONTATO DO CLIENTE (NÃO é membro da equipe Stream Lab). Use categoria "client_profile" para fatos sobre esta pessoa, NUNCA "team_member".` : `- ${senderName} é da equipe interna Stream Lab.`}`;
+      if (groupContext.isInternalGroup) groupType = 'interno';
+      else if (groupContext.isClientGroup) groupType = 'cliente';
+      else groupType = 'grupo';
     }
 
-    // Build team names list from TEAM_ASANA config
+    // Montar bloco de contexto para o modelo
+    let contextBlock = `\n\nCONTEXTO DA MENSAGEM:
+- Canal: ${isGroup ? `Grupo "${groupContext?.groupName || 'desconhecido'}" (tipo: ${groupType})` : 'Conversa privada (DM)'}
+- Remetente: ${senderName} (${senderLabel})`;
+
+    if (isGroup && groupContext?.isClientGroup) {
+      contextBlock += `\n- REGRA: Pessoas neste grupo de cliente sao CONTATOS DO CLIENTE. Use "client_profile", NUNCA "team_member".`;
+      if (senderContext !== 'team') {
+        contextBlock += `\n- ${senderName} NAO interage nos grupos internos → e cliente, NAO equipe.`;
+      }
+    }
+
+    if (senderContext === 'team' && isGroup && groupContext?.isClientGroup) {
+      contextBlock += `\n- ${senderName} e da equipe (interage nos grupos internos), mas esta respondendo no grupo do cliente.`;
+      contextBlock += `\n- Outras pessoas mencionadas que NAO sao da equipe sao clientes → use "client_profile".`;
+    }
+
+    contextBlock += `\n
+Use este contexto para classificar corretamente:
+- Se alguem e MENCIONADO num grupo interno mas NAO interage nos grupos internos → e cliente sendo discutido → "client" ou "client_profile"
+- Se alguem interage regularmente nos grupos internos (Tarefas Diarias, Galaxias) → e equipe → "team_member"
+- Remetente classificado como "${senderLabel}" com base no historico de interacoes reais`;
+
+    // Build team names list from TEAM_ASANA config (fallback only)
     const teamNames = Object.keys(TEAM_ASANA || {}).map(n => n.charAt(0).toUpperCase() + n.slice(1));
     const teamListStr = teamNames.length > 0 ? teamNames.join(', ') : 'Gui, Nicolas, Arthur, Bruno, Bruna, Rigon, Jarvis';
 
@@ -124,12 +192,13 @@ ${groupContext.isClientGroup ? `- ${senderName} é CONTATO DO CLIENTE (NÃO é m
 - Processos e fluxos de trabalho (como as coisas funcionam)
 - Padroes comportamentais (frequencia, horarios, preferencias de comunicacao)
 
-REGRA CRITICA DE CLASSIFICACAO:
-A equipe da Stream Lab e SOMENTE: ${teamListStr}. Qualquer outra pessoa mencionada e cliente ou contato externo — NUNCA classifique como "team_member".
-- Se a mensagem vem de um grupo de cliente, as pessoas mencionadas sao clientes, NAO equipe.
-- Pessoas que falam em GRUPOS DE CLIENTES (empresas externas) sao CONTATOS DO CLIENTE → use "client_profile", NUNCA "team_member"
-- Apenas as pessoas listadas acima, nos grupos internos da Stream Lab (Tarefas Diárias, Galáxias), sao "team_member"
-- Na duvida entre client_profile e team_member, use "client_profile" — e mais seguro${groupHint}
+CLASSIFICACAO DE PESSOAS:
+Equipe conhecida (referencia): ${teamListStr}.
+MAS use o CONTEXTO DA MENSAGEM abaixo como fonte primaria de classificacao — ele indica onde o remetente interage com base no historico real de mensagens.
+- Pessoas que interagem nos grupos internos (Tarefas Diarias, Galaxias) sao equipe → "team_member"
+- Pessoas que so aparecem em grupos de clientes sao contatos externos → "client_profile"
+- Se alguem e mencionado no contexto de um grupo de cliente, e provavelmente cliente → "client_profile"
+- Na duvida entre client_profile e team_member, use "client_profile" — e mais seguro${contextBlock}
 
 Responda APENAS em JSON array. Se nao houver fatos relevantes, responda [].
 Cada fato: {"content": "fato claro e completo", "category": "preference|client|client_profile|decision|deadline|rule|style|team_member|process|pattern", "importance": 1-10}
@@ -459,7 +528,7 @@ export async function processMemory(text, senderName, senderJid, chatId, isGroup
   if (!text || text.length < 15) return;
   try {
     console.log(`[MEMORY] Processando: "${text.substring(0, 40)}..." de ${senderName}`);
-    const facts = await extractFacts(text, senderName, chatId, isGroup, groupContext);
+    const facts = await extractFacts(text, senderName, chatId, isGroup, groupContext, senderJid);
     if (facts.length === 0) {
       console.log(`[MEMORY] Nenhum fato extraído de: "${text.substring(0, 40)}..."`);
       return;
@@ -524,4 +593,4 @@ export async function backfillEmbeddings(batchSize = 50) {
   return { processed, total: parseInt(stats[0].total), withEmbedding: parseInt(stats[0].with_emb) };
 }
 
-export { generateEmbedding, pgvectorEnabled };
+export { generateEmbedding, pgvectorEnabled, getPersonContext };
