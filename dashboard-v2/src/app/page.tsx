@@ -101,44 +101,54 @@ export default function OverviewPage() {
           {intel.error ? (
             <ErrorState message={intel.error} onRetry={intel.refetch} />
           ) : intel.data?.axes ? (
-            <>
-              <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <RadarChart data={intel.data?.axes || []}>
-                    <PolarGrid stroke="#1a2332" />
-                    <PolarAngleAxis
-                      dataKey="name"
-                      tick={{ fill: '#94a3b8', fontSize: 11 }}
-                    />
-                    <Radar
-                      dataKey="value"
-                      stroke="#00f0ff"
-                      fill="#00f0ff"
-                      fillOpacity={0.15}
-                      strokeWidth={2}
-                    />
-                  </RadarChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="flex items-center justify-between mt-4 pt-4 border-t border-stark-border">
-                <div>
-                  <p className="text-xs text-stark-dim">Patente Atual</p>
-                  <p className="text-lg font-bold text-stark-gold">{intel.data.patent}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs text-stark-dim">Score</p>
-                  <p className="text-lg font-bold text-stark-cyan">{intel.data.score}</p>
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-2 mt-4">
-                {(intel.data?.axes || []).map((axis) => (
-                  <div key={axis.name} className="flex items-center gap-1.5 text-xs text-stark-text-dim">
-                    {axisIcons[axis.name] || <Zap className="w-3 h-3" />}
-                    <span>{axis.name}: {axis.value}</span>
+            (() => {
+              // API retorna axes como objeto {empresa:100,...} — converter pra array
+              const axesArray = Array.isArray(intel.data.axes)
+                ? intel.data.axes
+                : Object.entries(intel.data.axes).map(([name, value]) => ({ name, value: value as number }));
+              const patentName = intel.data.patente?.nome || intel.data.patent || '--';
+              const score = intel.data.overallScore ?? intel.data.score ?? '--';
+              return (
+                <>
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <RadarChart data={axesArray}>
+                        <PolarGrid stroke="#1a2332" />
+                        <PolarAngleAxis
+                          dataKey="name"
+                          tick={{ fill: '#94a3b8', fontSize: 11 }}
+                        />
+                        <Radar
+                          dataKey="value"
+                          stroke="#00f0ff"
+                          fill="#00f0ff"
+                          fillOpacity={0.15}
+                          strokeWidth={2}
+                        />
+                      </RadarChart>
+                    </ResponsiveContainer>
                   </div>
-                ))}
-              </div>
-            </>
+                  <div className="flex items-center justify-between mt-4 pt-4 border-t border-stark-border">
+                    <div>
+                      <p className="text-xs text-stark-dim">Patente Atual</p>
+                      <p className="text-lg font-bold text-stark-gold">{patentName}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-stark-dim">Score</p>
+                      <p className="text-lg font-bold text-stark-cyan">{score}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mt-4">
+                    {axesArray.map((axis) => (
+                      <div key={axis.name} className="flex items-center gap-1.5 text-xs text-stark-text-dim">
+                        {axisIcons[axis.name] || <Zap className="w-3 h-3" />}
+                        <span>{axis.name}: {axis.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              );
+            })()
           ) : null}
         </div>
 
