@@ -192,6 +192,19 @@ export async function initDB() {
       )
     `);
 
+    // Tabela de log de emails (canal email genérico)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS email_log (
+        id SERIAL PRIMARY KEY,
+        from_address TEXT,
+        subject TEXT,
+        body_preview TEXT,
+        classification TEXT DEFAULT 'normal',
+        processed BOOLEAN DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
     // Tabela de log de cobranças (escalação)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS cobranca_log (

@@ -146,6 +146,12 @@ Para ficar em silêncio: responda APENAS "[SILENCIO]"`,
 - Pode falar de tudo (processos, Asana, equipe, estratégia)
 - Gui é o dono — acesso total`,
 
+  // Instagram — DM (leads/público externo)
+  instagram_dm: `CANAL: Instagram Direct. Respostas CURTAS (máx 3 frases). Sem markdown. Sem emojis excessivos (máx 1 por mensagem). Tom profissional mas acessível. NUNCA mencione WhatsApp, Asana, ou ferramentas internas. Se a pessoa quer saber mais → "Me chama no WhatsApp que te explico melhor! 📱"`,
+
+  // Email — canal formal
+  email: `CANAL: Email. Respostas formais e profissionais. Usar saudação (Olá, Prezado). Assinar como "Equipe Stream Lab". Sem emojis. Sem gírias. Se precisar de ação → criar task no Asana.`,
+
   // Dashboard — modo voz
   dashboard_voice: `CANAL: Dashboard voz (conversa por voz em tempo real com o Gui)
 - VELOCIDADE É TUDO: responda em 1-2 frases curtas. Máximo absoluto 3 frases.

@@ -35,6 +35,8 @@ import { startAsanaStudy, stopAsanaStudy, asanaBatchState } from './src/batch-as
 import { startEmailMonitor, stopEmailMonitor, emailMonitorState } from './src/asana-email-monitor.mjs';
 import { generateBrainDocument, loadBrainDocument, invalidateBrainCache, getBrainStatus } from './src/brain-document.mjs';
 import { processAsanaWebhookEvent, registerAsanaWebhooks } from './src/webhooks/asana-webhook.mjs';
+import { processInstagramMessage } from './src/channels/instagram.mjs';
+import { startChannelEmailMonitor, stopChannelEmailMonitor, channelEmailState } from './src/channels/email.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1138,6 +1140,14 @@ app.get('/dashboard/email-monitor', auth, async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM asana_email_log ORDER BY created_at DESC LIMIT 20').catch(() => ({ rows: [] }));
     res.json({ status: emailMonitorState, recentLogs: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- Email Channel Monitor (leads/contato genérico) ---
+app.get('/dashboard/email-channel', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM email_log ORDER BY created_at DESC LIMIT 20').catch(() => ({ rows: [] }));
+    res.json({ status: channelEmailState, recentLogs: rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -2314,6 +2324,39 @@ app.get('/dashboard/qr-image', auth, async (req, res) => {
 });
 
 // ============================================
+// INSTAGRAM WEBHOOKS (público — Meta valida via verify_token)
+// ============================================
+app.get('/webhooks/instagram', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === process.env.INSTAGRAM_VERIFY_TOKEN) {
+    console.log('[INSTAGRAM] Webhook verificado');
+    res.status(200).send(challenge);
+  } else {
+    res.sendStatus(403);
+  }
+});
+
+app.post('/webhooks/instagram', async (req, res) => {
+  res.sendStatus(200); // Responder imediatamente
+
+  const body = req.body;
+  if (body.object !== 'instagram') return;
+
+  for (const entry of body.entry || []) {
+    for (const event of entry.messaging || []) {
+      try {
+        await processInstagramMessage(event);
+      } catch (err) {
+        console.error('[INSTAGRAM] Erro no webhook:', err.message);
+      }
+    }
+  }
+});
+
+// ============================================
 // ASANA WEBHOOKS (público — Asana valida via X-Hook-Secret)
 // ============================================
 app.post('/webhooks/asana', async (req, res) => {
@@ -2941,5 +2984,6 @@ initDB().then(async () => {
   startWhatsApp();
   setupCronJobs();
   startEmailMonitor();
-  console.log('[JARVIS] Todos os sistemas 4.0 inicializados.');
+  startChannelEmailMonitor();
+  console.log('[JARVIS] Todos os sistemas 5.0 inicializados.');
 });
