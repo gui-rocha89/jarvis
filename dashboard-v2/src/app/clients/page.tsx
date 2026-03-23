@@ -33,7 +33,7 @@ export default function ClientsPage() {
   if (profiles.error) return <ErrorState message={profiles.error} onRetry={profiles.refetch} />;
 
   const allProfiles = Array.isArray(profiles.data) ? profiles.data : profiles.data?.profiles || [];
-  const clientProfiles = allProfiles.filter((p) => p.entity_type === 'client');
+  const clientProfiles = allProfiles.filter((p) => p.entity_type === 'client' || p.entity_type === 'client_contact');
 
   return (
     <div className="space-y-6 pt-10 md:pt-0">

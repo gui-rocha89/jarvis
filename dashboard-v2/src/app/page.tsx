@@ -31,9 +31,11 @@ interface IntelligenceData {
 
 interface MemoryStats {
   total: number;
-  withEmbedding: number;
-  byScope: Record<string, number>;
+  user: number;
+  chat: number;
+  agent: number;
   byCategory: Record<string, number>;
+  topMemories?: unknown[];
 }
 
 const axisIcons: Record<string, React.ReactNode> = {
@@ -160,13 +162,15 @@ export default function OverviewPage() {
             <div className="space-y-6">
               <div className="grid grid-cols-2 gap-4">
                 <StatBox label="Total de Memorias" value={memory.data.total} />
-                <StatBox label="Com Embedding" value={memory.data.withEmbedding} />
+                <StatBox label="Escopos" value={(memory.data.user || 0) + (memory.data.chat || 0) + (memory.data.agent || 0)} />
               </div>
-              {memory.data.byScope && (
+              {(memory.data.user != null || memory.data.chat != null || memory.data.agent != null) && (
                 <div>
                   <p className="text-xs text-stark-dim mb-2">Por Escopo</p>
                   <div className="space-y-2">
-                    {Object.entries(memory.data.byScope).map(([scope, count]) => (
+                    {([['user', memory.data.user], ['chat', memory.data.chat], ['agent', memory.data.agent]] as [string, number][])
+                      .filter(([, count]) => count != null)
+                      .map(([scope, count]) => (
                       <div key={scope} className="flex items-center justify-between">
                         <span className="text-xs text-stark-text-dim capitalize">{scope}</span>
                         <span className="text-xs font-mono text-stark-cyan">{count}</span>

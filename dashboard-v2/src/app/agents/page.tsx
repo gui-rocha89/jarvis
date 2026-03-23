@@ -6,10 +6,14 @@ import { ErrorState } from '@/components/ui/error-state';
 import { Bot, Megaphone, Palette, ClipboardList, Search, MessageCircle } from 'lucide-react';
 
 interface Agent {
-  name: string;
-  specialty: string;
-  status: string;
+  id: string;
+  nome: string;
+  icon: string;
+  cor: string;
+  especialidade: string;
   triggers: string[];
+  capabilities?: string[];
+  memoriasRelevantes?: number;
 }
 
 const agentIcons: Record<string, React.ReactNode> = {
@@ -49,11 +53,11 @@ export default function AgentsPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {agents.map((agent) => {
-          const key = agent.name.toLowerCase();
+          const key = agent.id?.toLowerCase() || agent.nome.toLowerCase();
           const colorClass = agentColors[key] || 'text-stark-text border-stark-border';
           return (
             <div
-              key={agent.name}
+              key={agent.id || agent.nome}
               className={`bg-stark-panel border rounded-xl p-5 ${colorClass}`}
             >
               <div className="flex items-center gap-3 mb-3">
@@ -61,8 +65,8 @@ export default function AgentsPage() {
                   {agentIcons[key] || <Bot className="w-5 h-5" />}
                 </div>
                 <div>
-                  <h3 className="font-bold text-sm">{agent.name}</h3>
-                  <p className="text-xs text-stark-dim">{agent.specialty}</p>
+                  <h3 className="font-bold text-sm">{agent.nome}</h3>
+                  <p className="text-xs text-stark-dim">{agent.especialidade}</p>
                 </div>
               </div>
               {agent.triggers && agent.triggers.length > 0 && (

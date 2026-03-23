@@ -6,16 +6,14 @@ import { ErrorState } from '@/components/ui/error-state';
 import { Shield, MapPin, Monitor, Clock } from 'lucide-react';
 
 interface AccessLog {
-  id: number;
-  user_id: number;
+  email: string;
   ip: string;
   user_agent: string;
-  geo?: {
-    city?: string;
-    country?: string;
-    regionName?: string;
-  };
+  action: string;
   success: boolean;
+  city?: string;
+  region?: string;
+  country?: string;
   created_at: string;
 }
 
@@ -55,14 +53,14 @@ export default function SecurityPage() {
               </tr>
             </thead>
             <tbody>
-              {logs.map((log) => (
-                <tr key={log.id} className="border-b border-stark-border/50 hover:bg-stark-bg/50">
+              {logs.map((log, idx) => (
+                <tr key={`${log.created_at}-${idx}`} className="border-b border-stark-border/50 hover:bg-stark-bg/50">
                   <td className="px-4 py-3 text-xs text-stark-text-dim">
                     {new Date(log.created_at).toLocaleString('pt-BR')}
                   </td>
                   <td className="px-4 py-3 text-xs font-mono">{log.ip}</td>
                   <td className="px-4 py-3 text-xs text-stark-text-dim">
-                    {log.geo ? `${log.geo.city || ''}, ${log.geo.regionName || ''}, ${log.geo.country || ''}` : '--'}
+                    {log.city ? `${log.city}, ${log.region || ''}, ${log.country || ''}` : '--'}
                   </td>
                   <td className="px-4 py-3 text-xs text-stark-text-dim truncate max-w-[200px]">
                     {log.user_agent?.split(' ').slice(0, 3).join(' ') || '--'}
@@ -86,8 +84,8 @@ export default function SecurityPage() {
 
         {/* Mobile cards */}
         <div className="md:hidden space-y-2 p-3">
-          {logs.map((log) => (
-            <div key={log.id} className="bg-stark-bg rounded-lg p-3 space-y-2">
+          {logs.map((log, idx) => (
+            <div key={`${log.created_at}-${idx}`} className="bg-stark-bg rounded-lg p-3 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-stark-text-dim flex items-center gap-1">
                   <Clock className="w-3 h-3" />
@@ -106,9 +104,9 @@ export default function SecurityPage() {
               <div className="flex items-center gap-1 text-xs text-stark-text-dim">
                 <Monitor className="w-3 h-3" /> {log.ip}
               </div>
-              {log.geo && (
+              {log.city && (
                 <div className="flex items-center gap-1 text-xs text-stark-dim">
-                  <MapPin className="w-3 h-3" /> {log.geo.city}, {log.geo.country}
+                  <MapPin className="w-3 h-3" /> {log.city}, {log.country}
                 </div>
               )}
             </div>

@@ -7,15 +7,21 @@ import { ErrorState } from '@/components/ui/error-state';
 import { Settings, Volume2, Save, Loader2, LogOut } from 'lucide-react';
 import { logout } from '@/lib/api';
 
-interface VoiceConfig {
+interface ElevenLabsConfig {
   stability: number;
   similarity_boost: number;
   style: number;
   speaker_boost: boolean;
 }
 
+interface VoiceApiResponse {
+  provider: string;
+  openai?: unknown;
+  elevenlabs: ElevenLabsConfig;
+}
+
 export default function SettingsPage() {
-  const [voice, setVoice] = useState<VoiceConfig | null>(null);
+  const [voice, setVoice] = useState<ElevenLabsConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,8 +33,8 @@ export default function SettingsPage() {
 
   const loadVoiceConfig = async () => {
     try {
-      const data = await apiGet<VoiceConfig | { config: VoiceConfig }>('/dashboard/voice');
-      const config = (data as { config: VoiceConfig }).config || (data as VoiceConfig);
+      const data = await apiGet<VoiceApiResponse>('/dashboard/voice');
+      const config = data?.elevenlabs || data as unknown as ElevenLabsConfig;
       setVoice(config);
       setError(null);
     } catch (err) {
@@ -42,7 +48,7 @@ export default function SettingsPage() {
     if (!voice) return;
     setSaving(true);
     try {
-      await apiPost('/dashboard/voice', voice);
+      await apiPost('/dashboard/voice', { elevenlabs: voice });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch {

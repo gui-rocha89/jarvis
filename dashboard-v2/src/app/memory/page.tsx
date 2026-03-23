@@ -9,9 +9,11 @@ import { Search, Brain, Database, Loader2 } from 'lucide-react';
 
 interface MemoryStats {
   total: number;
-  withEmbedding: number;
-  byScope: Record<string, number>;
+  user: number;
+  chat: number;
+  agent: number;
   byCategory: Record<string, number>;
+  topMemories?: unknown[];
 }
 
 interface Memory {
@@ -37,10 +39,10 @@ export default function MemoryPage() {
     if (!searchQuery.trim()) return;
     setSearching(true);
     try {
-      const data = await apiGet<Memory[] | { memories: Memory[] }>(
+      const data = await apiGet<Memory[] | { results: Memory[]; count: number } | { memories: Memory[] }>(
         `/dashboard/memory/search?q=${encodeURIComponent(searchQuery)}`
       );
-      setSearchResults(Array.isArray(data) ? data : data?.memories || []);
+      setSearchResults(Array.isArray(data) ? data : (data as { results?: Memory[]; memories?: Memory[] })?.results || (data as { memories?: Memory[] })?.memories || []);
     } catch {
       setSearchResults([]);
     } finally {
@@ -51,7 +53,7 @@ export default function MemoryPage() {
   const handleBackfill = async () => {
     setBackfilling(true);
     try {
-      await apiPost('/dashboard/memory/backfill-embeddings');
+      await apiPost('/dashboard/memory/backfill');
     } catch {
       // silently fail
     } finally {
@@ -85,15 +87,9 @@ export default function MemoryPage() {
       {stats.data && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <StatCard label="Total" value={stats.data.total} />
-          <StatCard label="Com Embedding" value={stats.data.withEmbedding} />
-          <StatCard
-            label="Escopos"
-            value={Object.keys(stats.data.byScope || {}).length}
-          />
-          <StatCard
-            label="Categorias"
-            value={Object.keys(stats.data.byCategory || {}).length}
-          />
+          <StatCard label="User" value={stats.data.user} />
+          <StatCard label="Chat" value={stats.data.chat} />
+          <StatCard label="Agent" value={stats.data.agent} />
         </div>
       )}
 
