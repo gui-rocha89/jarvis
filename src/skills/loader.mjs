@@ -2141,6 +2141,7 @@ Vá direto ao ponto. Sem cumprimentos, sem introdução.`;
   }
 
   if (toolName === 'enviar_audio') {
+    const chatId = context.chatId || '';
     if (!chatId) return { error: 'chatId não disponível' };
     if (!input.texto) return { error: 'texto é obrigatório' };
 
