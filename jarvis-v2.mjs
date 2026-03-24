@@ -105,8 +105,7 @@ async function checkShowcaseExpired(jid, sendText) {
   const session = showcaseConversations.get(jid);
   if (session?._expired) {
     showcaseConversations.delete(jid);
-    const name = session.pushName || 'você';
-    await sendText(jid, `Ei ${name}! 👋 Parece que a gente pausou aqui. Vou voltar pro modo atendimento normal.\n\nSe quiser me conhecer de verdade de novo, é só mandar *"Quero conhecer o Jarvis"* — senão, vou te atender com a roupa de atendente (menos charme, mesma competência 😄).`);
+    await sendText(jid, `Parece que tu ficou ocupada! Sem problemas. Se quiser voltar a conversar, é só mandar "Quero conhecer o Jarvis" de novo. Qualquer dúvida, tô aqui. 👋`);
     console.log(`[SHOWCASE] Sessão expirada para ${name} (${jid.substring(0, 15)}) — despedida enviada`);
     return true;
   }
@@ -543,6 +542,7 @@ async function handleIncomingMessage(m) {
         startedAt: Date.now(),
         messageCount: 1,
         lastActivity: Date.now(),
+        pushName: pushName || null,
       });
 
       // Notificar Gui sobre novo lead no modo apresentação
@@ -555,27 +555,39 @@ async function handleIncomingMessage(m) {
         console.error('[SHOWCASE] Erro ao notificar Gui:', notifyErr.message);
       }
 
-      // Gerar intro impressionante
-      const introText = `E aí, ${pushName || 'tudo bem'}! 👋 Prazer, eu sou o *Jarvis* — a inteligência artificial da Stream Lab.\n\nEu opero 24 horas por dia gerenciando projetos, criando estratégias de conteúdo, analisando campanhas de tráfego pago e ajudando marcas a se destacarem no digital.\n\nMas não vou ficar só falando de mim — me conta: o que te trouxe até aqui? Quero entender como posso impressionar você de verdade. 🚀`;
+      // Gerar intro dinâmica via Claude (segue CHANNEL_CONTEXT.whatsapp_showcase)
+      const introTrigger = `Oi, quero conhecer o Jarvis`;
+      const introResult = await handleShowcaseMessage(introTrigger, sender, pushName, mediaFiles, 1);
+      if (introResult?.text) {
+        if (introResult.sendAsAudio) {
+          // Áudio: mostrar "gravando..." + delay
+          await sock.sendPresenceUpdate('recording', from).catch(() => {});
+          const audioDelay = Math.min(6000, Math.max(3000, introResult.text.length * 15));
+          await new Promise(r => setTimeout(r, audioDelay));
+          try {
+            const audioBuffer = await generateAudio(introResult.text);
+            const audioResult = await sock.sendMessage(from, { audio: audioBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
+            if (audioResult?.key?.id) sentByBot.add(audioResult.key.id);
+            await sock.sendPresenceUpdate('paused', from).catch(() => {});
+          } catch (audioErr) {
+            console.error('[SHOWCASE] Erro ao enviar áudio intro, enviando como texto:', audioErr.message);
+            await sock.sendPresenceUpdate('paused', from).catch(() => {});
+            await sendText(from, introResult.text);
+          }
+        } else {
+          await sock.sendPresenceUpdate('composing', from).catch(() => {});
+          const typingDelay = Math.min(5000, Math.max(2000, introResult.text.length * 10));
+          await new Promise(r => setTimeout(r, typingDelay));
+          await sendText(from, introResult.text);
+          await sock.sendPresenceUpdate('paused', from).catch(() => {});
+        }
 
-      // Enviar intro como texto primeiro
-      await sendText(from, introText);
-      await storeMessage({
-        messageId: 'jarvis_showcase_' + randomUUID(), chatId: from, sender: CONFIG.GUI_JID,
-        pushName: 'Jarvis', text: introText, isGroup: false, isAudio: false,
-        timestamp: Math.floor(Date.now() / 1000),
-      });
-
-      // Enviar áudio de apresentação (SEMPRE áudio no primeiro contato)
-      try {
-        const audioIntro = `Fala, ${pushName || 'meu caro'}! Aqui é o Jarvis, a inteligência artificial da Stream Lab. Eu sou tipo o cérebro digital por trás de um laboratório criativo de marketing. Gerencio projetos, crio estratégias de conteúdo, analiso campanhas de tráfego pago, e o melhor: funciono vinte e quatro horas por dia, sete dias por semana. Me conta o que você tá procurando que eu te mostro do que sou capaz!`;
-        await sock.sendPresenceUpdate('recording', from).catch(() => {});
-        const audioBuffer = await generateAudio(audioIntro);
-        const audioResult = await sock.sendMessage(from, { audio: audioBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
-        if (audioResult?.key?.id) sentByBot.add(audioResult.key.id);
-        await sock.sendPresenceUpdate('paused', from).catch(() => {});
-      } catch (audioErr) {
-        console.error('[SHOWCASE] Erro ao enviar áudio intro:', audioErr.message);
+        // Salvar resposta
+        await storeMessage({
+          messageId: 'jarvis_showcase_' + randomUUID(), chatId: from, sender: CONFIG.GUI_JID,
+          pushName: 'Jarvis', text: introResult.text, isGroup: false, isAudio: introResult.sendAsAudio || false,
+          timestamp: Math.floor(Date.now() / 1000),
+        });
       }
 
       return;
@@ -3167,6 +3179,8 @@ async function startWhatsApp() {
         try {
           const from = m.key.remoteJid;
           if (!from || from === 'status@broadcast') continue;
+          // Ignorar mensagens do próprio bot (evita duplicação com storeMessage do sendText/showcase)
+          if (m.key.fromMe) continue;
           const isGroup = from.endsWith('@g.us');
           const sender = extractSender(m, from, isGroup);
           let text = m.message?.conversation || m.message?.extendedTextMessage?.text || m.message?.imageMessage?.caption || m.message?.videoMessage?.caption || '';
