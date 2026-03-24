@@ -160,6 +160,9 @@ async function sendText(jid, text, quotedMsg) {
   if (!sock) return;
   try {
     await sock.sendPresenceUpdate('composing', jid).catch(() => {});
+    // Delay humano — proporcional ao tamanho da mensagem (1.5s a 4s)
+    const humanDelay = Math.min(4000, Math.max(1500, Math.floor(text.length / 50) * 500 + 1500));
+    await new Promise(r => setTimeout(r, humanDelay));
     const msgPayload = { text };
     if (quotedMsg) msgPayload.quoted = quotedMsg;
     const result = await sock.sendMessage(jid, msgPayload);
@@ -198,6 +201,8 @@ async function sendAudio(jid, text) {
   if (!sock || !AUDIO_ALLOWED.has(jid)) return sendText(jid, text);
   try {
     await sock.sendPresenceUpdate('recording', jid).catch(() => {});
+    // Delay humano antes de "gravar" (2-3s)
+    await new Promise(r => setTimeout(r, 2000 + Math.random() * 1000));
     const audioBuffer = await generateAudio(text);
     const result = await sock.sendMessage(jid, { audio: audioBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
     if (result?.key?.id) sentByBot.add(result.key.id);
