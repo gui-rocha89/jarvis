@@ -667,7 +667,9 @@ async function handleIncomingMessage(m) {
       // Notificar Gui no primeiro contato de um lead novo
       if (result.isFirstContact || result.notifyGui) {
         try {
-          const notifyMsg = `📩 *Novo lead no WhatsApp*\n\nNome: ${pushName || 'Desconhecido'}\nNúmero: ${sender.replace('@s.whatsapp.net', '')}\nMensagem: "${text.substring(0, 150)}"\n\nJá respondi automaticamente.`;
+          const leadPhone = from.replace('@s.whatsapp.net', '').replace('@lid', '');
+          const leadPhoneFmt = leadPhone.length >= 12 ? `+${leadPhone.substring(0, 2)} ${leadPhone.substring(2, 4)} ${leadPhone.substring(4)}` : leadPhone;
+          const notifyMsg = `📩 *Novo lead no WhatsApp*\n\nNome: ${pushName || 'Desconhecido'}\nNúmero: ${leadPhoneFmt}\nMensagem: "${text.substring(0, 150)}"\n\nJá respondi automaticamente.`;
           await sendText(CONFIG.GUI_JID, notifyMsg);
           console.log(`[PUBLIC-DM] Gui notificado sobre novo lead: ${pushName}`);
         } catch (notifyErr) {
