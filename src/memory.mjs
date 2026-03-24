@@ -167,15 +167,26 @@ export async function extractFacts(text, senderName, chatId, isGroup, groupConte
       contextBlock += `\n- Outras pessoas mencionadas que NAO sao da equipe sao clientes → use "client_profile".`;
     }
 
-    contextBlock += `\n
-Use este contexto para classificar corretamente:
-- Se alguem e MENCIONADO num grupo interno mas NAO interage nos grupos internos → e cliente sendo discutido → "client" ou "client_profile"
-- Se alguem interage regularmente nos grupos internos (Tarefas Diarias, Galaxias) → e equipe → "team_member"
-- Remetente classificado como "${senderLabel}" com base no historico de interacoes reais`;
-
-    // Build team names list from TEAM_ASANA config (fallback only)
+    // Build team names list from TEAM_ASANA config
     const teamNames = Object.keys(TEAM_ASANA || {}).map(n => n.charAt(0).toUpperCase() + n.slice(1));
     const teamListStr = teamNames.length > 0 ? teamNames.join(', ') : 'Gui, Nicolas, Arthur, Bruno, Bruna, Rigon, Jarvis';
+
+    // Adicionar contexto do grupo de origem para classificacao inteligente
+    const internalGroupIds = [CONFIG.GROUP_TAREFAS, CONFIG.GROUP_GALAXIAS].filter(Boolean);
+    const isInternalGroup = isGroup && internalGroupIds.includes(chatId);
+    const isClientGroup = isGroup && groupContext?.isClientGroup;
+    const groupLabel = isInternalGroup ? 'INTERNO (equipe Stream Lab)' : isClientGroup ? 'DE CLIENTE (externo)' : 'desconhecido';
+
+    contextBlock += `\n
+CONTEXTO DO GRUPO: Esta mensagem veio do grupo "${groupContext?.groupName || 'DM privada'}" que e um grupo ${groupLabel}.
+EQUIPE CONHECIDA: ${teamListStr}.
+
+REGRAS DE CLASSIFICACAO POR ORIGEM:
+- Grupo INTERNO (Tarefas Diarias, Galaxias): se alguem e MENCIONADO mas NAO esta na lista de equipe conhecida, provavelmente e um CLIENTE sendo discutido pela equipe → use "client" ou "client_profile"
+- Grupo DE CLIENTE: o remetente provavelmente e cliente (a nao ser que esteja na lista de equipe conhecida)
+- Se alguem interage regularmente nos grupos internos (Tarefas Diarias, Galaxias) → e equipe → "team_member"
+- Remetente classificado como "${senderLabel}" com base no historico de interacoes reais
+- Na duvida, compare o nome com a lista de EQUIPE CONHECIDA antes de classificar`;
 
     const response = await anthropic.messages.create({
       model: MEMORY_MODEL,
