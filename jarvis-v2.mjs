@@ -56,7 +56,7 @@ const realTeamJids = new Set();
 // Expira após 2 horas de inatividade
 // ============================================
 const showcaseConversations = new Map();
-const SHOWCASE_TTL = 2 * 60 * 60 * 1000; // 2 horas
+const SHOWCASE_TTL = 4 * 60 * 1000; // 4 minutos de inatividade → encerra showcase
 
 // ============================================
 // HANDOFF — Quando equipe assume o atendimento, Jarvis sai
@@ -89,12 +89,28 @@ function isShowcaseTrigger(text) {
 function isShowcaseActive(jid) {
   const session = showcaseConversations.get(jid);
   if (!session) return false;
-  // Expirar após 2 horas de inatividade
+  // Expirar após 4 minutos de inatividade
   if (Date.now() - session.lastActivity > SHOWCASE_TTL) {
     showcaseConversations.delete(jid);
+    // Marcar pra enviar mensagem de encerramento
+    session._expired = true;
+    showcaseConversations.set(jid, session);
     return false;
   }
   return true;
+}
+
+// Checa e envia despedida do showcase quando expirou
+async function checkShowcaseExpired(jid, sendText) {
+  const session = showcaseConversations.get(jid);
+  if (session?._expired) {
+    showcaseConversations.delete(jid);
+    const name = session.pushName || 'você';
+    await sendText(jid, `Ei ${name}! 👋 Parece que a gente pausou aqui. Vou voltar pro modo atendimento normal.\n\nSe quiser me conhecer de verdade de novo, é só mandar *"Quero conhecer o Jarvis"* — senão, vou te atender com a roupa de atendente (menos charme, mesma competência 😄).`);
+    console.log(`[SHOWCASE] Sessão expirada para ${name} (${jid.substring(0, 15)}) — despedida enviada`);
+    return true;
+  }
+  return false;
 }
 
 // ============================================
@@ -489,6 +505,13 @@ async function handleIncomingMessage(m) {
   // Se NÃO é grupo E sender NÃO é GUI_JID E sender NÃO é membro da equipe → handlePublicDM ou Showcase
   if (!isGroup && sender !== CONFIG.GUI_JID && !realTeamJids.has(sender)) {
     console.log(`[PUBLIC-DM] DM de desconhecido: ${pushName} (${sender.substring(0, 15)})`);
+
+    // SHOWCASE EXPIRADO: se a sessão expirou por inatividade, enviar despedida
+    const showcaseExpired = await checkShowcaseExpired(from, sendText);
+    if (showcaseExpired && !isShowcaseTrigger(text)) {
+      // Despedida já foi enviada, não processa essa mensagem como showcase
+      // Cai no fluxo público normal abaixo
+    }
 
     // HANDOFF: se equipe assumiu essa conversa, Jarvis não responde
     if (handoffJids.has(from)) {
