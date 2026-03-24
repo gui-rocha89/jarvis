@@ -547,8 +547,9 @@ async function handleIncomingMessage(m) {
 
       // Notificar Gui sobre novo lead no modo apresentação
       try {
-        const phone = sender.replace('@s.whatsapp.net', '');
-        const notifyMsg = `🎯 *Novo lead no modo apresentação*\n\nNome: ${pushName || 'Desconhecido'}\nNúmero: ${phone}\n\nEntrou no Showcase Mode agora.`;
+        const phone = from.replace('@s.whatsapp.net', '').replace('@lid', '');
+        const phoneFormatted = phone.length >= 12 ? `+${phone.substring(0, 2)} ${phone.substring(2, 4)} ${phone.substring(4)}` : phone;
+        const notifyMsg = `🎯 *Novo lead no modo apresentação*\n\nNome: ${pushName || 'Desconhecido'}\nNúmero: ${phoneFormatted}\n\nEntrou no Showcase Mode agora.`;
         await sendText(CONFIG.GUI_JID, notifyMsg);
       } catch (notifyErr) {
         console.error('[SHOWCASE] Erro ao notificar Gui:', notifyErr.message);
@@ -626,8 +627,9 @@ async function handleIncomingMessage(m) {
         // Notificar Gui se é lead quente (perguntou sobre preço/contratação/reunião)
         if (result.isHotLead) {
           try {
-            const phone = sender.replace('@s.whatsapp.net', '').replace('@lid', '');
-            const hotMsg = `🔥 *Lead quente no Showcase!*\n\n👤 *${pushName || 'Desconhecido'}*\n📱 ${phone}\n\n💬 Lead disse: "${text.substring(0, 200)}"\n\n🤖 Jarvis respondeu: "${result.text.substring(0, 200)}"\n\n⚡ Ação necessária: verificar agenda e retornar ao lead.`;
+            const phone = from.replace('@s.whatsapp.net', '').replace('@lid', '');
+            const phoneFormatted = phone.length >= 12 ? `+${phone.substring(0, 2)} ${phone.substring(2, 4)} ${phone.substring(4)}` : phone;
+            const hotMsg = `🔥 *Lead quente no Showcase!*\n\n👤 *${pushName || 'Desconhecido'}*\n📱 ${phoneFormatted}\n\n💬 Lead disse: "${text.substring(0, 200)}"\n\n🤖 Jarvis respondeu: "${result.text.substring(0, 200)}"\n\n⚡ Ação necessária: verificar agenda e retornar ao lead.`;
             await sendText(CONFIG.GUI_JID, hotMsg);
             // Também notificar no grupo de tarefas
             if (CONFIG.GROUP_TAREFAS) {
