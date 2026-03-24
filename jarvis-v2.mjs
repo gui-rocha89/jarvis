@@ -706,6 +706,59 @@ async function handleIncomingMessage(m) {
   }
 
   // ============================================
+  // COMANDO: Jarvis ajuda / comandos (grupos internos apenas)
+  // ============================================
+  if (isGroup && JARVIS_ALLOWED_GROUPS.has(from) && /\b(jarvis\s+(ajuda|comandos|help|funcionalidades|o\s*que\s*(tu|voc[eê])\s*faz))\b/i.test(text)) {
+    const helpText = `🤖 *JARVIS v5.0 — O que eu sei fazer*
+
+📋 *Gestão de Projetos*
+• Criar tarefas no Asana → _"Jarvis cria uma demanda pro Rossato"_
+• Cobrar tarefas atrasadas → automático, 2x por dia
+• Mover tasks entre seções → _"Jarvis move a task X pra Em Andamento"_
+• Atribuir responsáveis → _"Jarvis atribui essa task pro Nicolas"_
+
+📊 *Tráfego Pago (Meta Ads)*
+• Criar campanhas → _"Jarvis cria campanha de tráfego pro Minner"_
+• Relatórios de performance → _"Jarvis relatório de ads dos últimos 7 dias"_
+• Pausar/reativar campanhas
+
+🗓️ *Agenda*
+• Agendar captações → _"Jarvis agenda captação da Dra. Lívia dia 28/03 às 14h"_
+• Consultar agenda do dia
+
+🧠 *Memória*
+• Eu aprendo com TUDO que vocês falam nos grupos
+• Posso lembrar de decisões, prazos, preferências
+• _"Jarvis o que tu sabe sobre o Rossato?"_
+
+🔍 *Pesquisa*
+• Buscar mensagens antigas → _"Jarvis busca o link que a Dra. Lívia mandou"_
+• Buscar memórias por pessoa ou cliente
+
+🎤 *Voz*
+• Posso responder com áudio quando faz sentido
+• _"Jarvis manda um áudio explicando o status"_
+
+🎨 *Diversão (só aqui no grupo interno!)*
+• Gerar imagens → _"Jarvis gera uma imagem de um gato astronauta"_
+• Criar stickers → _"Jarvis faz um sticker de pizza voando"_
+• Som de peido → _"Jarvis solta um pum"_ 💨
+
+🌐 *Atendimento Público*
+• Quem mandar _"Quero conhecer o Jarvis"_ no WhatsApp da Stream Lab é atendido por mim no modo apresentação
+
+💡 *Dicas*
+• Me marque com @Jarvis ou responda uma mensagem minha
+• Depois que eu respondo, fico 3 min escutando sem precisar marcar
+• Posso receber áudios — eu transcrevo e respondo
+• Posso receber imagens com legenda — analiso e respondo`;
+
+    await sendText(from, helpText);
+    console.log('[HELP] Comando de ajuda enviado no grupo interno');
+    return;
+  }
+
+  // ============================================
   // EASTER EGG: Som de peido (grupos internos apenas)
   // ============================================
   if (isGroup && JARVIS_ALLOWED_GROUPS.has(from) && /\b(peido|pum|flatul[eê]ncia|solta\s*um\s*pum|som\s*de\s*peido|solta\s*um\s*peido|manda\s*um\s*peido|manda\s*um\s*pum)\b/i.test(text) && (isMentionedByTag || isReplyToJarvis || isConversationActive(from))) {
