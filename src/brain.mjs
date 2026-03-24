@@ -341,6 +341,34 @@ export async function generateResponse(text, chatId, senderJid, pushName, isGrou
       contextNote += '\n- ATENCAO: Esta pessoa e o Gui, dono da Stream Lab.';
     }
 
+    // Melhoria 1: Injetar contexto de conversas recentes quando o Gui manda DM
+    // Permite que o Gui diga "manda pro Diego que vou chamar ele" sem precisar explicar quem é o Diego
+    if (senderJid === CONFIG.GUI_JID && !isGroup) {
+      try {
+        const recentLeads = await pool.query(`
+          SELECT DISTINCT ON (chat_id) chat_id, push_name, LEFT(text, 100) as last_msg, created_at
+          FROM jarvis_messages
+          WHERE chat_id NOT LIKE '%@g.us'
+          AND sender != $1
+          AND sender != '555599154868@s.whatsapp.net'
+          AND created_at > NOW() - INTERVAL '2 hours'
+          ORDER BY chat_id, created_at DESC
+        `, [CONFIG.GUI_JID]);
+        if (recentLeads.rows.length > 0) {
+          contextNote += '\n\nCONVERSAS RECENTES (ultimas 2h) — use para identificar pessoas mencionadas pelo Gui:';
+          for (const lead of recentLeads.rows) {
+            const name = lead.push_name || 'Desconhecido';
+            const chatId_ = lead.chat_id;
+            const lastMsg = lead.last_msg || '';
+            contextNote += `\n- ${name} (${chatId_}): "${lastMsg}"`;
+          }
+          console.log(`[BRAIN] Contexto de ${recentLeads.rows.length} conversas recentes injetado para DM do Gui`);
+        }
+      } catch (err) {
+        console.error('[BRAIN] Erro ao buscar conversas recentes:', err.message);
+      }
+    }
+
     contextNote += memoryContext;
 
     // Expertise do agente (NÃO redefine personalidade, só foca)
@@ -1630,10 +1658,15 @@ export async function handlePublicDM(text, senderJid, pushName, mediaFiles = [])
 
     console.log(`[PUBLIC-DM] Resposta gerada para ${pushName} (msg #${msgCount}): ${responseText.substring(0, 80)}`);
 
+    // Melhoria 2: Detectar intent comercial e notificar equipe
+    const COMMERCIAL_INTENT = /\b(reuni[aã]o|agendar|marcar|or[cç]amento|pre[cç]o|contratar|quanto custa|valor|proposta)\b/i;
+    const hasCommercialIntent = COMMERCIAL_INTENT.test(text) || COMMERCIAL_INTENT.test(responseText);
+
     return {
       text: responseText,
       isFirstContact,
-      notifyGui: isFirstContact,
+      notifyGui: isFirstContact || hasCommercialIntent,
+      hasCommercialIntent,
     };
   } catch (err) {
     console.error('[PUBLIC-DM] Erro:', err.message);

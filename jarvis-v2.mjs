@@ -66,6 +66,13 @@ const handoffJids = new Set();
 const HANDOFF_PATTERNS = /\b(eu assumo|n[ãa]o responda? mais|para de responder|n[ãa]o interact?|deixa comigo|pode parar|jarvis para|jarvis sai)\b/i;
 const HANDOFF_REACTIVATE = /\b(jarvis (pode )?volt[ae]|jarvis reativ[ae]|jarvis pode responder|jarvis volta a responder)\b/i;
 
+// ============================================
+// DEBOUNCE — Agrupa msgs rápidas (<3s) antes de processar
+// Evita respostas duplicadas quando alguém manda 2+ msgs em sequência
+// ============================================
+const dmDebounce = new Map(); // jid -> { texts: [], timer, mediaFiles: [], pushName, from }
+const DEBOUNCE_MS = 3000;
+
 function normalizeForShowcaseTrigger(text) {
   // Remove acentos e converte para lowercase
   return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
@@ -159,8 +166,8 @@ async function sendText(jid, text, quotedMsg) {
   if (!sock) return;
   try {
     await sock.sendPresenceUpdate('composing', jid).catch(() => {});
-    // Delay humano — proporcional ao tamanho da mensagem (1.5s a 4s)
-    const humanDelay = Math.min(4000, Math.max(1500, Math.floor(text.length / 50) * 500 + 1500));
+    // Melhoria 4: Delay humanizado proporcional ao tamanho da resposta
+    const humanDelay = text.length < 100 ? 1500 : text.length <= 300 ? 3000 : 4000;
     await new Promise(r => setTimeout(r, humanDelay));
     const msgPayload = { text };
     if (quotedMsg) msgPayload.quoted = quotedMsg;
@@ -180,11 +187,16 @@ async function sendText(jid, text, quotedMsg) {
 async function sendTextWithMentions(jid, text, mentions, quotedMsg) {
   if (!sock) return;
   try {
+    // Melhoria 4: Composing delay em mensagens com menções
+    await sock.sendPresenceUpdate('composing', jid).catch(() => {});
+    const humanDelay = text.length < 100 ? 1500 : text.length <= 300 ? 3000 : 4000;
+    await new Promise(r => setTimeout(r, humanDelay));
     const mentionJids = mentions.map(m => m.jid).filter(Boolean);
     const msgPayload = { text, mentions: mentionJids };
     if (quotedMsg) msgPayload.quoted = quotedMsg;
     const result = await sock.sendMessage(jid, msgPayload);
     if (result?.key?.id) sentByBot.add(result.key.id);
+    await sock.sendPresenceUpdate('paused', jid).catch(() => {});
     if (sentByBot.size > 200) {
       const arr = [...sentByBot];
       arr.slice(0, 100).forEach(id => sentByBot.delete(id));
@@ -211,6 +223,55 @@ async function sendAudio(jid, text) {
     await sock.sendPresenceUpdate('paused', jid).catch(() => {});
     await sendText(jid, text);
   }
+}
+
+// ============================================
+// RESOLVER TELEFONE REAL A PARTIR DE LID
+// Melhoria 3: Quando o JID é @lid, busca o número real via mensagens ou contatos
+// ============================================
+async function resolvePhoneFromLid(jid) {
+  // Se já é um JID @s.whatsapp.net, extrair o número direto
+  if (jid.includes('@s.whatsapp.net')) {
+    return jid.replace('@s.whatsapp.net', '');
+  }
+  // Se é @lid, tentar resolver via banco de dados
+  if (jid.includes('@lid')) {
+    try {
+      // Estratégia 1: Buscar mensagens desse chat_id onde o sender tem @s.whatsapp.net
+      const { rows } = await pool.query(`
+        SELECT DISTINCT sender FROM jarvis_messages
+        WHERE chat_id = $1
+        AND sender LIKE '%@s.whatsapp.net'
+        AND sender != $2
+        LIMIT 1
+      `, [jid, CONFIG.GUI_JID]);
+      if (rows.length > 0) {
+        const realPhone = rows[0].sender.replace('@s.whatsapp.net', '');
+        console.log(`[LID-RESOLVE] ${jid} → ${realPhone} (via mensagens)`);
+        return realPhone;
+      }
+      // Estratégia 2: Buscar push_name do contato @lid e cruzar com contatos @s.whatsapp.net
+      const { rows: lidContact } = await pool.query(
+        `SELECT push_name FROM jarvis_contacts WHERE jid = $1`, [jid]
+      );
+      if (lidContact.length > 0 && lidContact[0].push_name) {
+        const { rows: phoneMatch } = await pool.query(
+          `SELECT DISTINCT sender FROM jarvis_messages WHERE push_name = $1 AND sender LIKE '%@s.whatsapp.net' LIMIT 1`,
+          [lidContact[0].push_name]
+        );
+        if (phoneMatch.length > 0) {
+          const realPhone = phoneMatch[0].sender.replace('@s.whatsapp.net', '');
+          console.log(`[LID-RESOLVE] ${jid} → ${realPhone} (via push_name "${lidContact[0].push_name}")`);
+          return realPhone;
+        }
+      }
+    } catch (err) {
+      console.error('[LID-RESOLVE] Erro:', err.message);
+    }
+    // Fallback: retorna o LID sem o sufixo
+    return jid.replace('@lid', '');
+  }
+  return jid;
 }
 
 // ============================================
@@ -529,6 +590,34 @@ async function handleIncomingMessage(m) {
       return;
     }
 
+    // DEBOUNCE: agrupar msgs rápidas (<3s) do mesmo sender
+    if (text && !m._debounced && !isShowcaseTrigger(text)) {
+      const existing = dmDebounce.get(from);
+      if (existing) {
+        existing.texts.push(text);
+        if (mediaFiles.length) existing.mediaFiles.push(...mediaFiles);
+        clearTimeout(existing.timer);
+        existing.timer = setTimeout(() => {
+          dmDebounce.delete(from);
+          const combined = existing.texts.join('\n');
+          console.log(`[DEBOUNCE] Processando ${existing.texts.length} msgs agrupadas de ${pushName}`);
+          handleIncomingMessage({ ...m, _debounced: true, _debouncedText: combined, _debouncedMedia: existing.mediaFiles });
+        }, DEBOUNCE_MS);
+        return;
+      }
+      const timer = setTimeout(() => {
+        dmDebounce.delete(from);
+        handleIncomingMessage({ ...m, _debounced: true, _debouncedText: text, _debouncedMedia: mediaFiles });
+      }, DEBOUNCE_MS);
+      dmDebounce.set(from, { texts: [text], timer, mediaFiles: [...mediaFiles], pushName, from });
+      return;
+    }
+    // Usar texto debounced se disponível
+    if (m._debounced) {
+      text = m._debouncedText || text;
+      mediaFiles = m._debouncedMedia || mediaFiles;
+    }
+
     // ============================================
     // MODO APRESENTAÇÃO (Showcase) — ANTES do fluxo público normal
     // ============================================
@@ -547,7 +636,7 @@ async function handleIncomingMessage(m) {
 
       // Notificar Gui sobre novo lead no modo apresentação
       try {
-        const phone = from.replace('@s.whatsapp.net', '').replace('@lid', '');
+        const phone = await resolvePhoneFromLid(from);
         const phoneFormatted = phone.length >= 12 ? `+${phone.substring(0, 2)} ${phone.substring(2, 4)} ${phone.substring(4)}` : phone;
         const notifyMsg = `🎯 *Novo lead no modo apresentação*\n\nNome: ${pushName || 'Desconhecido'}\nNúmero: ${phoneFormatted}\n\nEntrou no Showcase Mode agora.`;
         await sendText(CONFIG.GUI_JID, notifyMsg);
@@ -639,7 +728,7 @@ async function handleIncomingMessage(m) {
         // Notificar Gui se é lead quente (perguntou sobre preço/contratação/reunião)
         if (result.isHotLead) {
           try {
-            const phone = from.replace('@s.whatsapp.net', '').replace('@lid', '');
+            const phone = await resolvePhoneFromLid(from);
             const phoneFormatted = phone.length >= 12 ? `+${phone.substring(0, 2)} ${phone.substring(2, 4)} ${phone.substring(4)}` : phone;
             const hotMsg = `🔥 *Lead quente no Showcase!*\n\n👤 *${pushName || 'Desconhecido'}*\n📱 ${phoneFormatted}\n\n💬 Lead disse: "${text.substring(0, 200)}"\n\n🤖 Jarvis respondeu: "${result.text.substring(0, 200)}"\n\n⚡ Ação necessária: verificar agenda e retornar ao lead.`;
             await sendText(CONFIG.GUI_JID, hotMsg);
@@ -663,12 +752,8 @@ async function handleIncomingMessage(m) {
 
     const result = await handlePublicDM(text, sender, pushName, mediaFiles);
     if (result?.text) {
-      // Simular digitação humana
-      await sock.sendPresenceUpdate('composing', from).catch(() => {});
-      const typingDelay = Math.min(4000, Math.max(2000, result.text.length * 10));
-      await new Promise(r => setTimeout(r, typingDelay));
+      // sendText já inclui composing + delay humanizado internamente
       await sendText(from, result.text);
-      await sock.sendPresenceUpdate('paused', from).catch(() => {});
       // Salvar resposta do Jarvis
       await storeMessage({
         messageId: 'jarvis_public_' + randomUUID(), chatId: from, sender: CONFIG.GUI_JID,
@@ -679,11 +764,18 @@ async function handleIncomingMessage(m) {
       // Notificar Gui no primeiro contato de um lead novo
       if (result.isFirstContact || result.notifyGui) {
         try {
-          const leadPhone = from.replace('@s.whatsapp.net', '').replace('@lid', '');
+          const leadPhone = await resolvePhoneFromLid(from);
           const leadPhoneFmt = leadPhone.length >= 12 ? `+${leadPhone.substring(0, 2)} ${leadPhone.substring(2, 4)} ${leadPhone.substring(4)}` : leadPhone;
-          const notifyMsg = `📩 *Novo lead no WhatsApp*\n\nNome: ${pushName || 'Desconhecido'}\nNúmero: ${leadPhoneFmt}\nMensagem: "${text.substring(0, 150)}"\n\nJá respondi automaticamente.`;
+          const notifyMsg = result.hasCommercialIntent
+            ? `🔥 *Lead com interesse comercial!*\n\n👤 *${pushName || 'Desconhecido'}*\n📱 ${leadPhoneFmt}\n💬 "${text.substring(0, 150)}"\n\n⚡ Ação necessária: retornar ao lead.`
+            : `📩 *Novo lead no WhatsApp*\n\nNome: ${pushName || 'Desconhecido'}\nNúmero: ${leadPhoneFmt}\nMensagem: "${text.substring(0, 150)}"\n\nJá respondi automaticamente.`;
           await sendText(CONFIG.GUI_JID, notifyMsg);
-          console.log(`[PUBLIC-DM] Gui notificado sobre novo lead: ${pushName}`);
+          // Melhoria 2: Notificar também no grupo Tarefas se intent comercial
+          if (result.hasCommercialIntent && CONFIG.GROUP_TAREFAS) {
+            const tarefasMsg = `🔥 *Lead com interesse comercial!*\n\n👤 *${pushName || 'Desconhecido'}* entrou em contato pelo WhatsApp.\n💬 "${text.substring(0, 150)}"\n\n⚡ Precisa de retorno rápido.`;
+            await sendText(CONFIG.GROUP_TAREFAS, tarefasMsg);
+          }
+          console.log(`[PUBLIC-DM] Gui notificado sobre novo lead: ${pushName}${result.hasCommercialIntent ? ' (COMERCIAL)' : ''}`);
         } catch (notifyErr) {
           console.error('[PUBLIC-DM] Erro ao notificar Gui:', notifyErr.message);
         }
