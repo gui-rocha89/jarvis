@@ -29,7 +29,7 @@ import { initMemory, processMemory, getMemoryContext, getMemoryStats, searchMemo
 import { shouldJarvisRespond, isValidResponse, generateResponse, markConversationActive, isConversationActive, findTeamJid, extractMentionsFromText, generateDailyReport, handleManagedClientMessage, runOverdueCheck, handlePublicDM, handleShowcaseMessage } from './src/brain.mjs';
 import { voiceConfig, loadVoiceConfig, saveVoiceConfig, transcribeAudio, generateAudio } from './src/audio.mjs';
 import { synthesizeProfile, getProfile, listProfiles, syncProfiles } from './src/profiles.mjs';
-import { asanaRequest, getOverdueTasks, getGCalClient, JARVIS_TOOLS, registerSendFunction, registerSendWithMentionsFunction } from './src/skills/loader.mjs';
+import { asanaRequest, getOverdueTasks, getGCalClient, JARVIS_TOOLS, registerSendFunction, registerSendWithMentionsFunction, registerSendRawFunction } from './src/skills/loader.mjs';
 import { getMediaType, extractSender } from './src/helpers.mjs';
 import { startAsanaStudy, stopAsanaStudy, asanaBatchState } from './src/batch-asana.mjs';
 import { startEmailMonitor, stopEmailMonitor, emailMonitorState } from './src/asana-email-monitor.mjs';
@@ -703,6 +703,30 @@ async function handleIncomingMessage(m) {
   // Debug: logar detecção de replies e mentions em grupos
   if (isGroup && (quotedParticipant || mentionedJids.length > 0)) {
     console.log(`[REPLY-DEBUG] quotedParticipant=${quotedParticipant} | botJid=${botJid} | botNum=${botNum} | isReplyToJarvis=${isReplyToJarvis} | mentionedJids=${JSON.stringify(mentionedJids)} | isMentionedByTag=${isMentionedByTag}`);
+  }
+
+  // ============================================
+  // EASTER EGG: Som de peido (grupos internos apenas)
+  // ============================================
+  if (isGroup && JARVIS_ALLOWED_GROUPS.has(from) && /\b(peido|pum|flatul[eê]ncia|solta\s*um\s*pum|som\s*de\s*peido|solta\s*um\s*peido|manda\s*um\s*peido|manda\s*um\s*pum)\b/i.test(text) && (isMentionedByTag || isReplyToJarvis || isConversationActive(from))) {
+    try {
+      const fartOnomatopeias = [
+        'PRRRRRRRRRRR! BRAAAAAAP! pffffffftt... 💨',
+        'BRAAAAAAAAAP! PRRRRT! PFFFFFFT! 💨💨',
+        'pffffftttttt... PRRRRRRR! BRAAAAAP! PRRT! 💨',
+        'PRRRRRRT! BRRRRAAAAP! pffft... pffft... PRRRRRRRR! 💨',
+        'BRAAAAAAAAP! PRRT PRRT PRRRRRRRR! pffffffftttt! 💨💨💨',
+        'pffft... pffft... PRRRRRRRRRRRRRR! BRAAAP! 💨',
+        'PRRRRRR PRRRRRR BRAAAAAP! pffffffft... prrt! 💨💨',
+      ];
+      const randomFart = fartOnomatopeias[Math.floor(Math.random() * fartOnomatopeias.length)];
+      console.log(`[EASTER-EGG] 💨 Som de peido solicitado por ${pushName} no grupo ${from}`);
+      await sendAudio(from, randomFart);
+      markConversationActive(from);
+    } catch (err) {
+      console.error('[EASTER-EGG] Erro no som de peido:', err.message);
+    }
+    return;
   }
 
   if (!shouldJarvisRespond(text, from, isGroup, isReplyToJarvis, isMentionedByTag)) return;
@@ -3163,7 +3187,12 @@ async function startWhatsApp() {
       // Registrar função de envio para o loader.mjs (proativo)
       registerSendFunction(sendText);
       registerSendWithMentionsFunction(sendTextWithMentions);
-      console.log('[PROACTIVE] sendText + sendTextWithMentions registradas para tools proativas');
+      registerSendRawFunction(async (jid, payload) => {
+        const result = await sock.sendMessage(jid, payload);
+        if (result?.key?.id) sentByBot.add(result.key.id);
+        return result;
+      });
+      console.log('[PROACTIVE] sendText + sendTextWithMentions + sendRaw registradas para tools proativas');
       // Startup silencioso — sem notificação no grupo
       setTimeout(async () => {
         // Áudio de desculpa (one-time) pelas reinicializações repetidas — roda após conexão estabilizar

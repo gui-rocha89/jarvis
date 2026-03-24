@@ -2,10 +2,12 @@
 // JARVIS 3.0 - Skills Loader (Modular)
 // Carrega e gerencia skills dinâmicamente
 // ============================================
-import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, ASANA_CUSTOM_FIELDS, ASANA_CLIENTE_MAP, ASANA_URGENCIA_MAP, ASANA_TIER_MAP, ASANA_TIPO_DEMANDA_MAP, GCAL_KEY_PATH, GCAL_CALENDAR_ID, managedClients, saveManagedClients, teamWhatsApp } from '../config.mjs';
+import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, ASANA_CUSTOM_FIELDS, ASANA_CLIENTE_MAP, ASANA_URGENCIA_MAP, ASANA_TIER_MAP, ASANA_TIPO_DEMANDA_MAP, GCAL_KEY_PATH, GCAL_CALENDAR_ID, managedClients, saveManagedClients, teamWhatsApp, JARVIS_ALLOWED_GROUPS } from '../config.mjs';
 import { listCampaigns, getCampaignInsights, createCampaign, updateCampaignStatus, getAccountInsights, publishPagePost, getPagePosts, resolvePageId, resolveWhatsAppNumber, listAvailablePages, createAdSet, listAdSets, uploadAdImage, createAdCreative, createAd, updateEntityStatus, asanaGetAttachments, pipelineAsanaToAds, searchGeoLocation } from './meta-ads.mjs';
 import { pool } from '../database.mjs';
 import { searchMemories } from '../memory.mjs';
+import OpenAI from 'openai';
+import sharp from 'sharp';
 import { readFile, readdir, stat } from 'fs/promises';
 import { readFileSync } from 'fs';
 import { google } from 'googleapis';
@@ -14,11 +16,14 @@ import path from 'path';
 // Callbacks para enviar mensagens (registrados pelo jarvis-v2.mjs após criar o socket)
 let _sendTextFn = null;
 let _sendTextWithMentionsFn = null;
+let _sendRawFn = null; // sock.sendMessage raw — para imagens, stickers, áudio
 const _groupMessageDedup = new Map(); // JID → timestamp da última mensagem (dedup 60s)
 export function registerSendFunction(fn) { _sendTextFn = fn; }
 export function registerSendWithMentionsFunction(fn) { _sendTextWithMentionsFn = fn; }
+export function registerSendRawFunction(fn) { _sendRawFn = fn; }
 export function getSendFunction() { return _sendTextFn; }
 export function getSendWithMentionsFunction() { return _sendTextWithMentionsFn; }
+export function getSendRawFunction() { return _sendRawFn; }
 
 // ============================================
 // SKILL: ASANA
@@ -812,6 +817,32 @@ export const JARVIS_TOOLS = [
         },
       },
       required: ['especialista', 'pedido'],
+    },
+  },
+  // ============================================
+  // TOOLS — Diversão (grupos internos apenas)
+  // ============================================
+  {
+    name: 'gerar_imagem',
+    description: 'Gera uma imagem via DALL-E 3 (OpenAI) e envia no grupo. SOMENTE funciona em grupos internos da equipe.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: 'Descrição detalhada da imagem a ser gerada (em inglês para melhor resultado)' },
+        estilo: { type: 'string', enum: ['vivid', 'natural'], description: 'Estilo da imagem: vivid (criativo/intenso) ou natural (realista). Default: vivid' },
+      },
+      required: ['prompt'],
+    },
+  },
+  {
+    name: 'criar_sticker',
+    description: 'Gera uma imagem via DALL-E 3, converte para sticker (WebP 512x512) e envia no grupo. SOMENTE funciona em grupos internos da equipe. Ideal para stickers engraçados, memes e reações.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: 'Descrição detalhada do sticker a ser gerado (em inglês para melhor resultado). Dica: peça fundo transparente ou branco para stickers melhores.' },
+      },
+      required: ['prompt'],
     },
   },
 ];
@@ -1998,6 +2029,103 @@ Vá direto ao ponto. Sem cumprimentos, sem introdução.`;
     } catch (err) {
       console.error(`[MULTI-AGENT] Erro ao consultar especialista:`, err.message);
       return { error: `Erro ao consultar especialista: ${err.message}` };
+    }
+  }
+
+  // ============================================
+  // TOOLS — Diversão (grupos internos apenas)
+  // ============================================
+
+  if (toolName === 'gerar_imagem') {
+    // Validar que está em grupo interno
+    const chatId = context.chatId || '';
+    if (!JARVIS_ALLOWED_GROUPS.has(chatId)) {
+      return { error: 'Esta tool só funciona nos grupos internos da equipe.' };
+    }
+    if (!_sendRawFn) return { error: 'WhatsApp não conectado — aguarde a reconexão' };
+
+    try {
+      const openai = new OpenAI({ apiKey: CONFIG.OPENAI_API_KEY || process.env.OPENAI_API_KEY });
+      const estilo = input.estilo || 'vivid';
+
+      console.log(`[TOOL] gerar_imagem: "${input.prompt.substring(0, 80)}..." (estilo: ${estilo})`);
+
+      const imageResponse = await openai.images.generate({
+        model: 'dall-e-3',
+        prompt: input.prompt,
+        n: 1,
+        size: '1024x1024',
+        style: estilo,
+        response_format: 'url',
+      });
+
+      const imageUrl = imageResponse.data[0]?.url;
+      if (!imageUrl) return { error: 'DALL-E não retornou imagem' };
+
+      // Baixar imagem
+      const imgResp = await fetch(imageUrl);
+      if (!imgResp.ok) throw new Error(`Erro ao baixar imagem: ${imgResp.status}`);
+      const buffer = Buffer.from(await imgResp.arrayBuffer());
+
+      // Enviar como imagem no grupo
+      const result = await _sendRawFn(chatId, {
+        image: buffer,
+        caption: `🎨 _Imagem gerada por IA_`,
+        mimetype: 'image/png',
+      });
+
+      console.log(`[TOOL] Imagem gerada e enviada no grupo (${buffer.length} bytes)`);
+      return { success: true, mensagem: 'Imagem gerada e enviada com sucesso!' };
+    } catch (err) {
+      console.error('[TOOL] Erro gerar_imagem:', err.message);
+      return { error: `Erro ao gerar imagem: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'criar_sticker') {
+    // Validar que está em grupo interno
+    const chatId = context.chatId || '';
+    if (!JARVIS_ALLOWED_GROUPS.has(chatId)) {
+      return { error: 'Esta tool só funciona nos grupos internos da equipe.' };
+    }
+    if (!_sendRawFn) return { error: 'WhatsApp não conectado — aguarde a reconexão' };
+
+    try {
+      const openai = new OpenAI({ apiKey: CONFIG.OPENAI_API_KEY || process.env.OPENAI_API_KEY });
+
+      console.log(`[TOOL] criar_sticker: "${input.prompt.substring(0, 80)}..."`);
+
+      const imageResponse = await openai.images.generate({
+        model: 'dall-e-3',
+        prompt: input.prompt,
+        n: 1,
+        size: '1024x1024',
+        style: 'vivid',
+        response_format: 'url',
+      });
+
+      const imageUrl = imageResponse.data[0]?.url;
+      if (!imageUrl) return { error: 'DALL-E não retornou imagem' };
+
+      // Baixar imagem
+      const imgResp = await fetch(imageUrl);
+      if (!imgResp.ok) throw new Error(`Erro ao baixar imagem: ${imgResp.status}`);
+      const pngBuffer = Buffer.from(await imgResp.arrayBuffer());
+
+      // Converter para WebP 512x512 (formato sticker do WhatsApp)
+      const webpBuffer = await sharp(pngBuffer)
+        .resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+        .webp({ quality: 80 })
+        .toBuffer();
+
+      // Enviar como sticker
+      const result = await _sendRawFn(chatId, { sticker: webpBuffer });
+
+      console.log(`[TOOL] Sticker criado e enviado no grupo (${webpBuffer.length} bytes)`);
+      return { success: true, mensagem: 'Sticker criado e enviado com sucesso!' };
+    } catch (err) {
+      console.error('[TOOL] Erro criar_sticker:', err.message);
+      return { error: `Erro ao criar sticker: ${err.message}` };
     }
   }
 

@@ -161,7 +161,7 @@ export function antiHallucinationCheck(finalText, toolsUsed) {
   }
 
   // Se usou tools de ação (lembrar, criar_demanda, enviar_mensagem, ads, posts, mover, atribuir), tá agindo — não bloquear
-  if (toolsUsed.has('lembrar') || toolsUsed.has('criar_demanda_cliente') || toolsUsed.has('enviar_mensagem_grupo') || toolsUsed.has('autorizar_cliente') || toolsUsed.has('revogar_cliente') || toolsUsed.has('criar_campanha') || toolsUsed.has('pausar_campanha') || toolsUsed.has('agendar_post') || toolsUsed.has('criar_conjunto_anuncios') || toolsUsed.has('subir_imagem_ads') || toolsUsed.has('criar_criativo_ads') || toolsUsed.has('criar_anuncio') || toolsUsed.has('pipeline_asana_meta') || toolsUsed.has('ativar_desativar_ads') || toolsUsed.has('mover_task_secao') || toolsUsed.has('atribuir_task')) {
+  if (toolsUsed.has('lembrar') || toolsUsed.has('criar_demanda_cliente') || toolsUsed.has('enviar_mensagem_grupo') || toolsUsed.has('autorizar_cliente') || toolsUsed.has('revogar_cliente') || toolsUsed.has('criar_campanha') || toolsUsed.has('pausar_campanha') || toolsUsed.has('agendar_post') || toolsUsed.has('criar_conjunto_anuncios') || toolsUsed.has('subir_imagem_ads') || toolsUsed.has('criar_criativo_ads') || toolsUsed.has('criar_anuncio') || toolsUsed.has('pipeline_asana_meta') || toolsUsed.has('ativar_desativar_ads') || toolsUsed.has('mover_task_secao') || toolsUsed.has('atribuir_task') || toolsUsed.has('gerar_imagem') || toolsUsed.has('criar_sticker')) {
     return { safe: true };
   }
 
