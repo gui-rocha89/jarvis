@@ -58,6 +58,14 @@ const realTeamJids = new Set();
 const showcaseConversations = new Map();
 const SHOWCASE_TTL = 2 * 60 * 60 * 1000; // 2 horas
 
+// ============================================
+// HANDOFF — Quando equipe assume o atendimento, Jarvis sai
+// Set<jid> de conversas onde humano assumiu
+// ============================================
+const handoffJids = new Set();
+const HANDOFF_PATTERNS = /\b(eu assumo|n[ãa]o responda? mais|para de responder|n[ãa]o interact?|deixa comigo|pode parar|jarvis para|jarvis sai)\b/i;
+const HANDOFF_REACTIVATE = /\b(jarvis (pode )?volt[ae]|jarvis reativ[ae]|jarvis pode responder|jarvis volta a responder)\b/i;
+
 function normalizeForShowcaseTrigger(text) {
   // Remove acentos e converte para lowercase
   return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
@@ -403,6 +411,53 @@ async function handleIncomingMessage(m) {
     }
   }
 
+  // ============================================
+  // HANDOFF — Equipe assume atendimento de lead
+  // Gui ou equipe manda no privado do Jarvis comandando parar/voltar
+  // ============================================
+  if ((sender === CONFIG.GUI_JID || realTeamJids.has(sender)) && !isGroup && text) {
+    // Reativar Jarvis numa conversa
+    if (HANDOFF_REACTIVATE.test(text)) {
+      // Encontrar o JID do lead mencionado (busca pelo nome ou último handoff)
+      let reactivatedAny = false;
+      for (const jid of handoffJids) {
+        handoffJids.delete(jid);
+        reactivatedAny = true;
+      }
+      if (reactivatedAny) {
+        await sendText(from, '✅ Voltei a responder leads. Handoff desativado.');
+        console.log('[HANDOFF] Reativado — Jarvis volta a responder leads');
+      }
+    }
+    // Ativar handoff (equipe assume)
+    else if (HANDOFF_PATTERNS.test(text)) {
+      // Buscar último lead que conversou
+      try {
+        const lastLeadResult = await pool.query(`
+          SELECT DISTINCT chat_id, push_name FROM jarvis_messages
+          WHERE chat_id NOT LIKE '%@g.us'
+          AND sender NOT IN ($1, '555599154868@s.whatsapp.net')
+          AND chat_id != $1
+          ORDER BY MAX(created_at) DESC LIMIT 1
+        `, [CONFIG.GUI_JID]).catch(() => null);
+
+        if (lastLeadResult?.rows?.[0]) {
+          const leadJid = lastLeadResult.rows[0].chat_id;
+          const leadName = lastLeadResult.rows[0].push_name || 'desconhecido';
+          handoffJids.add(leadJid);
+          // Também remover do showcase se tiver
+          showcaseConversations.delete(leadJid);
+          await sendText(from, `✅ Handoff ativado. Não vou mais responder pra *${leadName}*. Manda "Jarvis volta" quando quiser que eu reassuma.`);
+          console.log(`[HANDOFF] Ativado para ${leadName} (${leadJid})`);
+        } else {
+          await sendText(from, '⚠️ Não encontrei conversa recente com lead pra fazer handoff.');
+        }
+      } catch (err) {
+        console.error('[HANDOFF] Erro:', err.message);
+      }
+    }
+  }
+
   // AGENTE PROATIVO: Interceptar mensagens de grupos de clientes gerenciados
   if (isGroup) {
     const managedClient = isManagedClientGroup(from);
@@ -434,6 +489,12 @@ async function handleIncomingMessage(m) {
   // Se NÃO é grupo E sender NÃO é GUI_JID E sender NÃO é membro da equipe → handlePublicDM ou Showcase
   if (!isGroup && sender !== CONFIG.GUI_JID && !realTeamJids.has(sender)) {
     console.log(`[PUBLIC-DM] DM de desconhecido: ${pushName} (${sender.substring(0, 15)})`);
+
+    // HANDOFF: se equipe assumiu essa conversa, Jarvis não responde
+    if (handoffJids.has(from)) {
+      console.log(`[HANDOFF] Conversa com ${pushName} em modo handoff — Jarvis silenciado`);
+      return;
+    }
 
     // Modo pausa: não responder
     if (jarvisPaused) {
