@@ -845,6 +845,17 @@ export const JARVIS_TOOLS = [
       required: ['prompt'],
     },
   },
+  {
+    name: 'enviar_audio',
+    description: 'Grava e envia uma mensagem de voz (áudio) no grupo atual. Use quando alguém pedir explicitamente para mandar em áudio, ou quando a situação pedir voz (humor, explicações, saudações). SOMENTE funciona em grupos internos ou DMs autorizados.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        texto: { type: 'string', description: 'O texto que será convertido em áudio via TTS. Escreva exatamente o que quer falar, com entonação e pausas naturais.' },
+      },
+      required: ['texto'],
+    },
+  },
 ];
 
 /**
@@ -2126,6 +2137,39 @@ Vá direto ao ponto. Sem cumprimentos, sem introdução.`;
     } catch (err) {
       console.error('[TOOL] Erro criar_sticker:', err.message);
       return { error: `Erro ao criar sticker: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'enviar_audio') {
+    if (!chatId) return { error: 'chatId não disponível' };
+    if (!input.texto) return { error: 'texto é obrigatório' };
+
+    // Limitar a 50 segundos (~750 caracteres em português)
+    let textoAudio = input.texto;
+    if (textoAudio.length > 750) {
+      textoAudio = textoAudio.substring(0, 750) + '...';
+    }
+
+    try {
+      const { generateAudio } = await import('../audio.mjs');
+      const audioBuffer = await generateAudio(textoAudio);
+
+      if (!audioBuffer) {
+        return { error: 'Falha ao gerar áudio via TTS' };
+      }
+
+      // Mostrar "gravando..." antes de enviar
+      const sendRaw = getSendRawFunction();
+      if (sendRaw) {
+        await sendRaw(chatId, { audio: audioBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
+        console.log(`[TOOL] Áudio enviado no grupo (${audioBuffer.length} bytes, ${textoAudio.length} chars)`);
+        return { success: true, mensagem: 'Áudio enviado com sucesso!' };
+      } else {
+        return { error: 'Função de envio raw não disponível' };
+      }
+    } catch (err) {
+      console.error('[TOOL] Erro enviar_audio:', err.message);
+      return { error: `Erro ao enviar áudio: ${err.message}` };
     }
   }
 
