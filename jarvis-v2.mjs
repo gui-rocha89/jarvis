@@ -501,20 +501,30 @@ async function handleIncomingMessage(m) {
 
       const result = await handleShowcaseMessage(text, sender, pushName, mediaFiles, session.messageCount);
       if (result?.text) {
-        // Enviar como áudio ou texto
+        // Delay proporcional para parecer humano
+        const textLen = result.text.length;
         if (result.sendAsAudio) {
+          // Áudio: mostrar "gravando..." + delay 3-6s
+          await sock.sendPresenceUpdate('recording', from).catch(() => {});
+          const audioDelay = Math.min(6000, Math.max(3000, textLen * 15));
+          await new Promise(r => setTimeout(r, audioDelay));
           try {
-            await sock.sendPresenceUpdate('recording', from).catch(() => {});
             const audioBuffer = await generateAudio(result.text);
             const audioResult = await sock.sendMessage(from, { audio: audioBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
             if (audioResult?.key?.id) sentByBot.add(audioResult.key.id);
             await sock.sendPresenceUpdate('paused', from).catch(() => {});
           } catch (audioErr) {
             console.error('[SHOWCASE] Erro ao enviar áudio, enviando como texto:', audioErr.message);
+            await sock.sendPresenceUpdate('paused', from).catch(() => {});
             await sendText(from, result.text);
           }
         } else {
+          // Texto: mostrar "digitando..." + delay 2-5s
+          await sock.sendPresenceUpdate('composing', from).catch(() => {});
+          const typingDelay = Math.min(5000, Math.max(2000, textLen * 10));
+          await new Promise(r => setTimeout(r, typingDelay));
           await sendText(from, result.text);
+          await sock.sendPresenceUpdate('paused', from).catch(() => {});
         }
 
         // Salvar resposta
@@ -524,13 +534,18 @@ async function handleIncomingMessage(m) {
           timestamp: Math.floor(Date.now() / 1000),
         });
 
-        // Notificar Gui se é lead quente (perguntou sobre preço/contratação)
+        // Notificar Gui se é lead quente (perguntou sobre preço/contratação/reunião)
         if (result.isHotLead) {
           try {
-            const phone = sender.replace('@s.whatsapp.net', '');
-            const hotMsg = `🔥 *Lead quente!* ${pushName || 'Desconhecido'} perguntou sobre contratação\n\nNúmero: ${phone}\nMensagem: "${text.substring(0, 150)}"`;
+            const phone = sender.replace('@s.whatsapp.net', '').replace('@lid', '');
+            const hotMsg = `🔥 *Lead quente no Showcase!*\n\n👤 *${pushName || 'Desconhecido'}*\n📱 ${phone}\n\n💬 Lead disse: "${text.substring(0, 200)}"\n\n🤖 Jarvis respondeu: "${result.text.substring(0, 200)}"\n\n⚡ Ação necessária: verificar agenda e retornar ao lead.`;
             await sendText(CONFIG.GUI_JID, hotMsg);
-            console.log(`[SHOWCASE] 🔥 Lead quente notificado: ${pushName}`);
+            // Também notificar no grupo de tarefas
+            if (CONFIG.GROUP_TAREFAS) {
+              const tarefasMsg = `🔥 *Novo lead quente!*\n\n👤 *${pushName || 'Desconhecido'}* entrou em contato pelo WhatsApp.\n💬 Interesse: "${text.substring(0, 150)}"\n\n⚡ Precisa de retorno rápido — já demonstrou interesse em agendar.`;
+              await sendText(CONFIG.GROUP_TAREFAS, tarefasMsg);
+            }
+            console.log(`[SHOWCASE] 🔥 Lead quente notificado (Gui + Tarefas): ${pushName}`);
           } catch (notifyErr) {
             console.error('[SHOWCASE] Erro ao notificar lead quente:', notifyErr.message);
           }
@@ -545,7 +560,12 @@ async function handleIncomingMessage(m) {
 
     const result = await handlePublicDM(text, sender, pushName, mediaFiles);
     if (result?.text) {
+      // Simular digitação humana
+      await sock.sendPresenceUpdate('composing', from).catch(() => {});
+      const typingDelay = Math.min(4000, Math.max(2000, result.text.length * 10));
+      await new Promise(r => setTimeout(r, typingDelay));
       await sendText(from, result.text);
+      await sock.sendPresenceUpdate('paused', from).catch(() => {});
       // Salvar resposta do Jarvis
       await storeMessage({
         messageId: 'jarvis_public_' + randomUUID(), chatId: from, sender: CONFIG.GUI_JID,

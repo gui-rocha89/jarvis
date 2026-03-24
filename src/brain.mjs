@@ -1753,11 +1753,11 @@ export async function handleShowcaseMessage(text, senderJid, pushName, mediaFile
       }
     }
 
-    // Detectar interesse em contratação/preço para notificar Gui
-    const hotLeadPatterns = /\b(pre[çc]o|valor|quanto custa|or[çc]amento|contratar|fechar|proposta|investimento|pacote|plano|mensalidade)\b/i;
-    const isHotLead = hotLeadPatterns.test(text);
+    // Detectar interesse em contratação/preço/reunião para notificar Gui
+    const hotLeadPatterns = /\b(pre[çc]o|valor|quanto custa|or[çc]amento|contratar|fechar|proposta|investimento|pacote|plano|mensalidade|reuni[ãa]o|agendar|agenda|marcar|hor[aá]rio|disponibilidade|conversar|apresenta[çc][ãa]o|demonstra[çc][ãa]o|pode ser|hoje|amanh[ãa]|online|presencial)\b/i;
+    const isHotLead = hotLeadPatterns.test(text) || hotLeadPatterns.test(responseText);
 
-    console.log(`[SHOWCASE] Resposta para ${pushName} (msg #${messageCount}, audio=${sendAsAudio}): ${responseText.substring(0, 80)}`);
+    console.log(`[SHOWCASE] Resposta para ${pushName} (msg #${messageCount}, audio=${sendAsAudio}, hot=${isHotLead}): ${responseText.substring(0, 80)}`);
 
     return {
       text: responseText,
