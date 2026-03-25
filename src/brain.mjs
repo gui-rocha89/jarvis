@@ -1607,8 +1607,26 @@ export async function handlePublicDM(text, senderJid, pushName, mediaFiles = [])
         chatHistory.push({ role: 'user', content: m.text });
       }
     }
-    // Adicionar mensagem atual
-    chatHistory.push({ role: 'user', content: text });
+    // Adicionar mensagem atual (com mídia se houver)
+    const userContent = [];
+    if (mediaFiles && mediaFiles.length > 0) {
+      for (const mf of mediaFiles) {
+        if (mf.mimetype?.startsWith('image/') && mf.buffer) {
+          userContent.push({
+            type: 'image',
+            source: { type: 'base64', media_type: mf.mimetype, data: mf.buffer.toString('base64') },
+          });
+        } else if (mf.mimetype?.startsWith('audio/') && mf.transcription) {
+          userContent.push({ type: 'text', text: `[Áudio transcrito]: ${mf.transcription}` });
+        } else if (mf.mimetype?.startsWith('video/')) {
+          userContent.push({ type: 'text', text: '[Vídeo recebido — não consigo assistir vídeos, mas me conta o que tem nele!]' });
+        }
+      }
+    }
+    if (text) userContent.push({ type: 'text', text });
+    // Se só tem mídia sem texto, garantir que tenha pelo menos algo
+    if (userContent.length === 0) userContent.push({ type: 'text', text: '[mídia recebida sem texto]' });
+    chatHistory.push({ role: 'user', content: userContent.length === 1 && userContent[0].type === 'text' ? userContent[0].text : userContent });
 
     // System prompt: identidade + canal público
     const systemPrompt = [
@@ -1623,7 +1641,13 @@ export async function handlePublicDM(text, senderJid, pushName, mediaFiles = [])
 - Remetente: ${pushName || 'Desconhecido'}
 - Mensagem #${msgCount} nesta conversa
 - ${isFirstContact ? 'PRIMEIRO CONTATO — seja especialmente acolhedor' : 'Conversa em andamento'}
-- Horário: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
+- Horário: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
+
+REGRAS DE MÍDIA:
+- Se recebeu imagem: analise e conecte com o contexto da conversa.
+- Se recebeu áudio transcrito: responda ao conteúdo da transcrição.
+- Se o conteúdo é ofensivo, pornográfico ou claramente maldoso: encerre educadamente ("Prefiro manter nossa conversa produtiva. Se precisar de algo da Stream Lab, tô aqui!").
+- Se o conteúdo é fora de contexto (meme, foto aleatória): reconheça brevemente e tente voltar ao assunto.`,
       },
     ];
 
@@ -1699,8 +1723,25 @@ export async function handleShowcaseMessage(text, senderJid, pushName, mediaFile
         chatHistory.push({ role: 'user', content: m.text });
       }
     }
-    // Adicionar mensagem atual
-    chatHistory.push({ role: 'user', content: text });
+    // Adicionar mensagem atual (com mídia se houver)
+    const userContent = [];
+    if (mediaFiles && mediaFiles.length > 0) {
+      for (const mf of mediaFiles) {
+        if (mf.mimetype?.startsWith('image/') && mf.buffer) {
+          userContent.push({
+            type: 'image',
+            source: { type: 'base64', media_type: mf.mimetype, data: mf.buffer.toString('base64') },
+          });
+        } else if (mf.mimetype?.startsWith('audio/') && mf.transcription) {
+          userContent.push({ type: 'text', text: `[Áudio transcrito]: ${mf.transcription}` });
+        } else if (mf.mimetype?.startsWith('video/')) {
+          userContent.push({ type: 'text', text: '[Vídeo recebido — não consigo assistir vídeos, mas me conta o que tem nele!]' });
+        }
+      }
+    }
+    if (text) userContent.push({ type: 'text', text });
+    if (userContent.length === 0) userContent.push({ type: 'text', text: '[mídia recebida sem texto]' });
+    chatHistory.push({ role: 'user', content: userContent.length === 1 && userContent[0].type === 'text' ? userContent[0].text : userContent });
 
     // Buscar memórias genéricas (sem dados internos) para conhecimento geral
     let memoryContext = '';
