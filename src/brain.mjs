@@ -1641,14 +1641,10 @@ export async function handlePublicDM(text, senderJid, pushName, mediaFiles = [])
     // Registrar/atualizar conversa no banco
     await upsertPublicConversation(senderJid, pushName);
 
-    // Se excedeu 10 mensagens → sugerir reunião
-    if (msgCount > 10) {
-      console.log(`[PUBLIC-DM] Limite de ${msgCount} mensagens atingido para ${pushName}`);
-      return {
-        text: 'Que tal agendarmos uma reunião com nosso time pra conversarmos melhor sobre isso? 📅 Posso verificar os horários disponíveis!',
-        isFirstContact: false,
-        notifyGui: false,
-      };
+    // Após 20 mensagens → silêncio total (evita loops infinitos e custo desnecessário)
+    if (msgCount > 20) {
+      console.log(`[PUBLIC-DM] Limite de ${msgCount} mensagens — silenciando ${pushName}`);
+      return null;
     }
 
     // Gerar resposta com IA
@@ -1710,7 +1706,7 @@ REGRAS DE MÍDIA:
     const model = CONFIG.AI_MODEL;
     const response = await claudeWithRetry({
       model,
-      max_tokens: 512,
+      max_tokens: 1024,
       system: systemPrompt,
       messages: chatHistory,
     });
@@ -1718,6 +1714,15 @@ REGRAS DE MÍDIA:
     let responseText = '';
     for (const block of response.content) {
       if (block.type === 'text') responseText += block.text;
+    }
+
+    // Anti-repetição: se a resposta é idêntica ou muito similar à última do Jarvis, silenciar
+    const lastJarvisMsg = chatHistory.filter(m => m.role === 'assistant').slice(-1)[0];
+    if (lastJarvisMsg?.content && typeof lastJarvisMsg.content === 'string') {
+      if (responseText.trim() === lastJarvisMsg.content.trim()) {
+        console.warn(`[PUBLIC-DM] Resposta idêntica à anterior — silenciando`);
+        return null;
+      }
     }
 
     if (!responseText || responseText.trim().length < 3) return null;
@@ -1728,8 +1733,13 @@ REGRAS DE MÍDIA:
       console.warn(`[PUBLIC-DM] ⚠️ Vazamento detectado na resposta pública: "${leakCheck.match}"`);
       const sanitized = sanitizeClientResponse(responseText);
       if (!sanitized) {
-        // Fallback seguro
-        responseText = `Obrigado pela mensagem, ${pushName || ''}! A Stream Lab é um laboratório criativo de marketing. Posso te ajudar a saber mais sobre nossos serviços ou agendar uma reunião com nosso time. Como posso ajudar?`;
+        // Fallback seguro — variar pra não parecer robô
+        const fallbacks = [
+          `Boa pergunta! Deixa eu verificar internamente e te retorno.`,
+          `Essa parte eu prefiro que nosso time te explique direto. Quer que agendem um papo contigo?`,
+          `Não tenho essa informação aqui, mas posso pedir pro time te retornar com os detalhes.`,
+        ];
+        responseText = fallbacks[Math.floor(Math.random() * fallbacks.length)];
       } else {
         responseText = sanitized;
       }
