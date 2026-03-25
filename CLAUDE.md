@@ -1,7 +1,7 @@
 # Jarvis 5.0 — Technical Reference
 
 > **Projeto:** Jarvis · **Organização:** Stream Lab · **Versão:** 5.0.0
-> **Última atualização:** 2026-03-23 · **Autores:** Equipe Stream Lab + Claude Code
+> **Última atualização:** 2026-03-25 · **Autores:** Equipe Stream Lab + Claude Code
 
 ---
 
@@ -122,9 +122,12 @@ Jarvis 5.0 é um **sistema de IA multi-agente autônomo e multi-canal** que oper
 | **6 Agentes Especializados** | Master, Creative, Manager, Researcher, Traffic, Social — roteamento automático por intenção |
 | **Multi-canal** | WhatsApp (interno + público), Instagram DM, Email (IMAP/SMTP), Dashboard, Voz (WebSocket) |
 | **Gestão Proativa de Clientes** | Opera autonomamente em grupos de clientes autorizados (responde, cria tasks, notifica equipe) |
-| **Atendimento Público** | Leads/desconhecidos no DM recebem atendimento automático com limite de 10 mensagens e horário comercial |
+| **Atendimento Público** | Leads/desconhecidos no DM recebem atendimento automático com limite de 20 mensagens e horário comercial |
+| **Showcase Mode** | Modo apresentação ("Quero conhecer o Jarvis") — Opus para respostas impressionantes, auto-venda inteligente, anti-troll, blindagem contra alucinação |
+| **Handoff Equipe** | Equipe silencia Jarvis por lead ("eu assumo", "deixa comigo") e reativa com "Jarvis volta" |
+| **Geração de Imagens/Stickers** | Tools `gerar_imagem` (DALL-E 3) e `criar_sticker` (WebP 512x512) nos grupos internos |
 | **Meta Ads Multi-cliente** | Gerencia campanhas de tráfego pago via Graph API v25.0 para múltiplos clientes |
-| **Menções Inteligentes** | Sistema de @menções com resolução fuzzy (Levenshtein), mapeamento massivo via histórico |
+| **Menções Inteligentes** | Sistema de @menções com resolução fuzzy (Levenshtein real, distância ≤ 2), mapeamento massivo via histórico |
 | **Memória Semântica (pgvector)** | Busca híbrida (vetorial + texto) com embeddings OpenAI, backfill automático |
 | **Autonomia Nível 2** | Mover tasks entre seções e atribuir responsáveis no Asana, com escalação em 3 níveis |
 | **Webhooks Asana** | Eventos em tempo real (task criada, movida, concluída) com notificação automática |
@@ -184,7 +187,7 @@ src/
 ├── webhooks/
 │   └── asana-webhook.mjs         # Asana Webhooks (processamento de eventos em tempo real)
 └── skills/
-    ├── loader.mjs                # 15 tools do Claude (Asana + Calendar + Meta Ads + WhatsApp + Autonomia)
+    ├── loader.mjs                # 17 tools do Claude (Asana + Calendar + Meta Ads + WhatsApp + Autonomia + Imagens)
     └── meta-ads.mjs              # Meta Ads — Graph API wrapper multi-cliente
 dashboard/
 └── index.html                    # Dashboard v1 — SPA (Tailwind, Chart.js, auto-refresh)
@@ -234,6 +237,7 @@ auth_session/                     # Sessão WhatsApp (NÃO VERSIONADO)
 - **Português SEMPRE com acentos** em respostas e documentação voltada ao usuário
 - **Menções WhatsApp:** SEMPRE usar `@s.whatsapp.net` (phoneNumber), NUNCA `@lid`
 - **Anti-vazamento:** NUNCA expor nomes de equipe, tools ou processos internos em grupos de clientes ou canais públicos (Instagram DM, WhatsApp público, Email)
+- **Tom humanizado:** máx 1 emoji por mensagem em TODOS os canais — sem exageros
 
 ### 3.3 Deploy
 - **NUNCA fazer deploy manual direto no servidor** — deploy SOMENTE via GitHub CI/CD (`git push`)
@@ -269,7 +273,7 @@ auth_session/                     # Sessão WhatsApp (NÃO VERSIONADO)
 - Express API com autenticação dupla (`x-api-key` para bot, JWT para dashboard)
 - **WebSocket Voice** — servidor WebSocket em `/ws/voice` para streaming de voz bidirecional
 - **Webhooks** — endpoints públicos para Asana (`/webhooks/asana`) e Instagram (`/webhooks/instagram`)
-- Cron jobs: syncProfiles (6h), estudo Asana incremental (5x/dia seg-sex), cobrança com escalação (2x/dia), relatório diário (08h)
+- Cron jobs: syncProfiles (6h), estudo Asana incremental (5x/dia seg-sex). **Cobranças e relatório diário DESABILITADOS** temporariamente (até corrigir formato)
 - Sistema `sentByBot` para evitar auto-resposta
 - Gamificação: patentes (10 níveis: Recruta → Diretor da S.H.I.E.L.D.) e score de inteligência (6 eixos)
 - Inicialização de canais: `startChannelEmailMonitor()`, importação de handlers Instagram/Asana
@@ -335,7 +339,8 @@ Mensagem recebida
 - **3 escopos:** `user` (pessoas), `chat` (conversas), `agent` (operacional)
 - **10 categorias:** preference, client, client_profile, decision, deadline, rule, style, team_member, process, pattern
 - **Aprendizado passivo:** `processMemory()` roda em TODA mensagem ≥20 chars — Jarvis aprende 24/7
-- **Contexto multicamada:** `getMemoryContext()` agrega 6 fontes (user, chat, agent, client profile, sender profile, homework)
+- **extractFacts com contexto:** prompt inclui nome/tipo do grupo de origem e lista da equipe para classificação correta (equipe vs cliente)
+- **Contextualização:** `getMemoryContext()` agrega 6 fontes (user, chat, agent, client profile, sender profile, homework)
 
 **pgvector — Busca Semântica (NOVO v5.0):**
 
@@ -366,8 +371,11 @@ Mensagem recebida
 | **Anti-alucinação** | `antiHallucinationCheck()` — bloqueia respostas fabricadas sem base em tools |
 | **Anti-vazamento v3** | `checkInternalLeak()` + `sanitizeClientResponse()` — proteção tripla expandida (ver seção 6) |
 | **Modo Conversa** | Janela de 3 minutos ativa após resposta — responde sem precisar de @menção |
-| **Atendimento Público** | `handlePublicDM()` — atende leads com limite de 10 mensagens, horário comercial, tom profissional |
-| **Escalação 3 Níveis** | Cobranças com `cobranca_log`: 1ª normal → 2ª urgente (24h) → 3ª escalar pro Gui (48h) |
+| **Atendimento Público** | `handlePublicDM()` — atende leads com limite de 20 mensagens, horário comercial, tom profissional, anti-repetição, detecção de troll |
+| **Showcase Mode** | Modo apresentação com Opus, auto-venda inteligente, timeout 4min, anti-troll, blindagem anti-alucinação |
+| **Handoff** | Equipe silencia Jarvis por lead ("eu assumo") e reativa ("Jarvis volta") |
+| **Retry 429/529** | `claudeWithRetry()` — backoff exponencial (2s, 4s, 8s) em TODAS as chamadas Claude |
+| **Escalação 3 Níveis** | Cobranças com `cobranca_log`: 1ª normal → 2ª urgente (24h) → 3ª escalar pro Gui (48h) — **DESABILITADO temporariamente** |
 
 **Agente Proativo (`handleManagedClientMessage`):**
 - Opera autonomamente em grupos de clientes autorizados
@@ -376,14 +384,32 @@ Mensagem recebida
 - Quando não sabe → pergunta à equipe no grupo interno e aprende com a resposta
 - Erro → silêncio absoluto (nunca expõe erro ao cliente)
 
-**Atendimento Público (`handlePublicDM`) — NOVO v5.0:**
+**Atendimento Público (`handlePublicDM`) — v5.0:**
 - Ativado quando DM é de pessoa desconhecida (não é equipe nem cliente gerenciado)
 - Usa `JARVIS_IDENTITY + CHANNEL_CONTEXT.whatsapp_public`
 - **Horário comercial:** 8h-18h BRT (`isBusinessHours()`). Fora do horário: resposta automática
-- **Limite de 10 mensagens:** após 10 mensagens, sugere agendar reunião
+- **Limite de 20 mensagens:** após 20 mensagens, silencia (era 10 → 20)
 - **Primeiro contato:** detectado via `public_conversations` — tom especialmente acolhedor
-- **Modelo:** Sonnet (respostas rápidas, máx 512 tokens)
+- **Modelo:** Sonnet (respostas rápidas, máx 1024 tokens — era 512)
+- **Anti-repetição:** nunca repete a mesma resposta para o mesmo lead
+- **Detecção de troll:** identifica e lida com mensagens abusivas de forma inteligente
+- **Validação de dados:** valida telefone e datas fornecidos pelo lead
+- **Consciência temporal:** sabe que dia é hoje, adapta respostas a contexto temporal
 - Registra conversa na tabela `public_conversations` (contagem, timestamps)
+
+**Showcase Mode — NOVO v5.0:**
+- Ativado quando lead manda "Quero conhecer o Jarvis" (ou variações) no WhatsApp
+- Usa **Opus** para respostas impressionantes e detalhadas
+- Pergunta preferência de áudio no início da conversa
+- **Timeout de 4 minutos** de inatividade — encerra sessão showcase
+- **Auto-venda inteligente:** pergunta sobre o negócio da pessoa e mostra como o Jarvis se encaixa
+- **Anti-troll sofisticado:** detecta e neutraliza tentativas de trollagem
+- **Blindagem contra alucinação:** nunca inventa dados, funcionalidades ou métricas fictícias
+
+**Handoff (Equipe → Lead) — NOVO v5.0:**
+- Quando equipe manda "eu assumo", "não responda mais", "deixa comigo" → Jarvis silencia para aquele lead
+- "Jarvis volta" → reativa o atendimento automático para o lead
+- Controle granular por lead (não afeta outros atendimentos)
 
 **Escalação de Cobranças — NOVO v5.0:**
 - Usa tabela `cobranca_log` para rastrear quantas vezes cada task foi cobrada
@@ -410,7 +436,7 @@ Mensagem recebida
 
 **Exporta:** `asanaRequest`, `asanaWrite`, `asanaCreateTask`, `asanaAddToProject`, `asanaAddComment`, `asanaUploadAttachment`, `getOverdueTasks`, `getGCalClient`, `createGoogleCalendarEvent`, `JARVIS_TOOLS`, `executeJarvisTool`, `registerSendFunction`, `registerSendWithMentionsFunction`, `getSendFunction`
 
-**15 tools disponíveis:**
+**17 tools disponíveis:**
 
 | Tool | Agente | Descrição | Campos obrigatórios |
 |------|--------|-----------|-------------------|
@@ -430,6 +456,8 @@ Mensagem recebida
 | `metricas_post` | Social | Métricas de posts orgânicos (alcance, engajamento) | — |
 | `mover_task_secao` | Manager | **NOVO v5.0** — Move task para outra seção no Asana (ex: "A Fazer" → "Em Andamento") | task_gid, projeto, secao |
 | `atribuir_task` | Manager | **NOVO v5.0** — Altera o responsável de uma task no Asana | task_gid, responsavel |
+| `gerar_imagem` | Creative | **NOVO v5.0** — Gera imagem via DALL-E 3 (grupos internos apenas) | prompt |
+| `criar_sticker` | Creative | **NOVO v5.0** — Cria sticker WebP 512x512 (grupos internos apenas) | prompt |
 
 **Sistema de menções na tool `enviar_mensagem_grupo`:**
 ```
@@ -499,6 +527,7 @@ Envio:
 - **Ignora eventos do próprio Jarvis** (GID `1213583219463912`) para evitar loops
 - **Task concluída** (movida para seção "Concluído") → notifica grupo interno com nome, responsável e projeto
 - **Task sem responsável** → notifica grupo interno pedindo atribuição
+- **Notificações sem spam:** lead notifica 1x na entrada + 1x quando pedir reunião. Sem número LID falso
 - Registra eventos como memória via `processMemory()`
 - **Handshake:** endpoint `POST /webhooks/asana` responde `X-Hook-Secret` na primeira requisição (padrão Asana)
 - **Registro:** `registerAsanaWebhooks(callbackUrl)` registra webhooks em todos os projetos públicos (`PUBLIC_ASANA_PROJECTS`)
@@ -549,7 +578,7 @@ Implementado diretamente em `jarvis-v2.mjs` usando a lib `ws`.
 | `src/profiles.mjs` | `synthesizeProfile`, `getProfile`, `listProfiles`, `syncProfiles` | Sintetiza perfis via Haiku a partir de memórias acumuladas. 4 tipos: client, group, team_member, process |
 | `src/batch-asana.mjs` | `startAsanaStudy`, `stopAsanaStudy`, `asanaBatchState` | Ingestão em 3 fases (Projetos→Tarefas→Comentários). Resumível, rate limited, somente leitura |
 | `src/asana-email-monitor.mjs` | `startEmailMonitor`, `stopEmailMonitor`, `emailMonitorState` | Monitor de @menções do Asana via IMAP (responde a comentários marcando @jarvis) |
-| `src/brain-document.mjs` | `generateBrainDocument`, `loadBrainDocument`, `invalidateBrainCache`, `getBrainStatus` | Gera documento de contexto consolidado do cérebro |
+| `src/brain-document.mjs` | `generateBrainDocument`, `loadBrainDocument`, `invalidateBrainCache`, `getBrainStatus` | Gera documento de contexto consolidado do cérebro. Usa `claudeWithRetry()` |
 | `src/helpers.mjs` | `getMediaType`, `extractSender` | Detecção de tipo de mídia e extração de JID do remetente |
 
 ---
@@ -590,7 +619,7 @@ O mapa global `teamWhatsApp` (Map<string, string>) traduz nomes para JIDs `@s.wh
 |------|--------|---------|
 | 1. Exato | `teamWhatsApp.get("bruna")` | "bruna" → match direto |
 | 2. Parcial | key.includes(nome) ou nome.includes(key) | "bru" → match "bruna" |
-| 3. Fuzzy | Levenshtein distance ≤ 2 | "brusna" → "bruna" (distância 1) |
+| 3. Fuzzy | **Levenshtein real** (`findTeamJid`) — distância ≤ 2 | "brusna" → "bruna" (distância 1) |
 
 ---
 
@@ -765,9 +794,10 @@ git push origin master
   │
   └─ Se CI passou → Deploy (deploy.yml)
       ├─ SSH via chave Ed25519 (GitHub Secrets: VPS_SSH_KEY, VPS_HOST, VPS_USER)
+      ├─ ssh-keyscan com fallback StrictHostKeyChecking=no
       ├─ rsync (exclui: .env, auth_session, node_modules, *.bak)
       ├─ npm ci --production
-      └─ PM2 restart jarvis
+      └─ PM2 restart jarvis (path dinâmico)
 ```
 
 **Secrets necessários no GitHub:**
@@ -987,9 +1017,22 @@ Consulte `.env.example` para a lista completa. Variáveis organizadas por domín
 
 ## 15. Changelog
 
-### v5.0.0 (2026-03-23)
+### v5.0.0 (2026-03-25)
 - **pgvector** — Busca semântica de memórias via OpenAI embeddings (text-embedding-3-small, 1536 dims). Busca híbrida (vetor + texto) com peso configurável. Índice HNSW. Cache de embeddings em memória (TTL 1h). Endpoint `/dashboard/memory/backfill` para gerar embeddings em batch
-- **Atendimento Público** — `handlePublicDM()` para DMs de leads/desconhecidos. Limite de 10 mensagens por conversa. Horário comercial (8h-18h BRT). Tabela `public_conversations`. Tom profissional e acolhedor via `CHANNEL_CONTEXT.whatsapp_public`
+- **Showcase Mode** — Modo apresentação ativado por "Quero conhecer o Jarvis" no WhatsApp. Usa Opus para respostas impressionantes. Pergunta preferência de áudio. Timeout de 4 min de inatividade. Auto-venda inteligente (pergunta sobre o negócio e mostra como o Jarvis se encaixa). Anti-troll sofisticado. Blindagem contra alucinação (nunca inventa dados fictícios)
+- **Handoff** — Quando equipe manda "eu assumo", "não responda mais", "deixa comigo", o Jarvis silencia para aquele lead. "Jarvis volta" reativa o atendimento
+- **handlePublicDM inteligente** — Anti-repetição (nunca repete mesma resposta), detecção de troll, validação de dados (telefone/data), consciência temporal (sabe que dia é hoje), limite de 20 msgs → silêncio (era 10). Tokens 1024 (era 512)
+- **Retry automático 429/529** — `claudeWithRetry()` em TODAS as chamadas Claude (brain.mjs, memory.mjs, loader.mjs, instagram.mjs, brain-document.mjs). Backoff exponencial 2s, 4s, 8s
+- **Levenshtein em findTeamJid** — Fuzzy matching real que resolve "brusna" → "bruna" (distância ≤ 2)
+- **Geração de imagens e stickers** — Tools `gerar_imagem` (DALL-E 3) e `criar_sticker` (WebP 512x512) nos grupos internos
+- **Som de peido** — Easter egg nos grupos internos
+- **Notificações sem spam** — Lead: notifica 1x na entrada + 1x quando pedir reunião. Sem número LID falso
+- **Cobranças e relatório diário** — DESABILITADOS temporariamente até corrigir formato
+- **extractFacts com contexto** — Prompt inclui nome/tipo do grupo de origem e lista da equipe para classificação correta (equipe vs cliente)
+- **Tom humanizado** — Máx 1 emoji por mensagem em todos os canais. Sem exageros
+- **Deploy pipeline** — ssh-keyscan com fallback StrictHostKeyChecking=no. PM2 path dinâmico
+- **App Meta Ads publicado** — Modo Live (não mais desenvolvimento)
+- **Atendimento Público** — `handlePublicDM()` para DMs de leads/desconhecidos. Limite de 20 mensagens por conversa. Horário comercial (8h-18h BRT). Tabela `public_conversations`. Tom profissional e acolhedor via `CHANNEL_CONTEXT.whatsapp_public`
 - **Autonomia Nível 2** — Tools `mover_task_secao` e `atribuir_task` no Asana. Tabela `cobranca_log` para escalação de cobranças em 3 níveis (normal → urgente → escalar pro Gui)
 - **Webhooks Asana** — Endpoint `/webhooks/asana` para eventos em tempo real. Notificação automática de tasks concluídas e tasks sem responsável. `processAsanaWebhookEvent()` com filtro anti-loop (ignora eventos do próprio Jarvis). `registerAsanaWebhooks()` para registro automático nos projetos públicos
 - **WebSocket Voice** — Servidor WebSocket em `/ws/voice` para streaming de voz bidirecional. Protocolo: chunks binários (áudio) + JSON (comandos). Suporte a interrupção. TTS por frases para latência < 2s
@@ -1000,7 +1043,7 @@ Consulte `.env.example` para a lista completa. Variáveis organizadas por domín
 - **CHANNEL_CONTEXT expandido** — Adicionados 3 novos canais: `instagram_dm`, `email`, `whatsapp_public` (total: 7 canais)
 - **Anti-leak v3** — `INTERNAL_LEAK_PATTERNS` expandido com padrões para: Gui (case-sensitive), termos cross-client, termos de IA. Check normalizado de `[SILENCIO]`/`[SILÊNCIO]`. Memórias escopadas impedem contaminação cross-client. Homework excluído de contexto público
 - **Segurança** — helmet (headers HTTP), cors (controle de origem)
-- **Dependências novas** — ws, helmet, cors, nodemailer, @modelcontextprotocol/sdk, zod
+- **Dependências novas** — ws, helmet, cors, nodemailer, @modelcontextprotocol/sdk, zod, openai (DALL-E 3)
 
 ### v4.1.0 (2026-03-19)
 - Toggle de grupos no dashboard — ativa/desativa Jarvis por grupo em tempo real
@@ -1008,8 +1051,6 @@ Consulte `.env.example` para a lista completa. Variáveis organizadas por domín
 - Anti-leak v2 — silêncio total em vez de sanitização parcial
 - Cobrança inteligente — lê atividades do Asana (não só comentários)
 - Áudio em respostas de humor (35% de chance em respostas curtas)
-- App Meta Ads publicado (modo Live)
-- Deploy pipeline corrigido (ssh-keyscan com fallback)
 - "Agência" → "Laboratório criativo" em toda a identidade
 
 ### v4.0.0 (2026-03-16)
@@ -1052,8 +1093,15 @@ Consulte `.env.example` para a lista completa. Variáveis organizadas por domín
 - [x] ~~Multi-canal~~ — Instagram DM + Email (IMAP/SMTP)
 - [x] ~~WebSocket Voice~~ — streaming bidirecional com interrupção
 - [x] ~~Dashboard v2~~ — Next.js 16 + TypeScript + 9 páginas
+- [x] ~~Showcase Mode~~ — modo apresentação com Opus, auto-venda inteligente, anti-troll
+- [x] ~~Handoff equipe~~ — silencia Jarvis por lead quando equipe assume
+- [x] ~~Retry automático 429/529~~ — `claudeWithRetry()` com backoff exponencial em todos os módulos
+- [x] ~~Levenshtein real~~ — fuzzy matching com distância ≤ 2 em `findTeamJid`
+- [x] ~~Geração de imagens/stickers~~ — DALL-E 3 + WebP 512x512 nos grupos internos
+- [x] ~~App Meta Ads publicado~~ — modo Live
+- [x] ~~Deploy pipeline robusto~~ — ssh-keyscan com fallback, PM2 path dinâmico
+- [ ] Cobranças e relatório diário — corrigir formato e reabilitar
 - [ ] Ingestão de conteúdo do Google Drive (planners antigos)
-- [ ] Agente de vendas para atendimento automático (evolução do handlePublicDM)
 - [ ] System User Token Meta (token permanente, sem expiração de 60 dias)
 - [ ] RAG completo (chunks + retrieval) para documentos longos
 - [ ] Dashboard v2: deploy em produção (substituir v1)
