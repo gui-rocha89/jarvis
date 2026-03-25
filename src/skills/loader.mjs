@@ -2020,13 +2020,26 @@ Vá direto ao ponto. Sem cumprimentos, sem introdução.`;
 
       console.log(`[MULTI-AGENT] 🤝 Agente consultando especialista "${input.especialista}": "${input.pedido.substring(0, 80)}..."`);
 
-      // Usar Sonnet pro especialista consultado (rápido e bom o suficiente pra sub-tasks)
-      const response = await anthropic.messages.create({
-        model: CONFIG.AI_MODEL || 'claude-sonnet-4-6',
-        max_tokens: 4000,
-        system: specialistSystem,
-        messages: [{ role: 'user', content: userMsg }],
-      });
+      // Usar Sonnet pro especialista consultado — com retry pra 429/529
+      let response;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          response = await anthropic.messages.create({
+            model: CONFIG.AI_MODEL || 'claude-sonnet-4-6',
+            max_tokens: 4000,
+            system: specialistSystem,
+            messages: [{ role: 'user', content: userMsg }],
+          });
+          break;
+        } catch (err) {
+          const status = err?.status || 0;
+          if ((status === 429 || status === 529) && attempt < 3) {
+            await new Promise(r => setTimeout(r, 2000 * attempt));
+            continue;
+          }
+          throw err;
+        }
+      }
 
       const resposta = response.content[0]?.text || '';
       console.log(`[MULTI-AGENT] ✅ Especialista "${input.especialista}" respondeu (${resposta.length} chars)`);

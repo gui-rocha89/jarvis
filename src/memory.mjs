@@ -8,6 +8,25 @@ import { pool } from './database.mjs';
 import { CONFIG, TEAM_ASANA } from './config.mjs';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
+
+// Retry automático para 429/529 (rate limit / overloaded)
+async function claudeWithRetry(apiParams, maxRetries = 3) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await anthropic.messages.create(apiParams);
+    } catch (err) {
+      const status = err?.status || 0;
+      const isRetryable = status === 429 || status === 529 || (err.message && err.message.includes('Overloaded'));
+      if (isRetryable && attempt < maxRetries) {
+        const delay = Math.min(2000 * Math.pow(2, attempt - 1), 10000);
+        console.log(`[MEMORY-RETRY] Tentativa ${attempt}/${maxRetries} falhou (${status}). Retry em ${delay}ms...`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
 const MEMORY_MODEL = process.env.MEMORY_MODEL || 'claude-sonnet-4-6-20250514';
 const EMBEDDING_MODEL = 'text-embedding-3-small'; // 1536 dimensões
@@ -188,7 +207,7 @@ REGRAS DE CLASSIFICACAO POR ORIGEM:
 - Remetente classificado como "${senderLabel}" com base no historico de interacoes reais
 - Na duvida, compare o nome com a lista de EQUIPE CONHECIDA antes de classificar`;
 
-    const response = await anthropic.messages.create({
+    const response = await claudeWithRetry({
       model: MEMORY_MODEL,
       max_tokens: 800,
       system: `Voce e um extrator de fatos da Stream Lab (laboratorio criativo de marketing). Analise a mensagem e extraia APENAS fatos relevantes sobre:
@@ -350,7 +369,7 @@ export async function smartSearchMemories(query, scope = null, scopeId = null, l
     }
 
     // SEM pgvector: fallback com Haiku pra expandir queries (mais lento, mais caro)
-    const response = await anthropic.messages.create({
+    const response = await claudeWithRetry({
       model: MEMORY_MODEL,
       max_tokens: 300,
       system: `Você é um gerador de queries de busca. Dado um texto, gere 5-8 queries de busca alternativas que capturem TODOS os ângulos possíveis do que a pessoa pode estar perguntando. Inclua: sinônimos, termos relacionados, nomes de pessoas/empresas mencionados, categorias do assunto (processo, cliente, equipe, regra, preferência).

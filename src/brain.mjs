@@ -16,6 +16,29 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' })
 const MAX_AGENT_ITERATIONS = 10;
 
 /**
+ * Wrapper com retry automático para chamadas à API Anthropic.
+ * Trata erros 429 (rate limit) e 529 (overloaded) com backoff exponencial.
+ */
+async function claudeWithRetry(apiParams, options = {}, maxRetries = 3) {
+  const headers = options.headers || {};
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await anthropic.messages.create(apiParams, { headers });
+    } catch (err) {
+      const status = err?.status || err?.error?.status || 0;
+      const isRetryable = status === 429 || status === 529 || (err.message && err.message.includes('Overloaded'));
+      if (isRetryable && attempt < maxRetries) {
+        const delay = Math.min(2000 * Math.pow(2, attempt - 1), 10000); // 2s, 4s, 8s (max 10s)
+        console.log(`[CLAUDE-RETRY] Tentativa ${attempt}/${maxRetries} falhou (${status}). Retry em ${delay}ms...`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+/**
  * Decide qual modelo usar baseado na complexidade da mensagem.
  * Queries complexas (multi-step, análise profunda, estratégia) → Opus
  * Queries simples (cumprimento, pergunta direta, status) → Sonnet
@@ -93,7 +116,7 @@ export async function agentLoop(model, systemPrompt, messages, tools, context = 
 
     // Interleaved thinking para ver raciocínio entre tool calls
     const headers = useThinking ? { 'anthropic-beta': 'interleaved-thinking-2025-05-14' } : {};
-    const response = await anthropic.messages.create(apiParams, { headers });
+    const response = await claudeWithRetry(apiParams, { headers });
 
     // Processar blocos da resposta
     let hasToolUse = false;
@@ -1140,7 +1163,7 @@ async function agentManager(intel, { anthropic, teamList }) {
   }
 
   try {
-    const response = await anthropic.messages.create({
+    const response = await claudeWithRetry({
       model: CONFIG.AI_MODEL,
       max_tokens: 600,
       system: `Você é o AGENTE MANAGER do Jarvis — gerente de projetos sênior da Stream Lab.
@@ -1210,7 +1233,7 @@ async function agentWriter(personName, taskResults, { anthropic, teamList }) {
   }).join('\n\n');
 
   try {
-    const response = await anthropic.messages.create({
+    const response = await claudeWithRetry({
       model: CONFIG.AI_MODEL,
       max_tokens: 500,
       system: `Você é o AGENTE WRITER do Jarvis — responsável por formular mensagens HUMANAS e AMIGÁVEIS pro WhatsApp.
@@ -1653,7 +1676,7 @@ REGRAS DE MÍDIA:
 
     // Usar Sonnet para respostas rápidas
     const model = CONFIG.AI_MODEL;
-    const response = await anthropic.messages.create({
+    const response = await claudeWithRetry({
       model,
       max_tokens: 512,
       system: systemPrompt,
@@ -1784,7 +1807,7 @@ export async function handleShowcaseMessage(text, senderJid, pushName, mediaFile
     const model = CONFIG.AI_MODEL_STRONG || CONFIG.AI_MODEL;
     console.log(`[SHOWCASE] Gerando resposta com ${model} para ${pushName} (msg #${messageCount})`);
 
-    const response = await anthropic.messages.create({
+    const response = await claudeWithRetry({
       model,
       max_tokens: 2048,
       system: systemPrompt,

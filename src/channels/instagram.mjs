@@ -84,12 +84,25 @@ async function generateInstagramResponse(senderId, text) {
       ).join('\n')
       : '';
 
-    const response = await anthropic.messages.create({
-      model: process.env.AI_MODEL || 'claude-sonnet-4-6-20250514',
-      max_tokens: 500,
-      system: `${JARVIS_IDENTITY}\n\n${CHANNEL_CONTEXT.instagram_dm}\n\n${memoryContext}${historyText}`,
-      messages: [{ role: 'user', content: text }],
-    });
+    let response;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        response = await anthropic.messages.create({
+          model: process.env.AI_MODEL || 'claude-sonnet-4-6-20250514',
+          max_tokens: 500,
+          system: `${JARVIS_IDENTITY}\n\n${CHANNEL_CONTEXT.instagram_dm}\n\n${memoryContext}${historyText}`,
+          messages: [{ role: 'user', content: text }],
+        });
+        break;
+      } catch (retryErr) {
+        const status = retryErr?.status || 0;
+        if ((status === 429 || status === 529) && attempt < 3) {
+          await new Promise(r => setTimeout(r, 2000 * attempt));
+          continue;
+        }
+        throw retryErr;
+      }
+    }
 
     return response.content[0]?.text || null;
   } catch (err) {

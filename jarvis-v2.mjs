@@ -657,11 +657,9 @@ async function handleIncomingMessage(m) {
         pushName: pushName || null,
       });
 
-      // Notificar Gui sobre novo lead no modo apresentação
+      // Notificar Gui sobre novo lead no modo apresentação (sem número falso)
       try {
-        const phone = await resolvePhoneFromLid(from);
-        const phoneFormatted = phone.length >= 12 ? `+${phone.substring(0, 2)} ${phone.substring(2, 4)} ${phone.substring(4)}` : phone;
-        const notifyMsg = `🎯 *Novo lead no modo apresentação*\n\nNome: ${pushName || 'Desconhecido'}\nNúmero: ${phoneFormatted}\n\nEntrou no Showcase Mode agora.`;
+        const notifyMsg = `🎯 *Showcase ativado*\n\n👤 ${pushName || 'Desconhecido'}\n\nEntrou no modo apresentação agora.`;
         await sendText(CONFIG.GUI_JID, notifyMsg);
       } catch (notifyErr) {
         console.error('[SHOWCASE] Erro ao notificar Gui:', notifyErr.message);
@@ -748,19 +746,16 @@ async function handleIncomingMessage(m) {
           timestamp: Math.floor(Date.now() / 1000),
         });
 
-        // Notificar Gui se é lead quente (perguntou sobre preço/contratação/reunião)
-        if (result.isHotLead) {
+        // Notificar Gui APENAS 1 VEZ quando lead quer agendar reunião (não a cada mensagem)
+        if (result.isHotLead && !session._hotLeadNotified) {
+          session._hotLeadNotified = true;
           try {
-            const phone = await resolvePhoneFromLid(from);
-            const phoneFormatted = phone.length >= 12 ? `+${phone.substring(0, 2)} ${phone.substring(2, 4)} ${phone.substring(4)}` : phone;
-            const hotMsg = `🔥 *Lead quente no Showcase!*\n\n👤 *${pushName || 'Desconhecido'}*\n📱 ${phoneFormatted}\n\n💬 Lead disse: "${text.substring(0, 200)}"\n\n🤖 Jarvis respondeu: "${result.text.substring(0, 200)}"\n\n⚡ Ação necessária: verificar agenda e retornar ao lead.`;
+            const hotMsg = `🔥 *Lead quer agendar!*\n\n👤 *${pushName || 'Desconhecido'}*\n\n💬 "${text.substring(0, 200)}"`;
             await sendText(CONFIG.GUI_JID, hotMsg);
-            // Também notificar no grupo de tarefas
             if (CONFIG.GROUP_TAREFAS) {
-              const tarefasMsg = `🔥 *Novo lead quente!*\n\n👤 *${pushName || 'Desconhecido'}* entrou em contato pelo WhatsApp.\n💬 Interesse: "${text.substring(0, 150)}"\n\n⚡ Precisa de retorno rápido — já demonstrou interesse em agendar.`;
-              await sendText(CONFIG.GROUP_TAREFAS, tarefasMsg);
+              await sendText(CONFIG.GROUP_TAREFAS, `🔥 *Lead quer agendar!* — ${pushName || 'Desconhecido'} pediu reunião no showcase.`);
             }
-            console.log(`[SHOWCASE] 🔥 Lead quente notificado (Gui + Tarefas): ${pushName}`);
+            console.log(`[SHOWCASE] 🔥 Lead quente notificado (1x): ${pushName}`);
           } catch (notifyErr) {
             console.error('[SHOWCASE] Erro ao notificar lead quente:', notifyErr.message);
           }
@@ -784,21 +779,12 @@ async function handleIncomingMessage(m) {
         timestamp: Math.floor(Date.now() / 1000),
       });
 
-      // Notificar Gui no primeiro contato de um lead novo
-      if (result.isFirstContact || result.notifyGui) {
+      // Notificar Gui SOMENTE no primeiro contato OU quando pediu reunião/agendamento
+      if (result.isFirstContact) {
         try {
-          const leadPhone = await resolvePhoneFromLid(from);
-          const leadPhoneFmt = leadPhone.length >= 12 ? `+${leadPhone.substring(0, 2)} ${leadPhone.substring(2, 4)} ${leadPhone.substring(4)}` : leadPhone;
-          const notifyMsg = result.hasCommercialIntent
-            ? `🔥 *Lead com interesse comercial!*\n\n👤 *${pushName || 'Desconhecido'}*\n📱 ${leadPhoneFmt}\n💬 "${text.substring(0, 150)}"\n\n⚡ Ação necessária: retornar ao lead.`
-            : `📩 *Novo lead no WhatsApp*\n\nNome: ${pushName || 'Desconhecido'}\nNúmero: ${leadPhoneFmt}\nMensagem: "${text.substring(0, 150)}"\n\nJá respondi automaticamente.`;
+          const notifyMsg = `📩 *Novo lead no WhatsApp*\n\n👤 ${pushName || 'Desconhecido'}\n💬 "${text.substring(0, 150)}"`;
           await sendText(CONFIG.GUI_JID, notifyMsg);
-          // Melhoria 2: Notificar também no grupo Tarefas se intent comercial
-          if (result.hasCommercialIntent && CONFIG.GROUP_TAREFAS) {
-            const tarefasMsg = `🔥 *Lead com interesse comercial!*\n\n👤 *${pushName || 'Desconhecido'}* entrou em contato pelo WhatsApp.\n💬 "${text.substring(0, 150)}"\n\n⚡ Precisa de retorno rápido.`;
-            await sendText(CONFIG.GROUP_TAREFAS, tarefasMsg);
-          }
-          console.log(`[PUBLIC-DM] Gui notificado sobre novo lead: ${pushName}${result.hasCommercialIntent ? ' (COMERCIAL)' : ''}`);
+          console.log(`[PUBLIC-DM] Gui notificado sobre novo lead: ${pushName}`);
         } catch (notifyErr) {
           console.error('[PUBLIC-DM] Erro ao notificar Gui:', notifyErr.message);
         }
