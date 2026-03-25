@@ -569,6 +569,29 @@ async function handleIncomingMessage(m) {
   // ATENDIMENTO PÚBLICO: DM de desconhecidos (leads)
   // Se NÃO é grupo E sender NÃO é GUI_JID E sender NÃO é membro da equipe → handlePublicDM ou Showcase
   if (!isGroup && sender !== CONFIG.GUI_JID && !realTeamJids.has(sender)) {
+    // Verificar se é cliente existente (participa de grupo gerenciado)
+    let isExistingClient = false;
+    let clientGroupName = null;
+    for (const [groupJid, client] of managedClients) {
+      try {
+        const meta = await sock.groupMetadata(groupJid).catch(() => null);
+        if (meta?.participants?.some(p => p.id === sender || p.id === from)) {
+          isExistingClient = true;
+          clientGroupName = client.groupName || meta.subject;
+          break;
+        }
+      } catch {}
+    }
+
+    if (isExistingClient) {
+      console.log(`[PUBLIC-DM] Cliente existente detectado: ${pushName} (grupo: ${clientGroupName})`);
+      // Tratar como atendimento de cliente, não como lead — NÃO ativar showcase
+      // Gera resposta normal com contexto de cliente
+      const result = await generateResponse(text, from, sender, pushName, false, mediaFiles);
+      if (result?.text) await sendText(from, result.text);
+      return;
+    }
+
     console.log(`[PUBLIC-DM] DM de desconhecido: ${pushName} (${sender.substring(0, 15)})`);
 
     // SHOWCASE EXPIRADO: se a sessão expirou por inatividade, enviar despedida
