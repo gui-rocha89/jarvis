@@ -583,13 +583,13 @@ async function handleIncomingMessage(m) {
       } catch {}
     }
 
-    if (isExistingClient) {
+    if (isExistingClient && !isShowcaseTrigger(text) && !isShowcaseActive(sender)) {
+      // Cliente existente mandando msg normal → atendimento como cliente (não showcase/lead)
       console.log(`[PUBLIC-DM] Cliente existente detectado: ${pushName} (grupo: ${clientGroupName})`);
-      // Tratar como atendimento de cliente, não como lead — NÃO ativar showcase
-      // Gera resposta normal com contexto de cliente
       const result = await generateResponse(text, from, sender, pushName, false, mediaFiles);
       if (result?.text) await sendText(from, result.text);
       return;
+      // Se mandou "Quero conhecer o Jarvis" ou já está no showcase, segue o fluxo normal abaixo
     }
 
     console.log(`[PUBLIC-DM] DM de desconhecido: ${pushName} (${sender.substring(0, 15)})`);
