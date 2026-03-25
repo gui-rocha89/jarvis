@@ -271,18 +271,50 @@ export function isValidResponse(text) {
 }
 
 // Encontrar JID da equipe por nome
+// Levenshtein distance
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+  return dp[m][n];
+}
+
 export function findTeamJid(name) {
   if (!name) return null;
   const lower = name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  // Tier 1: match exato ou parcial em teamPhones
   for (const [key, jid] of teamPhones) {
     const keyNorm = key.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    if (keyNorm.includes(lower) || lower.includes(keyNorm)) return jid;
+    if (keyNorm === lower || keyNorm.includes(lower) || lower.includes(keyNorm)) return jid;
   }
+  // Tier 2: match exato ou parcial em teamWhatsApp
   for (const [key, jid] of teamWhatsApp) {
     const keyNorm = key.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    if (keyNorm.includes(lower) || lower.includes(keyNorm)) return jid;
+    if (keyNorm === lower || keyNorm.includes(lower) || lower.includes(keyNorm)) return jid;
   }
-  return null;
+  // Tier 3: fuzzy match (Levenshtein ≤ 2) — resolve "brusna" → "bruna"
+  let bestMatch = null;
+  let bestDist = 3; // máximo aceito
+  for (const [key, jid] of teamWhatsApp) {
+    const keyNorm = key.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const dist = levenshtein(lower, keyNorm);
+    if (dist < bestDist) { bestDist = dist; bestMatch = jid; }
+    // Também comparar primeiro nome
+    const firstName = keyNorm.split(' ')[0];
+    const searchFirst = lower.split(' ')[0];
+    const distFirst = levenshtein(searchFirst, firstName);
+    if (distFirst < bestDist) { bestDist = distFirst; bestMatch = jid; }
+  }
+  for (const [key, jid] of teamPhones) {
+    const keyNorm = key.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const dist = levenshtein(lower, keyNorm);
+    if (dist < bestDist) { bestDist = dist; bestMatch = jid; }
+  }
+  return bestMatch;
 }
 
 // Auto-detectar @mentions no texto
@@ -1467,9 +1499,9 @@ export async function runOverdueCheck() {
         // Writer gera a mensagem no tom certo
         const whatsappMsg = await agentWriter(person, results, { anthropic, teamList });
 
-        // Resolver JID com 3 fallbacks: teamWhatsApp → teamPhones → banco de dados
+        // Resolver JID: findTeamJid (exato + parcial + fuzzy Levenshtein) → banco
         const firstName = person.split(/\s+/)[0].toLowerCase();
-        let whatsappJid = teamWhatsApp.get(firstName) || teamPhones.get(firstName);
+        let whatsappJid = findTeamJid(person) || findTeamJid(firstName);
 
         // Fallback: buscar no banco jarvis_contacts pelo push_name
         if (!whatsappJid) {

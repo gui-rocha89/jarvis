@@ -3120,6 +3120,10 @@ function setupCronJobs() {
   // COBRANÇA AUTOMÁTICA — 2x por dia (estilo Camile)
   // 09:30 BRT = 12:30 UTC | 14:30 BRT = 17:30 UTC
   // ============================================
+  // DESABILITADO: Cobrança e relatório diário no grupo de tarefas
+  // O Gui pediu pra desativar até corrigirmos as menções e o formato
+  // Para reativar: descomentar os blocos abaixo
+  /*
   cron.schedule('30 12 * * 1-5', async () => {
     console.log('[CRON] Cobrança automática (09:30 BRT)...');
     try { await runOverdueCheck(); } catch (err) { console.error('[CRON] Erro na cobrança:', err.message); }
@@ -3128,10 +3132,6 @@ function setupCronJobs() {
     console.log('[CRON] Cobrança automática (14:30 BRT)...');
     try { await runOverdueCheck(); } catch (err) { console.error('[CRON] Erro na cobrança:', err.message); }
   });
-
-  // ============================================
-  // RELATÓRIO DIÁRIO — 08:00 BRT = 11:00 UTC
-  // ============================================
   cron.schedule('0 11 * * 1-5', async () => {
     console.log('[CRON] Relatório diário (08:00 BRT)...');
     try {
@@ -3144,6 +3144,7 @@ function setupCronJobs() {
       }
     } catch (err) { console.error('[CRON] Erro no relatório:', err.message); }
   });
+  */
 
   // ============================================
   // CÉREBRO PERSISTENTE — 1x por dia às 04:00 BRT (07:00 UTC)
