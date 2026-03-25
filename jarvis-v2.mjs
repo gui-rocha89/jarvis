@@ -113,7 +113,7 @@ async function checkShowcaseExpired(jid, sendText) {
   if (session?._expired) {
     showcaseConversations.delete(jid);
     await sendText(jid, `Parece que tu ficou ocupada! Sem problemas. Se quiser voltar a conversar, é só mandar "Quero conhecer o Jarvis" de novo. Qualquer dúvida, tô aqui. 👋`);
-    console.log(`[SHOWCASE] Sessão expirada para ${name} (${jid.substring(0, 15)}) — despedida enviada`);
+    console.log(`[SHOWCASE] Sessão expirada para ${session.pushName || 'lead'} (${jid.substring(0, 15)}) — despedida enviada`);
     return true;
   }
   return false;
@@ -351,7 +351,7 @@ async function handleIncomingMessage(m) {
   const pushName = m.pushName || '';
 
   // Download de mídia (imagens, vídeos, documentos) — QUALQUER contexto (PV, grupo, proativo)
-  const mediaFiles = [];
+  let mediaFiles = [];
   if (hasMedia) {
     try {
       const buffer = await downloadMediaMessage(m, 'buffer', {});
