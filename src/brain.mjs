@@ -876,10 +876,18 @@ const INTERNAL_LEAK_PATTERNS = [
   /\b(n[ãa]o respondo|n[ãa]o direcionada|mensagem casual|n[ãa]o vou responder|n[ãa]o preciso intervir|vou ignorar|sem necessidade de resposta)\b/i,
 ];
 
-function checkInternalLeak(text) {
+function checkInternalLeak(text, senderName = '') {
+  // Normalizar nome do remetente pra excluir da detecção
+  const senderWords = senderName ? senderName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\s+/) : [];
+
   for (const pattern of INTERNAL_LEAK_PATTERNS) {
     const match = text.match(pattern);
     if (match) {
+      // Se o match é o nome do próprio remetente, NÃO é vazamento
+      const matchLower = match[0].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      if (senderWords.some(w => w === matchLower || matchLower.includes(w) || w.includes(matchLower))) {
+        continue; // É o nome do lead, não da equipe
+      }
       return { leaked: true, match: match[0] };
     }
   }
@@ -1741,8 +1749,8 @@ REGRAS DE MÍDIA:
 
     if (!responseText || responseText.trim().length < 3) return null;
 
-    // Anti-leak check: garantir que não vaza informação interna
-    const leakCheck = checkInternalLeak(responseText);
+    // Anti-leak check: garantir que não vaza informação interna (exclui nome do remetente)
+    const leakCheck = checkInternalLeak(responseText, pushName);
     if (leakCheck.leaked) {
       console.warn(`[PUBLIC-DM] ⚠️ Vazamento detectado na resposta pública: "${leakCheck.match}"`);
       const sanitized = sanitizeClientResponse(responseText);
@@ -1829,7 +1837,7 @@ export async function handleShowcaseMessage(text, senderJid, pushName, mediaFile
       if (memCtx) {
         // Filtrar memórias que podem vazar dados internos
         const lines = memCtx.split('\n');
-        const safeLines = lines.filter(line => !checkInternalLeak(line).leaked);
+        const safeLines = lines.filter(line => !checkInternalLeak(line, pushName).leaked);
         if (safeLines.length > 0) {
           memorySection = safeLines.join('\n');
         }
@@ -1895,8 +1903,8 @@ export async function handleShowcaseMessage(text, senderJid, pushName, mediaFile
       sendAsAudio = false;
     }
 
-    // Anti-leak check: garantir que não vaza informação interna
-    const leakCheck = checkInternalLeak(responseText);
+    // Anti-leak check: garantir que não vaza informação interna (exclui nome do remetente)
+    const leakCheck = checkInternalLeak(responseText, pushName);
     if (leakCheck.leaked) {
       console.warn(`[SHOWCASE] ⚠️ Vazamento detectado: "${leakCheck.match}"`);
       const sanitized = sanitizeClientResponse(responseText);
