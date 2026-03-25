@@ -1647,8 +1647,8 @@ export async function handlePublicDM(text, senderJid, pushName, mediaFiles = [])
       return null;
     }
 
-    // Gerar resposta com IA
-    const recentMessages = await getRecentMessages(senderJid, 15);
+    // Gerar resposta com IA — carregar histórico completo da conversa
+    const recentMessages = await getRecentMessages(senderJid, 100);
     const chatHistory = [];
     for (const m of recentMessages) {
       const isJarvisMsg = m.push_name === 'Jarvis' || m.message_id?.startsWith('jarvis_');
@@ -1679,7 +1679,18 @@ export async function handlePublicDM(text, senderJid, pushName, mediaFiles = [])
     if (userContent.length === 0) userContent.push({ type: 'text', text: '[mídia recebida sem texto]' });
     chatHistory.push({ role: 'user', content: userContent.length === 1 && userContent[0].type === 'text' ? userContent[0].text : userContent });
 
-    // System prompt: identidade + canal público
+    // Carregar memórias semânticas (igual generateResponse)
+    let memorySection = '';
+    try {
+      const memoryContext = await getMemoryContext(senderJid, senderJid, text);
+      if (memoryContext) {
+        memorySection = memoryContext;
+      }
+    } catch (memErr) {
+      console.error('[PUBLIC-DM] Erro ao buscar memórias:', memErr.message);
+    }
+
+    // System prompt: identidade + canal público + memórias
     const systemPrompt = [
       {
         type: 'text',
@@ -1698,23 +1709,26 @@ REGRAS DE MÍDIA:
 - Se recebeu imagem: analise e conecte com o contexto da conversa.
 - Se recebeu áudio transcrito: responda ao conteúdo da transcrição.
 - Se o conteúdo é ofensivo, pornográfico ou claramente maldoso: encerre educadamente ("Prefiro manter nossa conversa produtiva. Se precisar de algo da Stream Lab, tô aqui!").
-- Se o conteúdo é fora de contexto (meme, foto aleatória): reconheça brevemente e tente voltar ao assunto.`,
+- Se o conteúdo é fora de contexto (meme, foto aleatória): reconheça brevemente e tente voltar ao assunto.${memorySection}`,
       },
     ];
 
-    // Usar Sonnet para respostas rápidas
-    const model = CONFIG.AI_MODEL;
-    const response = await claudeWithRetry({
-      model,
-      max_tokens: 1024,
-      system: systemPrompt,
-      messages: chatHistory,
-    });
+    // Filtrar tools — apenas as seguras para contexto público
+    const PUBLIC_ALLOWED_TOOLS = new Set(['buscar_mensagens', 'enviar_mensagem_grupo', 'lembrar']);
+    const publicTools = JARVIS_TOOLS.filter(t => PUBLIC_ALLOWED_TOOLS.has(t.name));
 
-    let responseText = '';
-    for (const block of response.content) {
-      if (block.type === 'text') responseText += block.text;
+    // Usar Sonnet com agentLoop (Extended Thinking + Tools + Anti-alucinação)
+    const model = CONFIG.AI_MODEL;
+    const { text: responseText_, toolsUsed } = await agentLoop(
+      model, systemPrompt, chatHistory, publicTools,
+      { senderJid, chatId: senderJid },
+      { maxTokens: 2048 }
+    );
+    if (toolsUsed?.size > 0) {
+      console.log(`[PUBLIC-DM] Tools usadas: [${[...toolsUsed].join(', ')}]`);
     }
+
+    let responseText = responseText_ || '';
 
     // Anti-repetição: se a resposta é idêntica ou muito similar à última do Jarvis, silenciar
     const lastJarvisMsg = chatHistory.filter(m => m.role === 'assistant').slice(-1)[0];
@@ -1777,8 +1791,8 @@ REGRAS DE MÍDIA:
  */
 export async function handleShowcaseMessage(text, senderJid, pushName, mediaFiles = [], messageCount = 1) {
   try {
-    // Buscar histórico da conversa (últimas 20 mensagens)
-    const recentMessages = await getRecentMessages(senderJid, 20);
+    // Buscar histórico completo da conversa
+    const recentMessages = await getRecentMessages(senderJid, 100);
     const chatHistory = [];
     for (const m of recentMessages) {
       const isJarvisMsg = m.push_name === 'Jarvis' || m.message_id?.startsWith('jarvis_');
@@ -1808,17 +1822,16 @@ export async function handleShowcaseMessage(text, senderJid, pushName, mediaFile
     if (userContent.length === 0) userContent.push({ type: 'text', text: '[mídia recebida sem texto]' });
     chatHistory.push({ role: 'user', content: userContent.length === 1 && userContent[0].type === 'text' ? userContent[0].text : userContent });
 
-    // Buscar memórias genéricas (sem dados internos) para conhecimento geral
-    let memoryContext = '';
+    // Carregar memórias semânticas completas (igual generateResponse)
+    let memorySection = '';
     try {
-      const memories = await searchMemories(text, 'agent', null, 5);
-      if (memories?.length > 0) {
-        const safeMemories = memories.filter(m => {
-          const check = checkInternalLeak(m.content);
-          return !check.leaked;
-        });
-        if (safeMemories.length > 0) {
-          memoryContext = '\n\nCONHECIMENTO RELEVANTE:\n' + safeMemories.map(m => `- ${m.content}`).join('\n');
+      const memCtx = await getMemoryContext(senderJid, senderJid, text);
+      if (memCtx) {
+        // Filtrar memórias que podem vazar dados internos
+        const lines = memCtx.split('\n');
+        const safeLines = lines.filter(line => !checkInternalLeak(line).leaked);
+        if (safeLines.length > 0) {
+          memorySection = safeLines.join('\n');
         }
       }
     } catch (memErr) {
@@ -1841,25 +1854,28 @@ export async function handleShowcaseMessage(text, senderJid, pushName, mediaFile
 - DICA: responda de forma que IMPRESSIONE. Mostre inteligência, criatividade e personalidade.
 - Para respostas mais longas (insights, explicações, estratégia) → marque para enviar como ÁUDIO
 - REGRA DE ÁUDIO: quando marcar [AUDIO:sim], a resposta DEVE ter NO MÁXIMO 500 caracteres (≈40 segundos de fala). Ninguém gosta de áudio longo. Seja conciso e impactante.
-- Inclua no final da sua resposta, em uma linha separada, exatamente: [AUDIO:sim] ou [AUDIO:nao] para indicar se esta resposta deve ser enviada como áudio de voz.${memoryContext}`,
+- Inclua no final da sua resposta, em uma linha separada, exatamente: [AUDIO:sim] ou [AUDIO:nao] para indicar se esta resposta deve ser enviada como áudio de voz.${memorySection}`,
       },
     ];
 
-    // Usar Opus para máxima inteligência
+    // Filtrar tools — apenas as seguras para contexto público (showcase)
+    const SHOWCASE_ALLOWED_TOOLS = new Set(['buscar_mensagens', 'enviar_mensagem_grupo', 'lembrar']);
+    const showcaseTools = JARVIS_TOOLS.filter(t => SHOWCASE_ALLOWED_TOOLS.has(t.name));
+
+    // Usar Opus com agentLoop (Extended Thinking + Tools + Anti-alucinação)
     const model = CONFIG.AI_MODEL_STRONG || CONFIG.AI_MODEL;
     console.log(`[SHOWCASE] Gerando resposta com ${model} para ${pushName} (msg #${messageCount})`);
 
-    const response = await claudeWithRetry({
-      model,
-      max_tokens: 2048,
-      system: systemPrompt,
-      messages: chatHistory,
-    });
-
-    let responseText = '';
-    for (const block of response.content) {
-      if (block.type === 'text') responseText += block.text;
+    const { text: responseText_, toolsUsed } = await agentLoop(
+      model, systemPrompt, chatHistory, showcaseTools,
+      { senderJid, chatId: senderJid },
+      { maxTokens: 2048 }
+    );
+    if (toolsUsed?.size > 0) {
+      console.log(`[SHOWCASE] Tools usadas: [${[...toolsUsed].join(', ')}]`);
     }
+
+    let responseText = responseText_ || '';
 
     if (!responseText || responseText.trim().length < 3) return null;
 
