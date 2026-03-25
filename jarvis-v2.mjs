@@ -167,7 +167,7 @@ async function sendText(jid, text, quotedMsg) {
   try {
     await sock.sendPresenceUpdate('composing', jid).catch(() => {});
     // Melhoria 4: Delay humanizado proporcional ao tamanho da resposta
-    const humanDelay = text.length < 100 ? 1500 : text.length <= 300 ? 3000 : 4000;
+    const humanDelay = text.length < 100 ? 800 : text.length <= 300 ? 1200 : 1500;
     await new Promise(r => setTimeout(r, humanDelay));
     const msgPayload = { text };
     if (quotedMsg) msgPayload.quoted = quotedMsg;
@@ -189,7 +189,7 @@ async function sendTextWithMentions(jid, text, mentions, quotedMsg) {
   try {
     // Melhoria 4: Composing delay em mensagens com menções
     await sock.sendPresenceUpdate('composing', jid).catch(() => {});
-    const humanDelay = text.length < 100 ? 1500 : text.length <= 300 ? 3000 : 4000;
+    const humanDelay = text.length < 100 ? 800 : text.length <= 300 ? 1200 : 1500;
     await new Promise(r => setTimeout(r, humanDelay));
     const mentionJids = mentions.map(m => m.jid).filter(Boolean);
     const msgPayload = { text, mentions: mentionJids };
