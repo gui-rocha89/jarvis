@@ -1730,7 +1730,7 @@ REGRAS DE MÍDIA:
     const { text: responseText_, toolsUsed } = await agentLoop(
       model, systemPrompt, chatHistory, publicTools,
       { senderJid, chatId: senderJid },
-      { maxTokens: 2048 }
+      { maxTokens: 16000 }
     );
     if (toolsUsed?.size > 0) {
       console.log(`[PUBLIC-DM] Tools usadas: [${[...toolsUsed].join(', ')}]`);
@@ -1877,7 +1877,7 @@ export async function handleShowcaseMessage(text, senderJid, pushName, mediaFile
     const { text: responseText_, toolsUsed } = await agentLoop(
       model, systemPrompt, chatHistory, showcaseTools,
       { senderJid, chatId: senderJid },
-      { maxTokens: 2048 }
+      { maxTokens: 16000 }
     );
     if (toolsUsed?.size > 0) {
       console.log(`[SHOWCASE] Tools usadas: [${[...toolsUsed].join(', ')}]`);
