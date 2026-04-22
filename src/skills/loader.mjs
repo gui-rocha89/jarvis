@@ -671,7 +671,7 @@ export const JARVIS_TOOLS = [
           description: 'Lista de interesses para segmentação (ex: [{"id":"123","name":"Agronegócio"}])',
           items: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } } },
         },
-        otimizacao: { type: 'string', enum: ['LINK_CLICKS', 'REACH', 'IMPRESSIONS', 'LANDING_PAGE_VIEWS'], description: 'Objetivo de otimização (default: LINK_CLICKS)' },
+        otimizacao: { type: 'string', enum: ['LINK_CLICKS', 'REACH', 'IMPRESSIONS', 'LANDING_PAGE_VIEWS', 'THRUPLAY', 'POST_ENGAGEMENT', 'TWO_SECOND_CONTINUOUS_VIDEO_VIEWS', 'LEAD_GENERATION', 'OFFSITE_CONVERSIONS'], description: 'Objetivo de otimização. IMPORTANTE: deve ser compatível com o objective da campanha pai. Sistema auto-corrige se incompatível. Para REELS/VÍDEO use THRUPLAY ou POST_ENGAGEMENT. Para tráfego: LINK_CLICKS. Para alcance/branding: REACH. Para leads: LEAD_GENERATION. Default: LINK_CLICKS.' },
         destino: { type: 'string', enum: ['WEBSITE', 'MESSENGER', 'WHATSAPP', 'APP'], description: 'Tipo de destino para campanhas de tráfego (default: WEBSITE). Use WHATSAPP quando o objetivo for direcionar pro WhatsApp do cliente — nesse caso PERGUNTE o número do WhatsApp antes de criar.' },
         cliente: { type: 'string', description: 'Nome do cliente (resolve Page ID e WhatsApp automaticamente). OBRIGATÓRIO para campanhas de tráfego.' },
         whatsapp_numero: { type: 'string', description: 'Número do WhatsApp do cliente com código do país (ex: "555599767916"). OBRIGATÓRIO quando destino=WHATSAPP e o número não está cadastrado no sistema.' },

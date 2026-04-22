@@ -498,11 +498,51 @@ export async function createAdSet({
     advantage_audience: targeting.advantageAudience !== undefined ? targeting.advantageAudience : 1
   };
 
+  // AUTO-MAPEAMENTO: optimization_goal precisa ser compatível com objective da campanha
+  // Subcode 2490408 acontece quando incompatível
+  // Doc: https://developers.facebook.com/docs/marketing-api/reference/ad-campaign-group#objective
+  const VALID_OPT_GOALS = {
+    OUTCOME_AWARENESS: ['REACH', 'IMPRESSIONS', 'AD_RECALL_LIFT', 'THRUPLAY', 'TWO_SECOND_CONTINUOUS_VIDEO_VIEWS'],
+    OUTCOME_TRAFFIC: ['LINK_CLICKS', 'LANDING_PAGE_VIEWS', 'IMPRESSIONS', 'REACH', 'POST_ENGAGEMENT'],
+    OUTCOME_ENGAGEMENT: ['POST_ENGAGEMENT', 'THRUPLAY', 'TWO_SECOND_CONTINUOUS_VIDEO_VIEWS', 'PROFILE_VISIT', 'IMPRESSIONS', 'REACH', 'CONVERSATIONS'],
+    OUTCOME_LEADS: ['LEAD_GENERATION', 'OFFSITE_CONVERSIONS', 'QUALITY_LEAD', 'LINK_CLICKS', 'CONVERSATIONS'],
+    OUTCOME_SALES: ['OFFSITE_CONVERSIONS', 'VALUE', 'LINK_CLICKS', 'IMPRESSIONS', 'REACH'],
+    OUTCOME_APP_PROMOTION: ['APP_INSTALLS', 'OFFSITE_CONVERSIONS', 'LINK_CLICKS'],
+  };
+
+  // Default fallback por objetivo (primeira opção da lista válida = mais segura)
+  const DEFAULT_OPT_GOAL = {
+    OUTCOME_AWARENESS: 'REACH',
+    OUTCOME_TRAFFIC: 'LINK_CLICKS',
+    OUTCOME_ENGAGEMENT: 'POST_ENGAGEMENT',
+    OUTCOME_LEADS: 'LEAD_GENERATION',
+    OUTCOME_SALES: 'OFFSITE_CONVERSIONS',
+    OUTCOME_APP_PROMOTION: 'APP_INSTALLS',
+  };
+
+  let finalOptGoal = optimizationGoal;
+  if (campaignObjective && VALID_OPT_GOALS[campaignObjective]) {
+    const validGoals = VALID_OPT_GOALS[campaignObjective];
+    if (!validGoals.includes(optimizationGoal)) {
+      const corrected = DEFAULT_OPT_GOAL[campaignObjective] || validGoals[0];
+      console.warn(`[META-ADS] ⚠️ optimization_goal "${optimizationGoal}" inválido para objective "${campaignObjective}". Auto-corrigindo para "${corrected}". Válidos: ${validGoals.join(', ')}`);
+      finalOptGoal = corrected;
+    }
+  }
+
+  // billing_event precisa ser compatível com optimization_goal
+  // Regras: THRUPLAY → THRUPLAY, LINK_CLICKS → LINK_CLICKS, resto → IMPRESSIONS
+  let finalBillingEvent = billingEvent;
+  if (finalOptGoal === 'THRUPLAY') finalBillingEvent = 'THRUPLAY';
+  else if (finalOptGoal === 'LINK_CLICKS') finalBillingEvent = 'LINK_CLICKS';
+  else if (finalOptGoal === 'POST_ENGAGEMENT') finalBillingEvent = 'IMPRESSIONS';
+  else finalBillingEvent = 'IMPRESSIONS';
+
   const body = {
     campaign_id: campaignId,
     name,
-    optimization_goal: optimizationGoal,
-    billing_event: billingEvent,
+    optimization_goal: finalOptGoal,
+    billing_event: finalBillingEvent,
     targeting: targetingSpec,
     status: status === 'ACTIVE' ? 'ACTIVE' : 'PAUSED',
   };
