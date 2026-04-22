@@ -724,6 +724,20 @@ export const JARVIS_TOOLS = [
     },
   },
   {
+    name: 'vincular_post_em_adset',
+    description: 'PATROCINAR PUBLICAÇÃO EXISTENTE: vincula um reel/post/vídeo orgânico já postado a um Ad Set, criando o creative e o ad de uma vez. USE SEMPRE pra patrocinar reels existentes (mantém curtidas e comentários orgânicos). Cria PAUSADO. Equivale a "Usar publicação existente" do Ads Manager.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        adset_id: { type: 'string', description: 'ID do Ad Set onde o anúncio será criado' },
+        post_id: { type: 'string', description: 'ID do post/reel a patrocinar (formato curto, ex: "122111190848985174", OU formato completo "{pageId}_{postId}")' },
+        cliente: { type: 'string', description: 'Nome do cliente (resolve Page ID automaticamente)' },
+        nome: { type: 'string', description: 'Nome opcional do anúncio (default: "Ad - Post {postId}")' },
+      },
+      required: ['adset_id', 'post_id', 'cliente'],
+    },
+  },
+  {
     name: 'baixar_anexos_task',
     description: 'Lista ou baixa os anexos (imagens, PDFs, etc.) de uma task do Asana. Útil para pegar criativos aprovados e subir pro Meta Ads.',
     input_schema: {
@@ -1810,6 +1824,45 @@ export async function executeJarvisTool(toolName, input, context = {}) {
       };
     } catch (err) {
       return { error: `Erro ao criar anúncio: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'vincular_post_em_adset') {
+    if (!input.adset_id) return { error: 'adset_id é obrigatório' };
+    if (!input.post_id) return { error: 'post_id é obrigatório' };
+    if (!input.cliente) return { error: 'cliente é obrigatório (pra resolver o Page ID)' };
+
+    try {
+      const pageId = await resolvePageId(input.cliente);
+      if (!pageId) return { error: `Página não encontrada para cliente "${input.cliente}"` };
+
+      // Cria creative com object_story_id (publicação existente)
+      const creative = await createAdCreative({
+        postId: input.post_id,
+        pageId,
+        name: input.nome ? `Creative - ${input.nome}` : undefined,
+      });
+
+      // Cria ad vinculando creative ao adset
+      const ad = await createAd({
+        adSetId: input.adset_id,
+        creativeId: creative.id,
+        name: input.nome || `Ad - Post ${input.post_id.substring(0, 12)}`,
+        status: 'PAUSED',
+      });
+
+      return {
+        sucesso: true,
+        criativo_id: creative.id,
+        anuncio_id: ad.id,
+        nome: ad.name,
+        adset_id: input.adset_id,
+        post_id: input.post_id,
+        status: 'PAUSADO',
+        mensagem: `Post ${input.post_id} vinculado ao adset ${input.adset_id} via Ad "${ad.name}" (PAUSADO). Curtidas e comentários orgânicos preservados.`,
+      };
+    } catch (err) {
+      return { error: `Erro ao vincular post no adset: ${err.message}` };
     }
   }
 

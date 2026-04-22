@@ -709,26 +709,44 @@ export async function createAdCreative({
   imageHash, pageId, message, link,
   headline = '', description = '',
   callToAction = 'LEARN_MORE', name = null,
+  postId = null, // NOVO: ID do post existente (reel, foto, vídeo) para "usar publicação existente"
 }) {
   const adAccount = CONFIG.META_AD_ACCOUNT_ID;
   if (!adAccount) throw new Error('META_AD_ACCOUNT_ID não configurado');
-  if (!imageHash) throw new Error('imageHash é obrigatório (faça upload primeiro)');
+  if (!postId && !imageHash) throw new Error('postId (publicação existente) OU imageHash (upload novo) é obrigatório');
   if (!pageId) throw new Error('pageId é obrigatório');
 
-  const body = {
-    name: name || `Creative - ${new Date().toISOString().split('T')[0]}`,
-    object_story_spec: {
-      page_id: pageId,
-      link_data: {
-        image_hash: imageHash,
-        link: link || 'https://www.facebook.com/',
-        message: message || '',
-        name: headline || undefined,
-        description: description || undefined,
-        call_to_action: { type: callToAction },
+  let body;
+
+  // CAMINHO 1: Publicação existente (reel, foto, vídeo orgânico já postado)
+  // Doc: https://developers.facebook.com/docs/marketing-api/reference/ad-creative
+  // Mantém curtidas, comentários e métricas orgânicas. NÃO usa object_story_spec.
+  if (postId) {
+    // postId pode vir como "122111190848985174" (só ID) OU "{pageId}_{postId}" (formato completo)
+    const objectStoryId = postId.includes('_') ? postId : `${pageId}_${postId}`;
+    body = {
+      name: name || `Creative Post ${postId.substring(0, 12)} - ${new Date().toISOString().split('T')[0]}`,
+      object_story_id: objectStoryId,
+    };
+    console.log(`[META-ADS] Criando creative de publicação existente: ${objectStoryId}`);
+  }
+  // CAMINHO 2: Criativo novo com imagem upload
+  else {
+    body = {
+      name: name || `Creative - ${new Date().toISOString().split('T')[0]}`,
+      object_story_spec: {
+        page_id: pageId,
+        link_data: {
+          image_hash: imageHash,
+          link: link || 'https://www.facebook.com/',
+          message: message || '',
+          name: headline || undefined,
+          description: description || undefined,
+          call_to_action: { type: callToAction },
+        },
       },
-    },
-  };
+    };
+  }
 
   const data = await metaRequest(`/${adAccount}/adcreatives`, 'POST', body);
   console.log(`[META-ADS] Creative criado: ${data.id}`);
