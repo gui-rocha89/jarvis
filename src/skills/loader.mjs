@@ -3,7 +3,7 @@
 // Carrega e gerencia skills dinâmicamente
 // ============================================
 import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, ASANA_CUSTOM_FIELDS, ASANA_CLIENTE_MAP, ASANA_URGENCIA_MAP, ASANA_TIER_MAP, ASANA_TIPO_DEMANDA_MAP, GCAL_KEY_PATH, GCAL_CALENDAR_ID, managedClients, saveManagedClients, teamWhatsApp, JARVIS_ALLOWED_GROUPS } from '../config.mjs';
-import { listCampaigns, getCampaignInsights, createCampaign, updateCampaignStatus, getAccountInsights, publishPagePost, getPagePosts, resolvePageId, resolveWhatsAppNumber, listAvailablePages, createAdSet, listAdSets, uploadAdImage, createAdCreative, createAd, updateEntityStatus, asanaGetAttachments, pipelineAsanaToAds, searchGeoLocation } from './meta-ads.mjs';
+import { listCampaigns, getCampaignInsights, createCampaign, updateCampaignStatus, getAccountInsights, publishPagePost, getPagePosts, resolvePageId, resolveWhatsAppNumber, listAvailablePages, listAllAccessiblePages, createAdSet, listAdSets, uploadAdImage, createAdCreative, createAd, updateEntityStatus, asanaGetAttachments, pipelineAsanaToAds, searchGeoLocation } from './meta-ads.mjs';
 import { pool } from '../database.mjs';
 import { searchMemories } from '../memory.mjs';
 import OpenAI from 'openai';
@@ -539,6 +539,16 @@ export const JARVIS_TOOLS = [
         orcamento_diario: { type: 'number', description: 'Orçamento diário em reais (ex: 50 = R$50/dia)' },
       },
       required: ['nome', 'objetivo', 'orcamento_diario'],
+    },
+  },
+  {
+    name: 'listar_paginas_ads',
+    description: 'Lista TODAS as páginas do Facebook/Instagram que o Jarvis tem acesso via Meta Business. USE quando alguém perguntar "quais páginas você acessa" ou quando precisar confirmar se uma página específica está disponível antes de criar campanha/anúncio. Retorna nome, ID e categoria de cada página.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        filtro: { type: 'string', description: 'Filtro opcional por nome (busca parcial). Ex: "medical" retorna apenas páginas com "medical" no nome.' },
+      },
     },
   },
   {
@@ -1459,6 +1469,24 @@ export async function executeJarvisTool(toolName, input, context = {}) {
     }
   }
 
+  if (toolName === 'listar_paginas_ads') {
+    try {
+      const todas = await listAllAccessiblePages();
+      const filtro = (input.filtro || '').toLowerCase().trim();
+      const paginas = filtro
+        ? todas.filter(p => p.nome.toLowerCase().includes(filtro))
+        : todas;
+      return {
+        sucesso: true,
+        total: paginas.length,
+        total_geral: todas.length,
+        paginas: paginas.map(p => ({ nome: p.nome, id: p.id, categoria: p.categoria || '—' })),
+      };
+    } catch (err) {
+      return { error: `Erro ao listar páginas: ${err.message}` };
+    }
+  }
+
   if (toolName === 'relatorio_ads') {
     if (!input.periodo) return { error: 'periodo é obrigatório' };
 
@@ -1660,7 +1688,7 @@ export async function executeJarvisTool(toolName, input, context = {}) {
 
       // Resolver Page ID do cliente pra usar no promoted_object
       if (input.cliente) {
-        const pageId = resolvePageId(input.cliente);
+        const pageId = await resolvePageId(input.cliente);
         if (pageId) targeting.pageId = pageId;
       }
 
@@ -1730,7 +1758,7 @@ export async function executeJarvisTool(toolName, input, context = {}) {
     if (!input.link) return { error: 'link é obrigatório' };
 
     try {
-      const pageId = resolvePageId(input.cliente);
+      const pageId = await resolvePageId(input.cliente);
       if (!pageId) return { error: `Página não encontrada para cliente "${input.cliente}". Use listAvailablePages() para ver as disponíveis.` };
 
       const result = await createAdCreative({
@@ -1829,7 +1857,7 @@ export async function executeJarvisTool(toolName, input, context = {}) {
     if (!input.link) return { error: 'link é obrigatório' };
 
     try {
-      const pageId = resolvePageId(input.cliente);
+      const pageId = await resolvePageId(input.cliente);
       if (!pageId) return { error: `Página não encontrada para cliente "${input.cliente}".` };
 
       const results = await pipelineAsanaToAds({

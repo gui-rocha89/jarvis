@@ -84,26 +84,137 @@ const datePresetMap = {
 // ============================================
 // RESOLVER CLIENTE → PAGE ID
 // ============================================
+// Cache de páginas descobertas via API Meta — atualiza a cada 1h
+// Estrutura: Map<nome_normalizado, pageId>
+const dynamicPagesCache = new Map();
+let lastPagesFetch = 0;
+const PAGES_CACHE_TTL = 60 * 60 * 1000; // 1 hora
+
+/**
+ * Normaliza nome pra busca (remove acentos, espaços, underscores)
+ */
+function normalizeName(name) {
+  return (name || '').toString().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Busca todas as páginas que o token tem acesso via API Meta
+ * Atualiza o cache dinâmico. Não falha — apenas retorna sem atualizar se der erro.
+ */
+async function refreshPagesCache() {
+  if (!CONFIG.META_ACCESS_TOKEN) return;
+  try {
+    const url = `${META_BASE()}/me/accounts?fields=id,name&limit=200&access_token=${CONFIG.META_ACCESS_TOKEN}`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (data.error) {
+      console.warn(`[META-ADS] Erro ao buscar páginas: ${data.error.message}`);
+      return;
+    }
+    dynamicPagesCache.clear();
+    for (const page of data.data || []) {
+      const normalized = normalizeName(page.name);
+      if (normalized) dynamicPagesCache.set(normalized, page.id);
+      // Adiciona variantes (cada palavra do nome também aponta pra página)
+      for (const word of (page.name || '').toLowerCase().split(/\s+/)) {
+        const w = normalizeName(word);
+        if (w && w.length >= 4 && !dynamicPagesCache.has(w)) {
+          dynamicPagesCache.set(w, page.id);
+        }
+      }
+    }
+    lastPagesFetch = Date.now();
+    console.log(`[META-ADS] Cache de páginas atualizado: ${data.data?.length || 0} páginas, ${dynamicPagesCache.size} aliases`);
+  } catch (err) {
+    console.warn(`[META-ADS] Falha ao atualizar cache de páginas: ${err.message}`);
+  }
+}
+
 /**
  * Resolve nome do cliente para o Page ID do Facebook.
- * Busca em META_PAGES_MAP (.env) por match parcial case-insensitive.
- * @param {string} clienteName - Nome do cliente (ex: "minner", "rossato", "pippi")
- * @returns {string|null} Page ID ou null
+ * Estratégia em 3 camadas:
+ *   1. Cache dinâmico (páginas descobertas via API Meta — atualiza a cada 1h)
+ *   2. META_PAGES_MAP (.env) — fallback estático
+ *   3. CONFIG.META_PAGE_ID — fallback global
+ * @param {string} clienteName - Nome do cliente (ex: "minner", "rossato", "medical planner")
+ * @returns {Promise<string|null>} Page ID ou null
  */
-export function resolvePageId(clienteName) {
+export async function resolvePageId(clienteName) {
   if (!clienteName) return CONFIG.META_PAGE_ID || null;
 
+  const normalized = normalizeName(clienteName);
+  if (!normalized) return CONFIG.META_PAGE_ID || null;
+
+  // 1. Atualiza cache se vencido
+  if (Date.now() - lastPagesFetch > PAGES_CACHE_TTL) {
+    await refreshPagesCache();
+  }
+
+  // 2. Cache dinâmico — exato
+  if (dynamicPagesCache.has(normalized)) return dynamicPagesCache.get(normalized);
+
+  // 3. Cache dinâmico — parcial
+  for (const [key, pageId] of dynamicPagesCache.entries()) {
+    if (key.includes(normalized) || normalized.includes(key)) return pageId;
+  }
+
+  // 4. Fallback: META_PAGES_MAP do .env
   const lower = clienteName.toLowerCase().trim();
-
-  // Busca exata primeiro
   if (META_PAGES_MAP[lower]) return META_PAGES_MAP[lower];
-
-  // Busca parcial (ex: "rossato" match "rossato_stara")
   for (const [key, pageId] of Object.entries(META_PAGES_MAP)) {
     if (key.includes(lower) || lower.includes(key)) return pageId;
   }
 
-  return null;
+  // 5. Última tentativa: força refresh do cache (caso página seja muito recente)
+  if (Date.now() - lastPagesFetch > 30 * 1000) {
+    await refreshPagesCache();
+    if (dynamicPagesCache.has(normalized)) return dynamicPagesCache.get(normalized);
+    for (const [key, pageId] of dynamicPagesCache.entries()) {
+      if (key.includes(normalized) || normalized.includes(key)) return pageId;
+    }
+  }
+
+  return CONFIG.META_PAGE_ID || null;
+}
+
+/**
+ * Versão síncrona pra compatibilidade — usa cache existente sem fetch
+ */
+export function resolvePageIdSync(clienteName) {
+  if (!clienteName) return CONFIG.META_PAGE_ID || null;
+  const normalized = normalizeName(clienteName);
+  if (dynamicPagesCache.has(normalized)) return dynamicPagesCache.get(normalized);
+  for (const [key, pageId] of dynamicPagesCache.entries()) {
+    if (key.includes(normalized) || normalized.includes(key)) return pageId;
+  }
+  const lower = clienteName.toLowerCase().trim();
+  if (META_PAGES_MAP[lower]) return META_PAGES_MAP[lower];
+  for (const [key, pageId] of Object.entries(META_PAGES_MAP)) {
+    if (key.includes(lower) || lower.includes(key)) return pageId;
+  }
+  return CONFIG.META_PAGE_ID || null;
+}
+
+/**
+ * Lista TODAS as páginas que o token tem acesso (via API Meta)
+ * Útil pra debug e pro Jarvis saber o que ele tem
+ */
+export async function listAllAccessiblePages() {
+  if (Date.now() - lastPagesFetch > PAGES_CACHE_TTL) {
+    await refreshPagesCache();
+  }
+  if (!CONFIG.META_ACCESS_TOKEN) return [];
+  try {
+    const url = `${META_BASE()}/me/accounts?fields=id,name,category&limit=200&access_token=${CONFIG.META_ACCESS_TOKEN}`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (data.error) return [];
+    return (data.data || []).map(p => ({ id: p.id, nome: p.name, categoria: p.category }));
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -260,7 +371,7 @@ export async function getAccountInsights(periodo = '30dias') {
  * @param {string|null} cliente - Nome do cliente (resolve via META_PAGES_MAP)
  */
 export async function getPagePosts(limit = 10, cliente = null) {
-  const pageId = resolvePageId(cliente) || CONFIG.META_PAGE_ID;
+  const pageId = (await resolvePageId(cliente)) || CONFIG.META_PAGE_ID;
   if (!pageId) throw new Error('Página não encontrada. Informe o nome do cliente ou configure META_PAGE_ID.');
 
   const data = await metaRequest(`/${pageId}/feed?fields=id,message,created_time,permalink_url&limit=${limit}`);
@@ -277,7 +388,7 @@ export async function getPagePosts(limit = 10, cliente = null) {
  * @param {string|null} cliente - Nome do cliente (resolve via META_PAGES_MAP)
  */
 export async function publishPagePost({ message, link, imageUrl, scheduledTime, cliente = null }) {
-  const pageId = resolvePageId(cliente) || CONFIG.META_PAGE_ID;
+  const pageId = (await resolvePageId(cliente)) || CONFIG.META_PAGE_ID;
   if (!pageId) throw new Error('Página não encontrada. Informe o nome do cliente ou configure META_PAGE_ID.');
 
   const body = { message };
