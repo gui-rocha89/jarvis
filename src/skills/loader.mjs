@@ -675,6 +675,7 @@ export const JARVIS_TOOLS = [
         destino: { type: 'string', enum: ['WEBSITE', 'MESSENGER', 'WHATSAPP', 'APP'], description: 'Tipo de destino para campanhas de tráfego (default: WEBSITE). Use WHATSAPP quando o objetivo for direcionar pro WhatsApp do cliente — nesse caso PERGUNTE o número do WhatsApp antes de criar.' },
         cliente: { type: 'string', description: 'Nome do cliente (resolve Page ID e WhatsApp automaticamente). OBRIGATÓRIO para campanhas de tráfego.' },
         whatsapp_numero: { type: 'string', description: 'Número do WhatsApp do cliente com código do país (ex: "555599767916"). OBRIGATÓRIO quando destino=WHATSAPP e o número não está cadastrado no sistema.' },
+        publico_advantage: { type: 'number', enum: [0, 1], description: 'Advantage+ Audience (Meta exige desde 2025). 1 = ativado (Meta expande público automaticamente para melhor entrega — RECOMENDADO e default), 0 = desativado (segmentação manual estrita, apenas o público definido).' },
       },
       required: ['campanha_id', 'nome', 'orcamento_diario'],
     },
@@ -1685,6 +1686,9 @@ export async function executeJarvisTool(toolName, input, context = {}) {
       if (input.interesses) targeting.interests = input.interesses;
       if (input.idade_min) targeting.ageMin = input.idade_min;
       if (input.idade_max) targeting.ageMax = input.idade_max;
+      // Advantage+ Audience (Meta exige desde 2025): default 1 (ativado)
+      // Para segmentação manual estrita, passar publico_advantage: 0
+      if (input.publico_advantage !== undefined) targeting.advantageAudience = input.publico_advantage;
 
       // Resolver Page ID do cliente pra usar no promoted_object
       if (input.cliente) {

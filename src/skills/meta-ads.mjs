@@ -490,6 +490,14 @@ export async function createAdSet({
     targetingSpec.flexible_spec = [{ interests: targeting.interests }];
   }
 
+  // OBRIGATÓRIO desde 2025: Meta exige flag de Advantage+ Audience
+  // Default: 1 (ativado) — recomendado pelo Meta para melhor entrega
+  // Para desabilitar e usar segmentação manual rígida: passar targeting.advantageAudience = 0
+  // Subcode 1870227 acontece quando esse campo não é definido
+  targetingSpec.targeting_automation = {
+    advantage_audience: targeting.advantageAudience !== undefined ? targeting.advantageAudience : 1
+  };
+
   const body = {
     campaign_id: campaignId,
     name,
