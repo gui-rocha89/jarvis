@@ -94,15 +94,41 @@ export async function runHealthCheck(notifyFn = null) {
     await logIncident({ component: 'database', severity: 'critical', message: `PostgreSQL down: ${err.message}` });
   }
 
-  // 2. WhatsApp socket (verifica via global)
+  // 2. WhatsApp — verifica de 3 formas em ordem de confiança:
+  //   a) Mandou msg com sucesso nos últimos 10min → CERTO conectado
+  //   b) connectionStatus === 'connected' (estado oficial do app)
+  //   c) sock.user existe + ws em estado válido (CONNECTING=0, OPEN=1, undefined=inicializando)
+  // readyState !== 1 sozinho NÃO é falha — Baileys passa por reconexões/handshakes
   try {
     const sock = global.__jarvisSock;
-    checks.whatsapp.ok = sock && sock.user && sock.ws?.readyState === 1;
-    if (!checks.whatsapp.ok) {
+    const status = global.__jarvisConnectionStatus;
+    const lastSentAt = global.__jarvisLastSentAt || 0;
+    const sentRecently = Date.now() - lastSentAt < 10 * 60 * 1000;
+    const wsState = sock?.ws?.readyState;
+    const wsValid = wsState === 0 || wsState === 1 || wsState === undefined;
+
+    if (sentRecently) {
+      checks.whatsapp.ok = true; // mandou msg recente — definitivamente conectado
+    } else if (status === 'connected' && sock?.user) {
+      checks.whatsapp.ok = true;
+    } else if (sock?.user && wsValid) {
+      checks.whatsapp.ok = true; // tolera reconexões em andamento
+    } else if (status === 'logged_out') {
+      checks.whatsapp.ok = false;
+      checks.whatsapp.error = 'Deslogado';
+      await logIncident({ component: 'whatsapp', severity: 'critical', message: 'WhatsApp DESLOGADO — escaneie novo QR no dashboard' });
+    } else if (!sock) {
+      checks.whatsapp.ok = false;
+      checks.whatsapp.error = 'Socket inexistente';
+      await logIncident({ component: 'whatsapp', severity: 'error', message: 'WhatsApp socket inexistente — startWhatsApp() não rodou?' });
+    } else {
+      checks.whatsapp.ok = false;
+      const minSinceLastSent = lastSentAt ? Math.round((Date.now() - lastSentAt) / 60000) : 'nunca';
+      checks.whatsapp.error = `status=${status} ws=${wsState} user=${!!sock?.user}`;
       await logIncident({
         component: 'whatsapp',
-        severity: sock ? 'warn' : 'error',
-        message: sock ? 'WhatsApp socket existe mas não está conectado' : 'WhatsApp socket inexistente',
+        severity: 'warn',
+        message: `WhatsApp em estado incerto (status=${status}, ws=${wsState}, user=${!!sock?.user}). Última msg enviada há ${minSinceLastSent}min`,
       });
     }
   } catch (err) {
@@ -129,15 +155,26 @@ export async function runHealthCheck(notifyFn = null) {
     consecutiveFails++;
   }
 
-  // Alerta crítico se 3 fails consecutivos (15 min sem responder)
-  if (consecutiveFails === 3 && notifyFn) {
+  // Alerta crítico SOMENTE se:
+  //   - 4 fails consecutivos (20 min sem responder no cron 5min) E
+  //   - última saúde OK há mais de 15 min E
+  //   - última msg enviada com sucesso há mais de 15 min (não é só blip de check)
+  // Evita falso positivo durante reconexões transitórias do Baileys.
+  const lastSentAt = global.__jarvisLastSentAt || 0;
+  const minSinceLastSent = (Date.now() - lastSentAt) / 60000;
+  const minSinceLastHealth = (Date.now() - lastHealthOK) / 60000;
+
+  if (consecutiveFails >= 4 && minSinceLastHealth > 15 && minSinceLastSent > 15 && notifyFn) {
     try {
       await notifyFn(`⚠️ JARVIS HEALTH CRÍTICO\n\n` +
         `DB: ${checks.db.ok ? 'OK' : 'FALHOU'}\n` +
         `WhatsApp: ${checks.whatsapp.ok ? 'OK' : 'FALHOU'}\n` +
         `RAM: ${checks.memory_ram.used_mb}MB\n` +
-        `Última saúde OK há ${Math.round((Date.now() - lastHealthOK) / 60000)}min`);
+        `Última saúde OK há ${Math.round(minSinceLastHealth)}min\n` +
+        `Última msg enviada há ${Math.round(minSinceLastSent)}min`);
     } catch {}
+    // Reseta pra não floodar — próximo alerta só depois de 4 novos fails
+    consecutiveFails = 0;
   }
 
   return checks;
