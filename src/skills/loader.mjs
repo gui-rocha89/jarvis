@@ -26,6 +26,26 @@ export function getSendWithMentionsFunction() { return _sendTextWithMentionsFn; 
 export function getSendRawFunction() { return _sendRawFn; }
 
 // ============================================
+// HELPER: extrai GID de input que pode ser GID puro OU URL completa do Asana
+// Aceita:
+//   "1213569651070390"
+//   "https://app.asana.com/0/0/1213569651070390"
+//   "https://app.asana.com/0/projeto/1213569651070390"
+//   "https://app.asana.com/0/0/1213569651070390/f"
+//   "https://app.asana.com/1/123/project/x/task/1213569651070390"
+// ============================================
+export function extractAsanaGid(input) {
+  if (!input) return null;
+  const str = String(input).trim();
+  // Já é GID puro (só dígitos, 10+ chars)
+  if (/^\d{10,}$/.test(str)) return str;
+  // Extrai de URL — pega o ÚLTIMO número grande na string (geralmente é o task GID)
+  const matches = str.match(/\d{10,}/g);
+  if (matches && matches.length > 0) return matches[matches.length - 1];
+  return null;
+}
+
+// ============================================
 // SKILL: ASANA
 // ============================================
 export async function asanaRequest(endpoint) {
@@ -488,7 +508,7 @@ export const JARVIS_TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        task_gid: { type: 'string', description: 'GID da task no Asana onde anexar os arquivos' },
+        task_gid: { type: 'string', description: 'GID da task no Asana OU URL completa. Extrai automaticamente o GID se receber URL.' },
         chat_id: {
           type: 'string',
           description: 'Numero do WhatsApp do remetente (ex: 555599154868). Se informado, filtra arquivos somente desse chat. Se omitido, pega de todos os chats.',
@@ -506,7 +526,7 @@ export const JARVIS_TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        task_gid: { type: 'string', description: 'GID da task no Asana (ex: 1213645436753789)' },
+        task_gid: { type: 'string', description: 'GID da task no Asana OU URL completa (ex: "1213645436753789" ou "https://app.asana.com/0/0/1213645436753789"). Extrai automaticamente o GID se receber URL.' },
         incluir_comentarios: { type: 'boolean', description: 'Se true, inclui os ultimos 10 comentarios da task (default: true)' },
       },
       required: ['task_gid'],
@@ -518,7 +538,7 @@ export const JARVIS_TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        task_gid: { type: 'string', description: 'GID da task no Asana' },
+        task_gid: { type: 'string', description: 'GID da task no Asana OU URL completa (ex: "1213569651070390" ou "https://app.asana.com/0/0/1213569651070390"). Extrai automaticamente o GID se receber URL.' },
         texto: { type: 'string', description: 'Texto do comentario. NAO comece com o nome da pessoa se usar "mencionar" — a menção já inclui o nome automaticamente.' },
         mencionar: { type: 'string', description: 'Nome da pessoa para mencionar (ex: "gui", "bruna"). A menção aparece como @NomePessoa antes do texto automaticamente — NAO repita o nome no texto.' },
       },
@@ -531,7 +551,7 @@ export const JARVIS_TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        task_gid: { type: 'string', description: 'GID da task no Asana' },
+        task_gid: { type: 'string', description: 'GID da task no Asana OU URL completa (ex: "1213569651070390" ou "https://app.asana.com/0/0/1213569651070390"). Extrai automaticamente o GID se receber URL.' },
         responsavel: { type: 'string', description: 'Nome do novo responsavel (ex: "bruno", "bruna", "nicolas")' },
         prazo: { type: 'string', description: 'Novo prazo em formato YYYY-MM-DD' },
         concluir: { type: 'boolean', description: 'Se true, marca a task como concluida' },
@@ -829,7 +849,7 @@ export const JARVIS_TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        task_gid: { type: 'string', description: 'GID da task no Asana' },
+        task_gid: { type: 'string', description: 'GID da task no Asana OU URL completa (ex: "1213569651070390" ou "https://app.asana.com/0/0/1213569651070390"). Extrai automaticamente o GID se receber URL.' },
         projeto: { type: 'string', description: 'Nome do projeto (ex: "cabine", "design", "audiovisual", "captacao")' },
         secao: { type: 'string', description: 'Nome da seção de destino (ex: "a_fazer", "em_andamento", "concluido", "revisao")' },
       },
@@ -842,7 +862,7 @@ export const JARVIS_TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        task_gid: { type: 'string', description: 'GID da task no Asana' },
+        task_gid: { type: 'string', description: 'GID da task no Asana OU URL completa (ex: "1213569651070390" ou "https://app.asana.com/0/0/1213569651070390"). Extrai automaticamente o GID se receber URL.' },
         responsavel: { type: 'string', description: 'Primeiro nome do novo responsável (ex: "bruna", "bruno", "nicolas", "arthur", "rigon", "gui")' },
       },
       required: ['task_gid', 'responsavel'],
@@ -1028,13 +1048,23 @@ export async function executeJarvisTool(toolName, input, context = {}) {
   if (toolName === 'consultar_tarefas') {
     const overdue = await getOverdueTasks();
     if (input.tipo === 'atrasadas') {
+      // overdue já tem gid (linha 160)
       return { tasks: overdue, count: overdue.length };
     }
-    // Para outros tipos, buscar do Asana
+    // Para outros tipos, buscar do Asana — SEMPRE incluir gid + permalink_url
     const projectMap = { captacao: ASANA_PROJECTS.CAPTACAO, audiovisual: ASANA_PROJECTS.AUDIOVISUAL, design: ASANA_PROJECTS.DESIGN, cabine: ASANA_PROJECTS.CABINE };
     const projectGid = projectMap[input.projeto?.toLowerCase()] || ASANA_PROJECTS.CAPTACAO;
-    const tasks = await asanaRequest(`/tasks?project=${projectGid}&opt_fields=name,due_on,completed,assignee.name&completed_since=now&limit=50`);
-    return { tasks: (tasks || []).filter(t => !t.completed).map(t => ({ name: t.name, due_on: t.due_on, assignee: t.assignee?.name })), count: tasks?.length || 0 };
+    const tasks = await asanaRequest(`/tasks?project=${projectGid}&opt_fields=gid,name,due_on,completed,assignee.name,permalink_url&completed_since=now&limit=50`);
+    return {
+      tasks: (tasks || []).filter(t => !t.completed).map(t => ({
+        gid: t.gid,
+        name: t.name,
+        due_on: t.due_on,
+        assignee: t.assignee?.name,
+        url: t.permalink_url || `https://app.asana.com/0/0/${t.gid}`,
+      })),
+      count: tasks?.length || 0,
+    };
   }
 
   if (toolName === 'buscar_mensagens') {
@@ -1318,9 +1348,9 @@ export async function executeJarvisTool(toolName, input, context = {}) {
   }
 
   if (toolName === 'anexar_midia_asana') {
-    const taskGid = input.task_gid;
+    const taskGid = extractAsanaGid(input.task_gid);
     const chatId = input.chat_id || '';
-    if (!taskGid) return { error: 'task_gid é obrigatório' };
+    if (!taskGid) return { error: 'task_gid inválido (forneça GID numérico ou URL completa do Asana)' };
 
     const results = [];
     const mediaBaseDir = path.join(process.cwd(), 'media_files');
@@ -1374,8 +1404,8 @@ export async function executeJarvisTool(toolName, input, context = {}) {
   // ============================================
 
   if (toolName === 'consultar_task') {
-    const taskGid = input.task_gid;
-    if (!taskGid) return { error: 'task_gid é obrigatório' };
+    const taskGid = extractAsanaGid(input.task_gid);
+    if (!taskGid) return { error: 'task_gid inválido (forneça GID numérico ou URL completa do Asana)' };
 
     const task = await asanaRequest(`/tasks/${taskGid}?opt_fields=name,notes,assignee.name,due_on,completed,completed_at,custom_fields.name,custom_fields.display_value,memberships.section.name,memberships.project.name,tags.name,num_subtasks`);
     if (!task) return { error: `Task ${taskGid} não encontrada` };
@@ -1413,9 +1443,10 @@ export async function executeJarvisTool(toolName, input, context = {}) {
   }
 
   if (toolName === 'comentar_task') {
-    const taskGid = input.task_gid;
+    const taskGid = extractAsanaGid(input.task_gid);
     const texto = input.texto;
-    if (!taskGid || !texto) return { error: 'task_gid e texto são obrigatórios' };
+    if (!taskGid) return { error: 'task_gid inválido (forneça GID numérico ou URL completa do Asana)' };
+    if (!texto) return { error: 'texto é obrigatório' };
 
     // Buscar comentários recentes ANTES de postar (evitar duplicatas e dar contexto)
     let comentariosExistentes = [];
@@ -1473,8 +1504,8 @@ export async function executeJarvisTool(toolName, input, context = {}) {
   }
 
   if (toolName === 'atualizar_task') {
-    const taskGid = input.task_gid;
-    if (!taskGid) return { error: 'task_gid é obrigatório' };
+    const taskGid = extractAsanaGid(input.task_gid);
+    if (!taskGid) return { error: 'task_gid inválido (forneça GID numérico ou URL completa do Asana)' };
 
     const updates = {};
     const actions = [];
@@ -2084,6 +2115,8 @@ export async function executeJarvisTool(toolName, input, context = {}) {
 
   if (toolName === 'mover_task_secao') {
     try {
+      const taskGid = extractAsanaGid(input.task_gid);
+      if (!taskGid) return { error: 'task_gid inválido (forneça GID numérico ou URL completa do Asana)' };
       const projetoLower = (input.projeto || '').toLowerCase();
       const secaoLower = (input.secao || '').toLowerCase();
 
@@ -2125,10 +2158,10 @@ export async function executeJarvisTool(toolName, input, context = {}) {
         return { error: `Seção "${input.secao}" não encontrada no projeto "${input.projeto}"` };
       }
 
-      const result = await asanaAddToProject(input.task_gid, projectGid, sectionGid);
+      const result = await asanaAddToProject(taskGid, projectGid, sectionGid);
       if (result) {
-        console.log(`[TOOL] Task ${input.task_gid} movida para seção ${input.secao} no projeto ${input.projeto}`);
-        return { success: true, task_gid: input.task_gid, projeto: input.projeto, secao: input.secao };
+        console.log(`[TOOL] Task ${taskGid} movida para seção ${input.secao} no projeto ${input.projeto}`);
+        return { success: true, task_gid: taskGid, projeto: input.projeto, secao: input.secao };
       } else {
         return { error: 'Erro ao mover task para a seção' };
       }
@@ -2139,6 +2172,8 @@ export async function executeJarvisTool(toolName, input, context = {}) {
 
   if (toolName === 'atribuir_task') {
     try {
+      const taskGid = extractAsanaGid(input.task_gid);
+      if (!taskGid) return { error: 'task_gid inválido (forneça GID numérico ou URL completa do Asana)' };
       const responsavelLower = (input.responsavel || '').toLowerCase();
       const asanaGid = TEAM_ASANA[responsavelLower];
       if (!asanaGid) {
@@ -2146,10 +2181,10 @@ export async function executeJarvisTool(toolName, input, context = {}) {
         return { error: `Responsável "${input.responsavel}" não encontrado. Opções: ${availableNames}` };
       }
 
-      const result = await asanaWrite('PUT', `/tasks/${input.task_gid}`, { assignee: asanaGid });
+      const result = await asanaWrite('PUT', `/tasks/${taskGid}`, { assignee: asanaGid });
       if (result.success) {
-        console.log(`[TOOL] Task ${input.task_gid} atribuída para ${input.responsavel} (${asanaGid})`);
-        return { success: true, task_gid: input.task_gid, responsavel: input.responsavel, asana_gid: asanaGid };
+        console.log(`[TOOL] Task ${taskGid} atribuída para ${input.responsavel} (${asanaGid})`);
+        return { success: true, task_gid: taskGid, responsavel: input.responsavel, asana_gid: asanaGid };
       } else {
         return { error: result.error || 'Erro ao atribuir task' };
       }
