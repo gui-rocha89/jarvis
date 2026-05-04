@@ -1656,6 +1656,49 @@ app.get('/dashboard/health', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ============================================
+// v6.0 Sprint 6 — TASK COPILOT (config + trigger manual)
+// ============================================
+app.get('/dashboard/task-copilot/config', auth, async (req, res) => {
+  try {
+    const { getTaskCopilotConfig } = await import('./src/task-copilot.mjs');
+    const cfg = await getTaskCopilotConfig();
+    res.json(cfg);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/dashboard/task-copilot/config', auth, async (req, res) => {
+  try {
+    const { saveTaskCopilotConfig, getTaskCopilotConfig } = await import('./src/task-copilot.mjs');
+    const current = await getTaskCopilotConfig();
+    const merged = { ...current, ...req.body };
+    const ok = await saveTaskCopilotConfig(merged);
+    res.json({ sucesso: ok, config: merged });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Trigger manual: rodar daily briefing AGORA (pra testar)
+app.post('/dashboard/task-copilot/daily-now', auth, async (req, res) => {
+  try {
+    const { postDailyBriefing, generateDailyBriefing } = await import('./src/task-copilot.mjs');
+    if (req.body?.preview) {
+      const text = await generateDailyBriefing();
+      return res.json({ preview: true, briefing: text });
+    }
+    const ok = await postDailyBriefing(sendText);
+    res.json({ sucesso: ok, mensagem: ok ? 'Daily postado no grupo Tarefas' : 'Não postou (verifique config/feriado)' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Trigger manual: rodar follow-up de atrasadas AGORA
+app.post('/dashboard/task-copilot/followup-now', auth, async (req, res) => {
+  try {
+    const { pollOverdueForFollowUp } = await import('./src/task-copilot.mjs');
+    const r = await pollOverdueForFollowUp(sendText);
+    res.json({ sucesso: true, ...r });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // --- Controle ON/OFF ---
 app.post('/dashboard/power', auth, (req, res) => {
   const { action } = req.body;
@@ -3060,6 +3103,49 @@ function splitIntoSentences(text) {
 // CRON JOBS
 // ============================================
 function setupCronJobs() {
+  // ============================================
+  // v6.0 Sprint 6 — TASK COPILOT
+  // ============================================
+  // Decisões do Gui: cobrança leve (3/6/9), daily 08:50, só tasks da equipe,
+  // comenta direto na task, sempre pergunta antes de fazer.
+
+  // 1. Polling de tasks atribuídas ao Jarvis — cada 30 min
+  cron.schedule('*/30 * * * *', async () => {
+    try {
+      const { pollTasksAssignedToJarvis, getTaskCopilotConfig } = await import('./src/task-copilot.mjs');
+      const cfg = await getTaskCopilotConfig();
+      if (cfg.poll_assigned_enabled === false) return;
+      const r = await pollTasksAssignedToJarvis();
+      if (r.processed > 0) console.log(`[CRON] Task copilot — ${r.processed} task(s) atribuída(s) processada(s)`);
+    } catch (err) {
+      console.error('[CRON] Task copilot (assigned) erro:', err.message);
+    }
+  });
+
+  // 2. Follow-up leve em tasks atrasadas — 9h e 14h BRT (12h e 17h UTC) seg-sex
+  cron.schedule('0 12,17 * * 1-5', async () => {
+    try {
+      const { pollOverdueForFollowUp, getTaskCopilotConfig } = await import('./src/task-copilot.mjs');
+      const cfg = await getTaskCopilotConfig();
+      if (cfg.poll_overdue_enabled === false) return;
+      const r = await pollOverdueForFollowUp(sendText);
+      console.log(`[CRON] Follow-up tasks atrasadas — ${r.processed || 0} processadas, ${r.escalated || 0} escaladas`);
+    } catch (err) {
+      console.error('[CRON] Task copilot (overdue) erro:', err.message);
+    }
+  });
+
+  // 3. Daily Briefing — 08:50 BRT (11:50 UTC) seg-sex
+  cron.schedule('50 11 * * 1-5', async () => {
+    try {
+      const { postDailyBriefing } = await import('./src/task-copilot.mjs');
+      await postDailyBriefing(sendText);
+    } catch (err) {
+      console.error('[CRON] Daily briefing erro:', err.message);
+    }
+  });
+  console.log('[CRON] Task Copilot ativo: daily 08:50, follow-up 9h/14h, polling 30min');
+
   // Limpeza periódica de Maps/Sets em memória (evita memory leak)
   setInterval(() => {
     const now = Date.now();

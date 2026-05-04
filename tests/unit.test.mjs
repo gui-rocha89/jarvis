@@ -687,3 +687,58 @@ describe('Autonomia Nível 2 (Sprint 2.2)', () => {
     assert.equal(r2.safe, true, 'atribuir_task deveria ser permitida');
   });
 });
+
+// ============================================
+// v6.0 Sprint 6 — Task Copilot
+// ============================================
+describe('Task Copilot (v6.0)', () => {
+  it('exporta funções principais', async () => {
+    const tc = await import('../src/task-copilot.mjs');
+    assert.ok(typeof tc.analyzeTask === 'function', 'analyzeTask ausente');
+    assert.ok(typeof tc.identifyHelpOpportunities === 'function', 'identifyHelpOpportunities ausente');
+    assert.ok(typeof tc.generateFollowUpComment === 'function', 'generateFollowUpComment ausente');
+    assert.ok(typeof tc.pollTasksAssignedToJarvis === 'function', 'pollTasksAssignedToJarvis ausente');
+    assert.ok(typeof tc.pollOverdueForFollowUp === 'function', 'pollOverdueForFollowUp ausente');
+    assert.ok(typeof tc.generateDailyBriefing === 'function', 'generateDailyBriefing ausente');
+    assert.ok(typeof tc.postDailyBriefing === 'function', 'postDailyBriefing ausente');
+    assert.ok(typeof tc.getTaskCopilotConfig === 'function', 'getTaskCopilotConfig ausente');
+    assert.ok(typeof tc.saveTaskCopilotConfig === 'function', 'saveTaskCopilotConfig ausente');
+  });
+
+  it('identifyHelpOpportunities retorna ofertas relevantes pra task de copy', async () => {
+    const { identifyHelpOpportunities } = await import('../src/task-copilot.mjs');
+    const ofertas = identifyHelpOpportunities({
+      nome: 'Rascunhar copy do post de Instagram',
+      descricao: 'Copy pra feed novo cliente',
+      diasInativa: 1,
+      comentarios: [{ autor: 'X', texto: 'lembrete' }],
+    });
+    assert.ok(Array.isArray(ofertas));
+    assert.ok(ofertas.length > 0, 'Deveria identificar ofertas pra task de copy');
+    assert.ok(ofertas.some(o => o.toLowerCase().includes('rascunhar') || o.toLowerCase().includes('copy')),
+      'Deveria sugerir rascunho de copy');
+  });
+
+  it('identifyHelpOpportunities sugere destravar quando sem comentários e parada', async () => {
+    const { identifyHelpOpportunities } = await import('../src/task-copilot.mjs');
+    const ofertas = identifyHelpOpportunities({
+      nome: 'Task qualquer',
+      descricao: '',
+      diasInativa: 5,
+      comentarios: [],
+    });
+    assert.ok(ofertas.some(o => o.toLowerCase().includes('travando') || o.toLowerCase().includes('destravar')),
+      'Deveria oferecer ajuda pra destravar');
+  });
+
+  it('identifyHelpOpportunities limita a 3 ofertas máximo', async () => {
+    const { identifyHelpOpportunities } = await import('../src/task-copilot.mjs');
+    const ofertas = identifyHelpOpportunities({
+      nome: 'Planner copy referencia briefing campanha arte',
+      descricao: 'Tudo junto',
+      diasInativa: 1,
+      comentarios: [{ autor: 'X', texto: 'oi' }],
+    });
+    assert.ok(ofertas.length <= 3, `Deveria limitar a 3, retornou ${ofertas.length}`);
+  });
+});
