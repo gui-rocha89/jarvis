@@ -52,52 +52,44 @@ function decrypt(payload) {
 //  - REDIS_PASSWORD (idem)
 //  - GCAL_KEY_PATH (é caminho de arquivo, não valor)
 
+// Estrutura: kind = 'apikey' (segredo de API) | 'config' (ID, host, número) | 'model' (string de modelo)
+// Isso ajuda a UI a separar visualmente
 export const MANAGEABLE_KEYS = [
-  // ==== IA ====
-  { key: 'ANTHROPIC_API_KEY', group: 'IA', label: 'Claude API Key', sensitive: true, hint: 'sk-ant-api03-...' },
-  { key: 'OPENAI_API_KEY', group: 'IA', label: 'OpenAI API Key (Whisper + TTS + Embeddings)', sensitive: true, hint: 'sk-...' },
-  { key: 'ELEVENLABS_API_KEY', group: 'IA', label: 'ElevenLabs API Key (TTS primário)', sensitive: true },
-  { key: 'ELEVENLABS_VOICE_ID', group: 'IA', label: 'ElevenLabs Voice ID', sensitive: false },
-  { key: 'AI_MODEL', group: 'IA', label: 'Modelo padrão (Sonnet)', sensitive: false, hint: 'claude-sonnet-4-6' },
-  { key: 'AI_MODEL_STRONG', group: 'IA', label: 'Modelo forte (Opus)', sensitive: false, hint: 'claude-opus-4-6' },
-  { key: 'MEMORY_MODEL', group: 'IA', label: 'Modelo de memória/perfis', sensitive: false, hint: 'claude-sonnet-4-5' },
+  // ==== Modelos de IA (não são chaves — são strings tipo "claude-sonnet-4-6") ====
+  { key: 'AI_MODEL', group: 'Modelos Claude', kind: 'model', label: 'Modelo padrão — respostas rápidas (DM, grupo, Asana, voz)', sensitive: false, hint: 'claude-sonnet-4-6' },
+  { key: 'AI_MODEL_STRONG', group: 'Modelos Claude', kind: 'model', label: 'Modelo forte — raciocínio complexo (showcase, decisões)', sensitive: false, hint: 'claude-opus-4-6' },
+  { key: 'MEMORY_MODEL', group: 'Modelos Claude', kind: 'model', label: 'Modelo de memória — extração de fatos e síntese de perfis', sensitive: false, hint: 'claude-sonnet-4-5' },
 
-  // ==== Asana ====
-  { key: 'ASANA_PAT', group: 'Asana', label: 'Asana Personal Access Token', sensitive: true, hint: '2/12...' },
-  { key: 'ASANA_WORKSPACE', group: 'Asana', label: 'Asana Workspace GID', sensitive: false },
+  // ==== Chaves de API (segredos) ====
+  { key: 'ANTHROPIC_API_KEY', group: 'API Keys', kind: 'apikey', label: 'Claude API Key (Anthropic)', sensitive: true, hint: 'sk-ant-api03-...' },
+  { key: 'OPENAI_API_KEY', group: 'API Keys', kind: 'apikey', label: 'OpenAI API Key (Whisper + TTS + Embeddings)', sensitive: true, hint: 'sk-...' },
+  { key: 'ELEVENLABS_API_KEY', group: 'API Keys', kind: 'apikey', label: 'ElevenLabs API Key (TTS primário)', sensitive: true },
+  { key: 'ASANA_PAT', group: 'API Keys', kind: 'apikey', label: 'Asana Personal Access Token', sensitive: true, hint: '2/12...' },
+  { key: 'META_ACCESS_TOKEN', group: 'API Keys', kind: 'apikey', label: 'Meta Access Token (System User recomendado)', sensitive: true, hint: 'EAA...' },
+  { key: 'META_APP_SECRET', group: 'API Keys', kind: 'apikey', label: 'Meta App Secret', sensitive: true },
+  { key: 'IMAP_PASSWORD', group: 'API Keys', kind: 'apikey', label: 'IMAP Password (Asana monitor)', sensitive: true },
+  { key: 'EMAIL_PASSWORD', group: 'API Keys', kind: 'apikey', label: 'Email Password (canal Lab)', sensitive: true },
+  { key: 'INSTAGRAM_VERIFY_TOKEN', group: 'API Keys', kind: 'apikey', label: 'Instagram Webhook Verify Token', sensitive: true },
 
-  // ==== Meta Ads ====
-  { key: 'META_APP_ID', group: 'Meta Ads', label: 'Meta App ID', sensitive: false },
-  { key: 'META_APP_SECRET', group: 'Meta Ads', label: 'Meta App Secret', sensitive: true },
-  { key: 'META_ACCESS_TOKEN', group: 'Meta Ads', label: 'Meta Access Token (System User recomendado)', sensitive: true, hint: 'EAA...' },
-  { key: 'META_AD_ACCOUNT_ID', group: 'Meta Ads', label: 'Ad Account ID', sensitive: false, hint: 'act_123...' },
-  { key: 'META_PAGE_ID', group: 'Meta Ads', label: 'Page ID padrão', sensitive: false },
-  { key: 'META_PIXEL_ID', group: 'Meta Ads', label: 'Pixel ID', sensitive: false },
-  { key: 'META_API_VERSION', group: 'Meta Ads', label: 'Versão da Graph API', sensitive: false, hint: 'v25.0' },
-
-  // ==== Email Asana (monitor de @menções) ====
-  { key: 'IMAP_HOST', group: 'Email Asana', label: 'IMAP Host', sensitive: false, hint: 'imap.gmail.com' },
-  { key: 'IMAP_USER', group: 'Email Asana', label: 'IMAP User', sensitive: false },
-  { key: 'IMAP_PASSWORD', group: 'Email Asana', label: 'IMAP Password (App Password)', sensitive: true },
-
-  // ==== Email Genérico (canal de leads) ====
-  { key: 'EMAIL_IMAP_HOST', group: 'Email Lab', label: 'IMAP Host', sensitive: false },
-  { key: 'EMAIL_IMAP_PORT', group: 'Email Lab', label: 'IMAP Port', sensitive: false, hint: '993' },
-  { key: 'EMAIL_SMTP_HOST', group: 'Email Lab', label: 'SMTP Host', sensitive: false },
-  { key: 'EMAIL_SMTP_PORT', group: 'Email Lab', label: 'SMTP Port', sensitive: false, hint: '587' },
-  { key: 'EMAIL_USER', group: 'Email Lab', label: 'Email do Lab', sensitive: false },
-  { key: 'EMAIL_PASSWORD', group: 'Email Lab', label: 'Email Password', sensitive: true },
-
-  // ==== Instagram DM ====
-  { key: 'INSTAGRAM_VERIFY_TOKEN', group: 'Instagram', label: 'Webhook Verify Token', sensitive: true },
-
-  // ==== WhatsApp / Identidade ====
-  { key: 'GROUP_TAREFAS', group: 'WhatsApp', label: 'JID grupo Tarefas', sensitive: false, hint: '...@g.us' },
-  { key: 'GROUP_GALAXIAS', group: 'WhatsApp', label: 'JID grupo Galáxias', sensitive: false, hint: '...@g.us' },
-  { key: 'GUI_JID', group: 'WhatsApp', label: 'JID do Gui (DM direto)', sensitive: false, hint: '...@s.whatsapp.net' },
-
-  // ==== Google Calendar ====
-  { key: 'GCAL_CALENDAR_ID', group: 'Google Calendar', label: 'Calendar ID', sensitive: false, hint: 'email@group.calendar.google.com' },
+  // ==== IDs e configs (não-secretos) ====
+  { key: 'ELEVENLABS_VOICE_ID', group: 'IDs e Configurações', kind: 'config', label: 'ElevenLabs Voice ID', sensitive: false },
+  { key: 'ASANA_WORKSPACE', group: 'IDs e Configurações', kind: 'config', label: 'Asana Workspace GID', sensitive: false },
+  { key: 'META_APP_ID', group: 'IDs e Configurações', kind: 'config', label: 'Meta App ID', sensitive: false },
+  { key: 'META_AD_ACCOUNT_ID', group: 'IDs e Configurações', kind: 'config', label: 'Meta Ad Account ID', sensitive: false, hint: 'act_123...' },
+  { key: 'META_PAGE_ID', group: 'IDs e Configurações', kind: 'config', label: 'Meta Page ID padrão', sensitive: false },
+  { key: 'META_PIXEL_ID', group: 'IDs e Configurações', kind: 'config', label: 'Meta Pixel ID', sensitive: false },
+  { key: 'META_API_VERSION', group: 'IDs e Configurações', kind: 'config', label: 'Meta Graph API version', sensitive: false, hint: 'v25.0' },
+  { key: 'IMAP_HOST', group: 'IDs e Configurações', kind: 'config', label: 'IMAP Host (Asana monitor)', sensitive: false, hint: 'imap.gmail.com' },
+  { key: 'IMAP_USER', group: 'IDs e Configurações', kind: 'config', label: 'IMAP User (Asana monitor)', sensitive: false },
+  { key: 'EMAIL_IMAP_HOST', group: 'IDs e Configurações', kind: 'config', label: 'Email IMAP Host (canal Lab)', sensitive: false },
+  { key: 'EMAIL_IMAP_PORT', group: 'IDs e Configurações', kind: 'config', label: 'Email IMAP Port', sensitive: false, hint: '993' },
+  { key: 'EMAIL_SMTP_HOST', group: 'IDs e Configurações', kind: 'config', label: 'Email SMTP Host', sensitive: false },
+  { key: 'EMAIL_SMTP_PORT', group: 'IDs e Configurações', kind: 'config', label: 'Email SMTP Port', sensitive: false, hint: '587' },
+  { key: 'EMAIL_USER', group: 'IDs e Configurações', kind: 'config', label: 'Email do Lab', sensitive: false },
+  { key: 'GCAL_CALENDAR_ID', group: 'IDs e Configurações', kind: 'config', label: 'Google Calendar ID', sensitive: false, hint: 'email@group.calendar.google.com' },
+  { key: 'GROUP_TAREFAS', group: 'IDs e Configurações', kind: 'config', label: 'JID do grupo Tarefas (WhatsApp)', sensitive: false, hint: '...@g.us' },
+  { key: 'GROUP_GALAXIAS', group: 'IDs e Configurações', kind: 'config', label: 'JID do grupo Galáxias (WhatsApp)', sensitive: false, hint: '...@g.us' },
+  { key: 'GUI_JID', group: 'IDs e Configurações', kind: 'config', label: 'JID do Gui (DM WhatsApp)', sensitive: false, hint: '...@s.whatsapp.net' },
 ];
 
 export const KEY_NAMES = MANAGEABLE_KEYS.map(k => k.key);
@@ -219,21 +211,54 @@ async function fetchWithTimeout(url, opts = {}, timeoutMs = TEST_TIMEOUT_MS) {
   } finally { clearTimeout(t); }
 }
 
+// Helper: tenta uma chamada mínima ao Claude com modelo específico
+async function probeAnthropicModel(modelName) {
+  const k = process.env.ANTHROPIC_API_KEY;
+  if (!k) return { ok: false, message: 'ANTHROPIC_API_KEY vazia — configure ela primeiro' };
+  if (!modelName) return { ok: false, message: 'Nome do modelo vazio' };
+  const r = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': k, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: modelName, max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
+  });
+  if (r.ok) {
+    const data = await r.json().catch(() => ({}));
+    return { ok: true, message: `Modelo "${modelName}" válido e respondendo (${data.usage?.input_tokens || '?'} tokens in)` };
+  }
+  const body = await r.text();
+  let err = body;
+  try { err = JSON.parse(body)?.error?.message || body; } catch {}
+  if (r.status === 401) return { ok: false, message: `Chave inválida (401) — verifique ANTHROPIC_API_KEY` };
+  if (r.status === 404) return { ok: false, message: `Modelo "${modelName}" NÃO EXISTE ou foi DEPRECADO` };
+  if (r.status === 429) return { ok: true, message: `Modelo válido (rate-limited mas autenticou)`, warn: true };
+  return { ok: false, message: `Erro ${r.status}: ${err.substring(0, 200)}` };
+}
+
 // Testers por chave — cada um faz 1 chamada barata pra validar
 const TESTERS = {
   ANTHROPIC_API_KEY: async () => {
-    const k = process.env.ANTHROPIC_API_KEY;
-    if (!k) return { ok: false, message: 'Chave vazia' };
-    const r = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'x-api-key': k, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
-    });
-    if (r.ok) return { ok: true, message: 'Chave válida — Claude API respondeu' };
-    const body = await r.text();
-    if (r.status === 401) return { ok: false, message: 'Chave inválida (401 Unauthorized)' };
-    if (r.status === 429) return { ok: true, message: 'Chave válida (rate-limited mas autenticou)', warn: true };
-    return { ok: false, message: `Erro ${r.status}: ${body.substring(0, 200)}` };
+    return probeAnthropicModel('claude-haiku-4-5');
+  },
+
+  AI_MODEL: async () => {
+    const m = process.env.AI_MODEL || 'claude-sonnet-4-6';
+    const r = await probeAnthropicModel(m);
+    if (r.ok) return { ok: true, message: `Modelo "${m}" disponível (Sonnet padrão pra respostas rápidas)` };
+    return r;
+  },
+
+  AI_MODEL_STRONG: async () => {
+    const m = process.env.AI_MODEL_STRONG || 'claude-opus-4-6';
+    const r = await probeAnthropicModel(m);
+    if (r.ok) return { ok: true, message: `Modelo "${m}" disponível (Opus pra raciocínio complexo)` };
+    return r;
+  },
+
+  MEMORY_MODEL: async () => {
+    const m = process.env.MEMORY_MODEL || 'claude-sonnet-4-5';
+    const r = await probeAnthropicModel(m);
+    if (r.ok) return { ok: true, message: `Modelo "${m}" disponível (extração de fatos e perfis)` };
+    return r;
   },
 
   OPENAI_API_KEY: async () => {
