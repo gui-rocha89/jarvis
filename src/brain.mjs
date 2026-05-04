@@ -507,8 +507,8 @@ export async function generateResponse(text, chatId, senderJid, pushName, isGrou
           console.log(`[BRAIN] Silêncio detectado em grupo de cliente ${managedClient.groupName}`);
           return { text: null, mentions: [], agent: intent.agent };
         }
-        // Anti-leak: bloquear vazamento de info interna
-        const leakCheck = checkInternalLeak(finalText);
+        // Anti-leak v4 (Sprint 5): smart check com KG (libera entities legítimas)
+        const leakCheck = await checkInternalLeakSmart(finalText);
         if (leakCheck.leaked) {
           console.warn(`[BRAIN] ⚠️ VAZAMENTO BLOQUEADO em ${managedClient.groupName}: "${leakCheck.match}"`);
           console.warn(`[BRAIN] Texto bloqueado: ${finalText.substring(0, 300)}`);
@@ -671,9 +671,9 @@ export async function handleManagedClientMessage(text, senderJid, pushName, chat
       return null;
     }
 
-    // SALVAGUARDA ANTI-VAZAMENTO: bloquear menções a processos internos na resposta ao cliente
+    // SALVAGUARDA ANTI-VAZAMENTO v4 (Sprint 5): smart check com KG
     // REGRA ABSOLUTA: detectou vazamento → SILÊNCIO TOTAL. Nunca tentar sanitizar — risco alto demais.
-    const leakCheck = checkInternalLeak(finalText);
+    const leakCheck = await checkInternalLeakSmart(finalText);
     if (leakCheck.leaked) {
       console.warn(`[PROACTIVE] ⚠️ VAZAMENTO BLOQUEADO para ${managedClient.groupName}: "${leakCheck.match}"`);
       console.warn(`[PROACTIVE] Texto bloqueado (silêncio total): ${finalText.substring(0, 300)}`);
@@ -876,39 +876,77 @@ const INTERNAL_LEAK_PATTERNS = [
   /\b(n[ãa]o respondo|n[ãa]o direcionada|mensagem casual|n[ãa]o vou responder|n[ãa]o preciso intervir|vou ignorar|sem necessidade de resposta)\b/i,
 ];
 
-function checkInternalLeak(text, senderName = '') {
-  // Normalizar nome do remetente pra excluir da detecção
-  const senderWords = senderName ? senderName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\s+/) : [];
+// ============================================
+// v6.0 — Anti-Leak v4 (Sprint 5): inteligente, contextual
+// Resolve caso "Rigon": lead com nome igual a membro da equipe nao bloqueia
+// Resolve caso "Stream Health": entity legitima registrada no KG nao bloqueia
+// ============================================
 
+function _normalize(s) {
+  return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+const _kgWhitelistCache = new Map();
+const _KG_CACHE_TTL = 5 * 60 * 1000;
+async function _isWhitelistedByKG(matchedTerm) {
+  const key = _normalize(matchedTerm);
+  const cached = _kgWhitelistCache.get(key);
+  if (cached && Date.now() - cached.at < _KG_CACHE_TTL) return cached.whitelisted;
+  let whitelisted = false;
+  try {
+    const db = await import('./database.mjs');
+    if (typeof db.findEntity === 'function') {
+      const entity = await db.findEntity(matchedTerm);
+      if (entity && ['pessoa_externa', 'cliente', 'sub_marca'].includes(entity.tipo)) {
+        whitelisted = true;
+      }
+    }
+  } catch {}
+  _kgWhitelistCache.set(key, { whitelisted, at: Date.now() });
+  return whitelisted;
+}
+
+function _matchIsOwnSender(matchTerm, senderName) {
+  if (!senderName) return false;
+  const matchLower = _normalize(matchTerm);
+  const senderWords = _normalize(senderName).split(/\s+/).filter(w => w.length >= 2);
+  return senderWords.some(w => w === matchLower);
+}
+
+export function checkInternalLeak(text, senderName = '') {
   for (const pattern of INTERNAL_LEAK_PATTERNS) {
     const match = text.match(pattern);
     if (match) {
-      // Se o match é o nome do próprio remetente, NÃO é vazamento
-      const matchLower = match[0].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-      if (senderWords.some(w => w === matchLower || matchLower.includes(w) || w.includes(matchLower))) {
-        continue; // É o nome do lead, não da equipe
-      }
+      if (_matchIsOwnSender(match[0], senderName)) continue;
       return { leaked: true, match: match[0] };
     }
   }
   return { leaked: false };
 }
 
-function sanitizeClientResponse(text) {
-  // Tenta remover frases que contêm vazamento, mantendo o resto
+export async function checkInternalLeakSmart(text, senderName = '') {
+  for (const pattern of INTERNAL_LEAK_PATTERNS) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    if (_matchIsOwnSender(match[0], senderName)) continue;
+    if (await _isWhitelistedByKG(match[0])) continue;
+    return { leaked: true, match: match[0] };
+  }
+  return { leaked: false };
+}
+
+export function sanitizeClientResponse(text, senderName = '') {
   const lines = text.split('\n');
   const cleanLines = lines.filter(line => {
-    for (const pattern of INTERNAL_LEAK_PATTERNS) {
-      if (pattern.test(line)) return false;
-    }
-    return true;
+    const check = checkInternalLeak(line, senderName);
+    return !check.leaked;
   });
 
   const result = cleanLines.join('\n').trim();
-  // Se removeu tudo ou sobrou muito pouco, retorna null
   if (!result || result.length < 15) return null;
   return result;
 }
+
 
 function buildClientAgentPrompt(managedClient, memoryContext, dateStr, timeStr, dayOfWeek) {
   const clientName = managedClient.groupName?.split('🔛')[0]?.trim() || 'Cliente';
@@ -1749,11 +1787,11 @@ REGRAS DE MÍDIA:
 
     if (!responseText || responseText.trim().length < 3) return null;
 
-    // Anti-leak check: garantir que não vaza informação interna (exclui nome do remetente)
-    const leakCheck = checkInternalLeak(responseText, pushName);
+    // Anti-leak v4 (Sprint 5): smart check com Knowledge Graph
+    const leakCheck = await checkInternalLeakSmart(responseText, pushName);
     if (leakCheck.leaked) {
       console.warn(`[PUBLIC-DM] ⚠️ Vazamento detectado na resposta pública: "${leakCheck.match}"`);
-      const sanitized = sanitizeClientResponse(responseText);
+      const sanitized = sanitizeClientResponse(responseText, pushName);
       if (!sanitized) {
         // Fallback seguro — variar pra não parecer robô
         const fallbacks = [
@@ -1903,11 +1941,11 @@ export async function handleShowcaseMessage(text, senderJid, pushName, mediaFile
       sendAsAudio = false;
     }
 
-    // Anti-leak check: garantir que não vaza informação interna (exclui nome do remetente)
-    const leakCheck = checkInternalLeak(responseText, pushName);
+    // Anti-leak v4 (Sprint 5): smart check com Knowledge Graph
+    const leakCheck = await checkInternalLeakSmart(responseText, pushName);
     if (leakCheck.leaked) {
       console.warn(`[SHOWCASE] ⚠️ Vazamento detectado: "${leakCheck.match}"`);
-      const sanitized = sanitizeClientResponse(responseText);
+      const sanitized = sanitizeClientResponse(responseText, pushName);
       if (!sanitized) {
         responseText = `Boa pergunta! A Stream Lab é um laboratório criativo de marketing que combina inteligência artificial com criatividade humana. Quer saber mais sobre como posso ajudar o seu negócio?`;
         sendAsAudio = false;

@@ -687,3 +687,57 @@ describe('Autonomia Nível 2 (Sprint 2.2)', () => {
     assert.equal(r2.safe, true, 'atribuir_task deveria ser permitida');
   });
 });
+
+// ============================================
+// v6.0 Sprint 5 — Anti-Leak v4 (caso Rigon: lead = nome equipe)
+// ============================================
+describe('Anti-Leak v4 (Sprint 5)', () => {
+  it('exporta checkInternalLeak, checkInternalLeakSmart e sanitizeClientResponse', async () => {
+    const m = await import('../src/brain.mjs');
+    assert.ok(typeof m.checkInternalLeak === 'function', 'checkInternalLeak ausente');
+    assert.ok(typeof m.checkInternalLeakSmart === 'function', 'checkInternalLeakSmart ausente');
+    assert.ok(typeof m.sanitizeClientResponse === 'function', 'sanitizeClientResponse ausente');
+  });
+
+  it('bloqueia vazamento de nome de equipe sem sender', async () => {
+    const { checkInternalLeak } = await import('../src/brain.mjs');
+    const r = checkInternalLeak('Vou pedir pra Bruna conferir isso pra você.');
+    assert.equal(r.leaked, true, 'Deveria bloquear menção a Bruna em resposta pública');
+  });
+
+  it('NÃO bloqueia se nome do match = nome do sender (caso Rigon)', async () => {
+    const { checkInternalLeak } = await import('../src/brain.mjs');
+    // Lead se chama "Guilherme Rigon" — resposta pode mencionar o nome dele
+    const r = checkInternalLeak('Boa pergunta, Rigon! Vou te explicar.', 'Guilherme Rigon');
+    assert.equal(r.leaked, false, 'NÃO deveria bloquear nome do próprio lead');
+  });
+
+  it('NÃO bloqueia primeiro nome do sender', async () => {
+    const { checkInternalLeak } = await import('../src/brain.mjs');
+    const r = checkInternalLeak('Bruna, posso te ajudar com mais alguma coisa?', 'Bruna Silva Cliente');
+    assert.equal(r.leaked, false, 'NÃO deveria bloquear "Bruna" se sender é "Bruna Silva Cliente"');
+  });
+
+  it('match deve ser exato — não substring (evita falso positivo)', async () => {
+    const { checkInternalLeak } = await import('../src/brain.mjs');
+    // Sender "Rigol" não deveria liberar match "Rigon"
+    const r = checkInternalLeak('Vou pedir pra Rigon conferir.', 'Rigol Souza');
+    assert.equal(r.leaked, true, 'Match exato — "Rigol" não libera "Rigon"');
+  });
+
+  it('sanitizeClientResponse preserva linhas com nome do sender', async () => {
+    const { sanitizeClientResponse } = await import('../src/brain.mjs');
+    const text = 'Oi Rigon, prazer!\nVou avisar a Bruna que você ligou.';
+    const result = sanitizeClientResponse(text, 'Rigon Lead');
+    // Deve manter "Oi Rigon, prazer!" e remover "Vou avisar a Bruna..."
+    assert.ok(result, 'Resultado não deveria ser null');
+    assert.ok(result.includes('Rigon'), 'Deveria manter linha com "Rigon"');
+    assert.ok(!result.includes('Bruna'), 'Deveria remover linha com "Bruna"');
+  });
+
+  it('bloqueia termos cross-client mesmo com sender', async () => {
+    const { checkInternalLeak } = await import('../src/brain.mjs');
+    const r = checkInternalLeak('Trabalhamos com Rossato e outros clientes.', 'João Lead');
+    assert.equal(r.leaked, true, 'Deveria bloquear menção a outro cliente (Rossato)');
+  });
+});
