@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JARVIS 4.0 | Guardiao Lab</title>
+  <title>JARVIS 6.0 | Guardiao Lab</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
@@ -231,7 +231,7 @@
           <div class="w-3 h-3 rounded-full bg-stark-blue pulse-dot"></div>
         </div>
         <h1 class="font-orbitron text-stark-blue text-lg tracking-widest glow-blue">JARVIS</h1>
-        <span class="text-xs text-stark-dim font-mono">v5.0</span>
+        <span class="text-xs text-stark-dim font-mono">v6.0</span>
       </div>
 
       <!-- Nav Tabs -->
@@ -250,6 +250,7 @@
         <button onclick="switchTab('knowledge')" data-tab="knowledge" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Conhecimento</button>
         <button onclick="switchTab('costs')" data-tab="costs" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Custos</button>
         <button onclick="switchTab('incidents')" data-tab="incidents" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Saúde</button>
+        <button onclick="switchTab('keys')" data-tab="keys" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Chaves</button>
       </nav>
 
       <!-- Status -->
@@ -1394,6 +1395,50 @@
       <div id="incidents-list" class="space-y-2"></div>
     </div>
 
+    <!-- ==================================================== -->
+    <!-- TAB CONTENT: KEYS / API Keys (v6.0 Sprint 10)        -->
+    <!-- ==================================================== -->
+    <div id="tab-keys" class="tab-content hidden space-y-6">
+      <div class="border-2 border-stark-blue/50 bg-stark-blue/5 rounded-lg p-4">
+        <h2 class="text-lg font-orbitron text-stark-blue mb-1">CHAVES & CONFIGURAÇÕES</h2>
+        <p class="text-xs text-stark-dim">Gerencie API keys (Anthropic, OpenAI, ElevenLabs, Asana, Meta) e configs sensíveis sem mexer em arquivos no servidor.</p>
+        <p class="text-xs text-stark-dim mt-2">
+          <span class="text-stark-green">●</span> <strong>env</strong> = vem do arquivo <code class="bg-stark-bg px-1 rounded">.env</code> ·
+          <span class="text-stark-blue">●</span> <strong>database</strong> = substituída via dashboard (sobrescreve o .env) ·
+          <span class="text-stark-red">●</span> <strong>none</strong> = não configurada
+        </p>
+        <p class="text-xs text-stark-dim mt-2 italic">⚠️ Após salvar, alguns SDKs (Anthropic, OpenAI) precisam de restart pra recarregar. Use o botão "Reiniciar Jarvis" abaixo quando necessário.</p>
+      </div>
+
+      <div class="flex gap-2 mb-2">
+        <button onclick="loadKeys()" class="px-4 py-2 bg-stark-blue/20 border border-stark-blue text-stark-blue rounded text-sm hover:bg-stark-blue/30">🔄 Recarregar</button>
+        <button onclick="restartJarvis()" class="px-4 py-2 bg-stark-red/20 border border-stark-red text-stark-red rounded text-sm hover:bg-stark-red/30">⚡ Reiniciar Jarvis</button>
+      </div>
+
+      <div id="keys-list" class="space-y-4">
+        <p class="text-stark-dim text-sm">Carregando chaves...</p>
+      </div>
+    </div>
+
+    <!-- Modal de edição de chave -->
+    <div id="key-edit-modal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm">
+      <div class="panel p-8 w-full max-w-lg mx-4 corner-tl corner-br">
+        <h3 class="font-orbitron text-stark-blue text-lg mb-2 glow-blue" id="key-edit-label">Editar chave</h3>
+        <p class="text-xs text-stark-dim mb-4" id="key-edit-name"></p>
+        <p class="text-xs text-stark-dim mb-2" id="key-edit-hint"></p>
+        <input id="key-edit-input" type="password" placeholder="Cole o novo valor aqui"
+          class="w-full bg-stark-bg border border-stark-border rounded px-3 py-2 text-sm font-mono mb-2 focus:border-stark-blue focus:outline-none" />
+        <label class="flex items-center gap-2 text-xs text-stark-dim mb-4">
+          <input type="checkbox" id="key-edit-show" onchange="document.getElementById('key-edit-input').type = this.checked ? 'text' : 'password'" />
+          Mostrar valor
+        </label>
+        <div class="flex gap-2 justify-end">
+          <button onclick="closeKeyModal()" class="px-4 py-2 border border-stark-border text-stark-dim rounded text-sm hover:bg-stark-card">Cancelar</button>
+          <button onclick="saveKeyValue()" class="px-4 py-2 bg-stark-blue text-stark-bg rounded text-sm font-semibold hover:bg-stark-blue/80">Salvar</button>
+        </div>
+      </div>
+    </div>
+
   </main>
 
   <!-- Notification Container -->
@@ -1636,6 +1681,7 @@
       if (tab === 'knowledge') loadKnowledge();
       if (tab === 'costs') loadCosts(7);
       if (tab === 'incidents') loadIncidents(24);
+      if (tab === 'keys') loadKeys();
     }
 
     // ============================================
@@ -1862,6 +1908,130 @@
 
     function escapeHtml(s) {
       return (s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    // ============================================
+    // v6.0 Sprint 10 — KEYS MANAGER
+    // ============================================
+    let _editingKey = null;
+
+    async function loadKeys() {
+      const container = document.getElementById('keys-list');
+      try {
+        const res = await api('/dashboard/keys');
+        const keys = await res.json();
+        if (!Array.isArray(keys) || keys.length === 0) {
+          container.innerHTML = '<p class="text-stark-dim text-center py-8">Nenhuma chave configurável encontrada.</p>';
+          return;
+        }
+        // Agrupa por categoria
+        const groups = {};
+        for (const k of keys) {
+          if (!groups[k.group]) groups[k.group] = [];
+          groups[k.group].push(k);
+        }
+        container.innerHTML = Object.entries(groups).map(([groupName, items]) => `
+          <div class="bg-stark-card border border-stark-border rounded-lg overflow-hidden">
+            <div class="px-4 py-2 bg-stark-blue/10 border-b border-stark-border">
+              <h3 class="text-sm font-orbitron text-stark-blue uppercase tracking-wider">${escapeHtml(groupName)}</h3>
+            </div>
+            <div class="divide-y divide-stark-border">
+              ${items.map(k => `
+                <div class="px-4 py-3 flex items-center justify-between gap-4 hover:bg-white/[0.02]">
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <span class="text-sm font-mono text-white">${escapeHtml(k.key)}</span>
+                      ${sourceBadge(k.source)}
+                      ${k.sensitive ? '<span class="text-[10px] px-1.5 py-0.5 bg-stark-red/20 text-stark-red rounded">SENSÍVEL</span>' : ''}
+                    </div>
+                    <div class="text-xs text-stark-dim mt-0.5">${escapeHtml(k.label)}</div>
+                    ${k.preview ? `<div class="text-xs font-mono text-stark-gold mt-1">${escapeHtml(k.preview)}</div>` : '<div class="text-xs text-stark-red mt-1 italic">não configurada</div>'}
+                  </div>
+                  <div class="flex gap-2 flex-shrink-0">
+                    <button onclick='openKeyEditor(${JSON.stringify({ key: k.key, label: k.label, hint: k.hint || "" }).replace(/'/g, "&apos;")})'
+                      class="px-3 py-1.5 bg-stark-blue/20 border border-stark-blue text-stark-blue text-xs rounded hover:bg-stark-blue/30">
+                      ${k.source === 'database' ? 'Substituir' : k.configured ? 'Substituir' : 'Adicionar'}
+                    </button>
+                    ${k.source === 'database' ? `<button onclick="deleteKey('${k.key}')" class="px-3 py-1.5 bg-stark-red/20 border border-stark-red text-stark-red text-xs rounded hover:bg-stark-red/30" title="Remove do banco. Após restart, volta a usar valor do .env">Remover</button>` : ''}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `).join('');
+      } catch (err) {
+        container.innerHTML = `<p class="text-stark-red">Erro ao carregar chaves: ${escapeHtml(err.message)}</p>`;
+      }
+    }
+
+    function sourceBadge(source) {
+      if (source === 'database') return '<span class="text-[10px] px-1.5 py-0.5 bg-stark-blue/20 text-stark-blue rounded">DB</span>';
+      if (source === 'env') return '<span class="text-[10px] px-1.5 py-0.5 bg-stark-green/20 text-stark-green rounded">ENV</span>';
+      return '<span class="text-[10px] px-1.5 py-0.5 bg-stark-red/20 text-stark-red rounded">VAZIA</span>';
+    }
+
+    function openKeyEditor(meta) {
+      _editingKey = meta.key;
+      document.getElementById('key-edit-label').textContent = meta.label || meta.key;
+      document.getElementById('key-edit-name').textContent = meta.key;
+      document.getElementById('key-edit-hint').textContent = meta.hint ? `Formato esperado: ${meta.hint}` : '';
+      document.getElementById('key-edit-input').value = '';
+      document.getElementById('key-edit-input').type = 'password';
+      document.getElementById('key-edit-show').checked = false;
+      document.getElementById('key-edit-modal').classList.remove('hidden');
+      setTimeout(() => document.getElementById('key-edit-input').focus(), 50);
+    }
+
+    function closeKeyModal() {
+      document.getElementById('key-edit-modal').classList.add('hidden');
+      _editingKey = null;
+    }
+
+    async function saveKeyValue() {
+      const value = document.getElementById('key-edit-input').value;
+      if (!_editingKey || !value) {
+        notify('Preencha o valor', 'warn');
+        return;
+      }
+      try {
+        const res = await api('/dashboard/keys', {
+          method: 'POST',
+          body: JSON.stringify({ key: _editingKey, value }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Erro ao salvar');
+        notify(data.mensagem || 'Chave salva', 'ok');
+        closeKeyModal();
+        loadKeys();
+      } catch (err) {
+        notify('Erro: ' + err.message, 'err');
+      }
+    }
+
+    async function deleteKey(keyName) {
+      if (!confirm(`Remover a chave "${keyName}" do banco?\n\nApós o próximo restart, o Jarvis volta a usar o valor do arquivo .env.`)) return;
+      try {
+        const res = await api(`/dashboard/keys/${encodeURIComponent(keyName)}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Erro ao remover');
+        notify(data.mensagem || 'Chave removida', 'ok');
+        loadKeys();
+      } catch (err) {
+        notify('Erro: ' + err.message, 'err');
+      }
+    }
+
+    async function restartJarvis() {
+      if (!confirm('Reiniciar o Jarvis agora?\n\nLeva ~5 segundos. WhatsApp reconecta automaticamente.\nNecessário pra SDKs (Anthropic, OpenAI) recarregarem chaves novas.')) return;
+      try {
+        const res = await api('/dashboard/restart', { method: 'POST' });
+        const data = await res.json();
+        notify(data.mensagem || 'Reiniciando...', 'ok');
+        // Aguarda 5s e recarrega o dashboard pra reconectar
+        setTimeout(() => window.location.reload(), 6000);
+      } catch (err) {
+        notify('Erro: ' + err.message, 'err');
+      }
     }
 
     // ============================================
@@ -2126,7 +2296,7 @@
         // API retorna data.ai.model
         const model = data.ai?.model || '--';
         document.getElementById('stat-model').textContent = model.replace('claude-', '').replace('-20250514', '');
-        document.getElementById('stat-version').textContent = 'Jarvis 5.0';
+        document.getElementById('stat-version').textContent = 'Jarvis 6.0';
         // Contar chaves configuradas
         const keyCount = [data.ai?.model, data.asana?.workspace, data.whatsapp?.groupTarefas].filter(Boolean).length;
         document.getElementById('api-keys-status').textContent = `${keyCount} servicos`;

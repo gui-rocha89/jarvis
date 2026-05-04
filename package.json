@@ -2,11 +2,12 @@
   "name": "jarvis",
   "version": "6.0.0",
   "type": "module",
-  "description": "Jarvis 5.0 - Agente de IA multi-canal autonomo (WhatsApp, Instagram, Email, pgvector, MCP, WebSocket Voice)",
+  "description": "Jarvis 6.0 - Agente de IA multi-canal autonomo (WhatsApp, Instagram, Email, Knowledge Graph, Cross-Channel Identity, Task Copilot, pgvector, MCP, WebSocket Voice)",
   "main": "jarvis-v2.mjs",
   "scripts": {
     "start": "node jarvis-v2.mjs",
     "test": "node --test tests/unit.test.mjs",
+    "bump-version": "node scripts/bump-version.mjs",
     "dashboard:dev": "cd dashboard-v2 && npm run dev",
     "dashboard:build": "cd dashboard-v2 && npm run build"
   },

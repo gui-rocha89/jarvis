@@ -109,6 +109,48 @@ O Gui é direto e reclama quando algo não funciona. Padrões comuns:
 - [ ] Os testes passam (`npm test`)?
 - [ ] O deploy é via `git push` (NÃO via scp/ssh)?
 
+### 0.6 Como Bumpar Versão (NUNCA esqueça nenhum lugar)
+
+> ⚠️ **OBRIGATÓRIO** quando subir versão (5.0 → 6.0, 6.0 → 6.1, etc). O Gui se irrita quando o dashboard mostra versão errada.
+
+**SEMPRE use o script `scripts/bump-version.mjs`** — ele cuida de TODOS os lugares automaticamente:
+
+```bash
+npm run bump-version 6.1.0
+# ou
+node scripts/bump-version.mjs 6.1.0
+```
+
+**O que o script atualiza (sem você precisar lembrar):**
+
+| Arquivo | O que muda |
+|---------|-----------|
+| `package.json` | Campo `version` |
+| `package-lock.json` | Sincronizado via `npm install --package-lock-only` |
+| `src/config.mjs` | Constante `JARVIS_VERSION` + header |
+| `jarvis-v2.mjs` | Header do arquivo + log de boot + comando `*JARVIS v6.0 — O que eu sei fazer*` |
+| Todos arquivos `src/**/*.mjs` | Headers `// JARVIS X.Y - ...` |
+| `src/mcp-server.mjs` | Log de inicialização do MCP |
+| `dashboard/index.html` | `<title>`, badge `vX.Y` no header, `'Jarvis X.Y'` no overview |
+| `dashboard-v2/src/components/layout/sidebar.tsx` | Badge `vX.Y Dashboard` |
+| `.env.example` | Header |
+| `tests/unit.test.mjs` | Header |
+
+**O que o script NÃO toca (intencionalmente):**
+- `CLAUDE.md` changelog histórico (refs tipo "(NOVO v5.0)" descrevem QUANDO a feature foi adicionada — manter)
+- `README.md` "Destaques v5.0 (mantidos)" (histórico)
+- `node_modules`, `package-lock.json` de dependências externas
+
+**Ao final, o script roda auditoria automática** e mostra se sobrou alguma referência stale na main codebase.
+
+**Checklist após bumpar:**
+- [ ] `npm test` passou
+- [ ] `git diff` revisado
+- [ ] Adicionou changelog em `CLAUDE.md` Seção 15 (`### vX.Y.Z (data) — "título"`)
+- [ ] Atualizou `README.md` se houve mudanças em destaques
+- [ ] `git commit -am "chore: bump version X → Y"`
+- [ ] Push e PR
+
 ---
 
 ## 1. Visão Geral da Arquitetura
@@ -144,6 +186,7 @@ A v6.0 foi focada em **CONFIABILIDADE + INTELIGÊNCIA REAL**, não em features n
 | **🆕 Task Copilot (v6.0)** | Co-piloto, não cobrador. Daily 08:50, cobrança leve 3/6/9d, ofertas de ajuda contextuais, comenta direto na task. |
 | **🆕 Robustez Operacional (v6.0)** | Boot validation de modelos (alerta se 404), health check 5min com alerta WhatsApp, cost tracking end-to-end, incident log. |
 | **🆕 Dashboard UI (v6.0)** | 3 abas novas no dashboard v1: Conhecimento (CRUD do KG), Custos (tokens + USD), Saúde (incidentes). |
+| **🆕 Keys Manager (v6.0 Sprint 10)** | Aba "CHAVES" no dashboard pra gerenciar API keys (Anthropic, OpenAI, ElevenLabs, Asana, Meta, etc) sem mexer no `.env` no servidor. Criptografia AES-256-GCM, whitelist de chaves, sobrescreve `process.env` em runtime + botão "Reiniciar Jarvis". |
 
 ### 1.2 Stack Tecnológico
 
@@ -816,6 +859,10 @@ Mensagem recebida (WhatsApp via Baileys)
 | 🆕 `POST` | `/dashboard/task-copilot/config` | **v6.0** — Salvar config |
 | 🆕 `POST` | `/dashboard/task-copilot/daily-now` | **v6.0** — Trigger manual (com `{preview:true}` retorna sem postar) |
 | 🆕 `POST` | `/dashboard/task-copilot/followup-now` | **v6.0** — Trigger manual de follow-up |
+| 🆕 `GET` | `/dashboard/keys` | **v6.0 Sprint 10** — Lista chaves gerenciáveis (mascaradas) |
+| 🆕 `POST` | `/dashboard/keys` | **v6.0 Sprint 10** — Salvar/substituir chave (criptografa AES-256-GCM) |
+| 🆕 `DELETE` | `/dashboard/keys/:key` | **v6.0 Sprint 10** — Remove chave do banco (volta ao .env após restart) |
+| 🆕 `POST` | `/dashboard/restart` | **v6.0 Sprint 10** — Força restart do Jarvis (PM2 reinicia em 2s) |
 
 ---
 
@@ -1120,6 +1167,18 @@ Versão focada em **CONFIABILIDADE + INTELIGÊNCIA REAL**, não features novas. 
   - **CONHECIMENTO**: lista entities por tipo, filtros, editor modal, botão Sync
   - **CUSTOS**: total USD por período, tabela detalhada por dia × modelo, estimativa mensal
   - **SAÚDE**: histórico de incidentes por severidade (críticos/warns/info), estatísticas
+
+**Sprint 10 — Keys Manager (gerenciar API keys via dashboard)**
+- `src/keys-manager.mjs` — criptografia AES-256-GCM com chave derivada do `JWT_SECRET`. Whitelist de 25+ chaves gerenciáveis (Anthropic, OpenAI, ElevenLabs, modelos IA, Asana PAT, Meta Ads completo, Email IMAP/SMTP, Instagram, JIDs WhatsApp, Google Calendar)
+- Whitelist EXCLUI propositalmente: `JWT_SECRET` (usado pra criptografar — mudança quebraria tudo), `DB_PASSWORD`, `DB_HOST`, `JARVIS_API_KEY`, `REDIS_PASSWORD` (chaves de infra que requerem reconfig manual)
+- Tabela `jarvis_config` chave `runtime_keys` (JSONB) — mapa `{NOME_KEY: valor_cifrado_base64}`
+- `loadKeysFromDb()` no boot — sobrescreve `process.env.X` com valores do banco (chamadas futuras ao `process.env.X` pegam novo valor)
+- Endpoints: `GET /dashboard/keys` (lista mascarada), `POST /dashboard/keys` (saveKey), `DELETE /dashboard/keys/:key` (remove do banco, .env volta a valer no próximo restart), `POST /dashboard/restart` (PM2 reinicia em 2s)
+- Aba **CHAVES** no `dashboard/index.html`: agrupa por categoria (IA, Asana, Meta Ads, Email Asana, Email Lab, Instagram, WhatsApp, Google Calendar). Modal de edição com toggle "mostrar/esconder valor". Botão "Reiniciar Jarvis" pra forçar SDKs (Anthropic, OpenAI) a recarregar
+- Mascaramento: chaves sensíveis exibem `****abcd` (últimos 4 chars)
+- Source badge: `ENV` (do .env) / `DB` (substituído via dashboard) / `VAZIA`
+- 7 testes unitários novos (encrypt/decrypt roundtrip, validação whitelist, proteção contra chaves perigosas, mascaramento)
+- Adicionado script `scripts/bump-version.mjs` (`npm run bump-version X.Y.Z`) que atualiza versão em TODOS os lugares (headers de arquivos, dashboards, package.json, package-lock.json) — evita refs stale
 
 **Outras melhorias v6.0:**
 - Modelo Sonnet 4.5 como default em `MEMORY_MODEL` (era Haiku 3 deprecado)

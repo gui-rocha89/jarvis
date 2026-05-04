@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 3.0 - Configuração Central
+// JARVIS 6.0 - Configuração Central
 // Todas as credenciais vêm do .env
 // ============================================
 
@@ -14,7 +14,7 @@ export const CONFIG = {
   MAX_CONTEXT_MESSAGES: 30,
   ASANA_PAT: process.env.ASANA_PAT || '',
   ASANA_WORKSPACE: process.env.ASANA_WORKSPACE || '',
-  JARVIS_VERSION: '3.0.0',
+  JARVIS_VERSION: '6.0.0',
   JWT_SECRET: process.env.JWT_SECRET || '',
   // Meta Ads (Facebook/Instagram)
   META_APP_ID: process.env.META_APP_ID || '',

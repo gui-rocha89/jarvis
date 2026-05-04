@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 5.0 - Canal Email (IMAP + SMTP)
+// JARVIS 6.0 - Canal Email (IMAP + SMTP)
 // Monitora caixa de entrada genérica (leads/contato)
 // Classifica, notifica equipe e auto-responde
 // ============================================

@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 5.0 - Testes Unitários
+// JARVIS 6.0 - Testes Unitários
 // Node.js test runner nativo (sem dependências)
 // ============================================
 import { describe, it, after } from 'node:test';
@@ -866,5 +866,79 @@ describe('Task Copilot (v6.0)', () => {
       comentarios: [{ autor: 'X', texto: 'oi' }],
     });
     assert.ok(ofertas.length <= 3, `Deveria limitar a 3, retornou ${ofertas.length}`);
+  });
+});
+
+// ============================================
+// Keys Manager (v6.0 Sprint 10)
+// ============================================
+describe('Keys Manager (Sprint 10)', () => {
+  it('exporta funções principais e whitelist', async () => {
+    // Define JWT_SECRET temporariamente pra testes determinísticos
+    const oldSecret = process.env.JWT_SECRET;
+    process.env.JWT_SECRET = 'test-secret-only-for-unit-tests';
+    const mod = await import('../src/keys-manager.mjs');
+    assert.strictEqual(typeof mod.loadKeysFromDb, 'function');
+    assert.strictEqual(typeof mod.saveKey, 'function');
+    assert.strictEqual(typeof mod.deleteKey, 'function');
+    assert.strictEqual(typeof mod.listKeys, 'function');
+    assert.strictEqual(typeof mod.maskKey, 'function');
+    assert.ok(Array.isArray(mod.MANAGEABLE_KEYS), 'MANAGEABLE_KEYS deve ser array');
+    assert.ok(Array.isArray(mod.KEY_NAMES), 'KEY_NAMES deve ser array');
+    assert.ok(mod.MANAGEABLE_KEYS.length >= 20, 'Deve ter pelo menos 20 chaves whitelisted');
+    process.env.JWT_SECRET = oldSecret;
+  });
+
+  it('whitelist contém chaves críticas (Anthropic, OpenAI, Asana, Meta)', async () => {
+    const { KEY_NAMES } = await import('../src/keys-manager.mjs');
+    assert.ok(KEY_NAMES.includes('ANTHROPIC_API_KEY'), 'Deve incluir ANTHROPIC_API_KEY');
+    assert.ok(KEY_NAMES.includes('OPENAI_API_KEY'), 'Deve incluir OPENAI_API_KEY');
+    assert.ok(KEY_NAMES.includes('ASANA_PAT'), 'Deve incluir ASANA_PAT');
+    assert.ok(KEY_NAMES.includes('META_ACCESS_TOKEN'), 'Deve incluir META_ACCESS_TOKEN');
+  });
+
+  it('whitelist NÃO contém chaves perigosas (JWT_SECRET, DB_PASSWORD, etc)', async () => {
+    const { KEY_NAMES } = await import('../src/keys-manager.mjs');
+    const proibidas = ['JWT_SECRET', 'DB_PASSWORD', 'DB_HOST', 'DB_USER', 'JARVIS_API_KEY', 'REDIS_PASSWORD'];
+    for (const p of proibidas) {
+      assert.ok(!KEY_NAMES.includes(p), `Whitelist NÃO pode conter ${p} (segurança)`);
+    }
+  });
+
+  it('maskKey esconde valor sensível mostrando só últimos 4 chars', async () => {
+    const { maskKey } = await import('../src/keys-manager.mjs');
+    assert.strictEqual(maskKey(''), '');
+    assert.strictEqual(maskKey('abc'), '****');
+    assert.strictEqual(maskKey('abcdef'), '****ef');
+    assert.strictEqual(maskKey('sk-ant-api03-supersecreto-abcd'), '****abcd');
+  });
+
+  it('encrypt/decrypt é roundtrip-safe (AES-256-GCM)', async () => {
+    process.env.JWT_SECRET = 'test-secret-roundtrip';
+    const { _internal } = await import('../src/keys-manager.mjs');
+    const original = 'sk-ant-api03-secretvalue-12345';
+    const encrypted = _internal.encrypt(original);
+    assert.notStrictEqual(encrypted, original, 'Valor cifrado deve ser diferente do original');
+    assert.ok(encrypted.length > original.length, 'Cifrado deve ter IV+tag prepended');
+    const decrypted = _internal.decrypt(encrypted);
+    assert.strictEqual(decrypted, original, 'Decrypt deve recuperar o valor original');
+  });
+
+  it('saveKey valida whitelist (rejeita chave não autorizada)', async () => {
+    const { saveKey } = await import('../src/keys-manager.mjs');
+    await assert.rejects(
+      () => saveKey('FAKE_DANGEROUS_KEY', 'value'),
+      /whitelist/i,
+      'Deve rejeitar chave fora da whitelist'
+    );
+  });
+
+  it('saveKey valida valor (rejeita vazio)', async () => {
+    const { saveKey } = await import('../src/keys-manager.mjs');
+    await assert.rejects(
+      () => saveKey('ANTHROPIC_API_KEY', ''),
+      /vazio/i,
+      'Deve rejeitar valor vazio'
+    );
   });
 });

@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 3.0 - Banco de Dados (PostgreSQL)
+// JARVIS 6.0 - Banco de Dados (PostgreSQL + pgvector + Knowledge Graph)
 // ============================================
 import pg from 'pg';
 

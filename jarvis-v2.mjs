@@ -1,6 +1,7 @@
 // ============================================
-// JARVIS 4.0 - Stream Lab AI Bot
+// JARVIS 6.0 - Stream Lab AI Bot
 // Agent Loop + Extended Thinking + Prompt Caching + Model Routing
+// + Knowledge Graph + Cross-Channel Identity + Task Copilot
 // ============================================
 import 'dotenv/config';
 import makeWASocket, {
@@ -831,7 +832,7 @@ async function handleIncomingMessage(m) {
   // COMANDO: Jarvis ajuda / comandos (grupos internos apenas)
   // ============================================
   if (isGroup && JARVIS_ALLOWED_GROUPS.has(from) && /\b(jarvis\s+(ajuda|comandos|help|funcionalidades|o\s*que\s*(tu|voc[eê])\s*faz))\b/i.test(text)) {
-    const helpText = `🤖 *JARVIS v5.0 — O que eu sei fazer*
+    const helpText = `🤖 *JARVIS v6.0 — O que eu sei fazer*
 
 📋 *Gestão de Projetos*
 • Criar tarefas no Asana → _"Jarvis cria uma demanda pro Rossato"_
@@ -1808,6 +1809,44 @@ app.post('/dashboard/task-copilot/followup-now', auth, async (req, res) => {
     const r = await pollOverdueForFollowUp(sendText);
     res.json({ sucesso: true, ...r });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ============================================
+// v6.0 Sprint 10 — KEYS MANAGER (gerenciar API keys via dashboard)
+// ============================================
+app.get('/dashboard/keys', auth, async (req, res) => {
+  try {
+    const { listKeys } = await import('./src/keys-manager.mjs');
+    const keys = await listKeys();
+    res.json(keys);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/dashboard/keys', auth, async (req, res) => {
+  try {
+    const { saveKey } = await import('./src/keys-manager.mjs');
+    const { key, value } = req.body;
+    if (!key || value === undefined) return res.status(400).json({ error: 'key e value obrigatórios' });
+    await saveKey(key, value);
+    console.log(`[KEYS] Chave "${key}" atualizada via dashboard por ${req.user?.email || 'desconhecido'}`);
+    res.json({ sucesso: true, mensagem: `Chave ${key} atualizada. Reinicie o Jarvis pra SDKs cacheados (Anthropic, OpenAI) carregarem o novo valor.` });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/dashboard/keys/:key', auth, async (req, res) => {
+  try {
+    const { deleteKey } = await import('./src/keys-manager.mjs');
+    const ok = await deleteKey(req.params.key);
+    console.log(`[KEYS] Chave "${req.params.key}" REMOVIDA do banco por ${req.user?.email || 'desconhecido'} (volta a usar valor do .env)`);
+    res.json({ sucesso: ok, mensagem: 'Chave removida do banco. Valor do .env volta a ser usado após restart.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Restart do processo (PM2 reinicia automaticamente)
+app.post('/dashboard/restart', auth, (req, res) => {
+  console.log(`[RESTART] Reinício solicitado via dashboard por ${req.user?.email || 'desconhecido'}`);
+  res.json({ sucesso: true, mensagem: 'Jarvis reiniciando em 2s...' });
+  setTimeout(() => process.exit(0), 2000);
 });
 
 // --- Controle ON/OFF ---
@@ -3742,7 +3781,7 @@ async function startWhatsApp() {
 // STARTUP
 // ============================================
 console.log('============================================');
-console.log('  JARVIS v4.0 - Stream Lab AI Bot');
+console.log('  JARVIS v6.0 - Stream Lab AI Bot');
 console.log('  Arquitetura: Modular + Agent Teams + Mem0');
 console.log('  AI: Claude Sonnet 4.6 (Anthropic)');
 console.log('  Audio: Whisper (STT) + ElevenLabs (TTS)');
@@ -3782,6 +3821,14 @@ initDB().then(async () => {
     console.log('[BOOT] Cross-channel identity inicializado');
   } catch (err) {
     console.error('[BOOT] Erro init contact_aliases:', err.message);
+  }
+
+  // v6.0 Sprint 10 — Carrega chaves runtime do banco (sobrescreve .env)
+  try {
+    const { loadKeysFromDb } = await import('./src/keys-manager.mjs');
+    await loadKeysFromDb();
+  } catch (err) {
+    console.error('[BOOT] Erro loadKeysFromDb:', err.message);
   }
 
   startWhatsApp();

@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 3.0 - Skills Loader (Modular)
+// JARVIS 6.0 - Skills Loader (Modular)
 // Carrega e gerencia skills dinâmicamente
 // ============================================
 import { CONFIG, TEAM_ASANA, ASANA_PROJECTS, ASANA_SECTIONS, ASANA_CUSTOM_FIELDS, ASANA_CLIENTE_MAP, ASANA_URGENCIA_MAP, ASANA_TIER_MAP, ASANA_TIPO_DEMANDA_MAP, GCAL_KEY_PATH, GCAL_CALENDAR_ID, managedClients, saveManagedClients, teamWhatsApp, JARVIS_ALLOWED_GROUPS } from '../config.mjs';

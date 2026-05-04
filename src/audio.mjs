@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 3.0 - Áudio (TTS + STT)
+// JARVIS 6.0 - Áudio (TTS + STT)
 // ============================================
 import OpenAI from 'openai';
 import { writeFile, unlink, readFile } from 'fs/promises';

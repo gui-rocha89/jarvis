@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 5.0 - Canal Instagram DM
+// JARVIS 6.0 - Canal Instagram DM
 // Recebe mensagens via webhook Meta Graph API
 // Responde usando identidade + contexto instagram_dm
 // ============================================
