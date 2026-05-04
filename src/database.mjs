@@ -216,6 +216,57 @@ export async function initDB() {
       )
     `);
 
+    // Histórico persistente do chat do dashboard (resolve Bug 3 — perda em restart)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS dashboard_chat_history (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES dashboard_users(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+        content TEXT NOT NULL,
+        tools_used TEXT[],
+        tokens_in INTEGER,
+        tokens_out INTEGER,
+        model TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_chat_history_session ON dashboard_chat_history(session_id, created_at DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_chat_history_user ON dashboard_chat_history(user_id, created_at DESC)`);
+
+    // Tracking de custos da API (resolve auditoria de robustez — visibilidade zero hoje)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS api_costs (
+        id SERIAL PRIMARY KEY,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        operation TEXT,
+        tokens_in INTEGER DEFAULT 0,
+        tokens_out INTEGER DEFAULT 0,
+        cost_usd NUMERIC(10, 6) DEFAULT 0,
+        cliente TEXT,
+        canal TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_api_costs_date ON api_costs(created_at DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_api_costs_cliente ON api_costs(cliente, created_at DESC)`);
+
+    // Health monitoring — log de incidentes
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS health_incidents (
+        id SERIAL PRIMARY KEY,
+        component TEXT NOT NULL,
+        severity TEXT NOT NULL CHECK (severity IN ('info', 'warn', 'error', 'critical')),
+        message TEXT NOT NULL,
+        details JSONB,
+        notified BOOLEAN DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        resolved_at TIMESTAMPTZ
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_health_unresolved ON health_incidents(component, created_at DESC) WHERE resolved_at IS NULL`);
+
     // Migração: adicionar coluna message_key se não existe
     await pool.query(`
       ALTER TABLE jarvis_messages ADD COLUMN IF NOT EXISTS message_key JSONB
@@ -420,5 +471,152 @@ export async function upsertCobrancaLog(taskGid) {
 export async function resetCobrancaLog(taskGid) {
   try {
     await pool.query('DELETE FROM cobranca_log WHERE task_gid = $1', [taskGid]);
+  } catch {}
+}
+
+// ============================================================
+// DASHBOARD CHAT HISTORY (persistente, resolve Bug 3)
+// ============================================================
+export async function appendChatMessage({ userId = null, sessionId, role, content, toolsUsed = [], tokensIn = null, tokensOut = null, model = null }) {
+  try {
+    const result = await pool.query(
+      `INSERT INTO dashboard_chat_history (user_id, session_id, role, content, tools_used, tokens_in, tokens_out, model)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [userId, sessionId, role, content, toolsUsed, tokensIn, tokensOut, model]
+    );
+    return result.rows[0]?.id;
+  } catch (err) {
+    console.error('[CHAT-HISTORY] Erro ao salvar:', err.message);
+    return null;
+  }
+}
+
+export async function getChatHistory(sessionId, limit = 30) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT role, content FROM dashboard_chat_history
+       WHERE session_id = $1
+       ORDER BY created_at DESC LIMIT $2`,
+      [sessionId, limit]
+    );
+    // Retorna em ordem cronológica (mais antiga primeiro)
+    return rows.reverse().map(r => ({ role: r.role, content: r.content }));
+  } catch (err) {
+    console.error('[CHAT-HISTORY] Erro ao ler:', err.message);
+    return [];
+  }
+}
+
+export async function clearChatHistory(sessionId) {
+  try {
+    await pool.query('DELETE FROM dashboard_chat_history WHERE session_id = $1', [sessionId]);
+    return true;
+  } catch (err) {
+    console.error('[CHAT-HISTORY] Erro ao limpar:', err.message);
+    return false;
+  }
+}
+
+// ============================================================
+// COST TRACKING (resolve auditoria — visibilidade zero hoje)
+// ============================================================
+// Preços por 1M tokens (USD) — atualizar quando Anthropic mudar
+const MODEL_PRICING = {
+  'claude-opus-4-6':              { in: 15.00, out: 75.00 },
+  'claude-opus-4-0-20250514':     { in: 15.00, out: 75.00 },
+  'claude-sonnet-4-6':            { in:  3.00, out: 15.00 },
+  'claude-sonnet-4-6-20250514':   { in:  3.00, out: 15.00 },
+  'claude-sonnet-4-5':            { in:  3.00, out: 15.00 },
+  'claude-sonnet-4-20250514':     { in:  3.00, out: 15.00 },
+  'claude-haiku-4-5':             { in:  1.00, out:  5.00 },
+  'claude-haiku-3-5-20241022':    { in:  0.80, out:  4.00 },
+  'gpt-4o-mini':                  { in:  0.15, out:  0.60 },
+  'whisper-1':                    { in:  0,    out:  0 }, // $0.006 per minute (separado)
+  'text-embedding-3-small':       { in:  0.02, out:  0 },
+};
+
+export function calculateCost(model, tokensIn, tokensOut) {
+  const pricing = MODEL_PRICING[model];
+  if (!pricing) return 0;
+  return (tokensIn * pricing.in / 1_000_000) + (tokensOut * pricing.out / 1_000_000);
+}
+
+export async function logApiCost({ provider = 'anthropic', model, operation = null, tokensIn = 0, tokensOut = 0, cliente = null, canal = null }) {
+  try {
+    const cost = calculateCost(model, tokensIn, tokensOut);
+    await pool.query(
+      `INSERT INTO api_costs (provider, model, operation, tokens_in, tokens_out, cost_usd, cliente, canal)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [provider, model, operation, tokensIn, tokensOut, cost, cliente, canal]
+    );
+    return cost;
+  } catch (err) {
+    // Falhar silencioso — tracking não pode quebrar fluxo
+    return 0;
+  }
+}
+
+export async function getCostsSummary(days = 7) {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        DATE(created_at) as dia,
+        provider,
+        model,
+        SUM(tokens_in)::bigint as tokens_in,
+        SUM(tokens_out)::bigint as tokens_out,
+        SUM(cost_usd)::numeric(12,4) as custo_usd,
+        COUNT(*)::int as chamadas
+      FROM api_costs
+      WHERE created_at > NOW() - ($1 || ' days')::interval
+      GROUP BY DATE(created_at), provider, model
+      ORDER BY dia DESC, custo_usd DESC
+    `, [days]);
+    return rows;
+  } catch (err) {
+    console.error('[COST] Erro:', err.message);
+    return [];
+  }
+}
+
+// ============================================================
+// HEALTH INCIDENTS (alerta operacional)
+// ============================================================
+export async function logIncident({ component, severity = 'warn', message, details = null }) {
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO health_incidents (component, severity, message, details)
+       VALUES ($1, $2, $3, $4) RETURNING id, notified`,
+      [component, severity, message, details ? JSON.stringify(details) : null]
+    );
+    return rows[0];
+  } catch (err) {
+    console.error('[HEALTH] Erro ao logar incidente:', err.message);
+    return null;
+  }
+}
+
+export async function getRecentIncidents(hours = 24) {
+  try {
+    const { rows } = await pool.query(`
+      SELECT * FROM health_incidents
+      WHERE created_at > NOW() - ($1 || ' hours')::interval
+      ORDER BY created_at DESC
+    `, [hours]);
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
+export async function markIncidentNotified(id) {
+  try {
+    await pool.query('UPDATE health_incidents SET notified = true WHERE id = $1', [id]);
+  } catch {}
+}
+
+export async function resolveIncident(id) {
+  try {
+    await pool.query('UPDATE health_incidents SET resolved_at = NOW() WHERE id = $1', [id]);
   } catch {}
 }

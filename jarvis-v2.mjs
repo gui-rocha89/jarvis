@@ -1656,6 +1656,33 @@ app.get('/dashboard/health', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// v6.0 — Custos de API (visibilidade por dia/modelo)
+app.get('/dashboard/costs', auth, async (req, res) => {
+  try {
+    const { getCostsSummary } = await import('./src/database.mjs');
+    const days = parseInt(req.query.days) || 7;
+    const data = await getCostsSummary(days);
+    const totalUsd = data.reduce((acc, r) => acc + parseFloat(r.custo_usd || 0), 0);
+    res.json({ days, total_usd: totalUsd.toFixed(4), breakdown: data });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// v6.0 — Incidentes de saúde (alertas pendentes/históricos)
+app.get('/dashboard/incidents', auth, async (req, res) => {
+  try {
+    const { getRecentIncidents } = await import('./src/database.mjs');
+    const hours = parseInt(req.query.hours) || 24;
+    const incidents = await getRecentIncidents(hours);
+    res.json({
+      hours,
+      total: incidents.length,
+      pending: incidents.filter(i => !i.notified && !i.resolved_at).length,
+      critical: incidents.filter(i => i.severity === 'critical').length,
+      incidents,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // --- Controle ON/OFF ---
 app.post('/dashboard/power', auth, (req, res) => {
   const { action } = req.body;
@@ -2289,7 +2316,25 @@ app.post('/dashboard/prompt', auth, async (req, res) => {
 });
 
 // --- Dashboard Chat (com tools) ---
+// HISTÓRICO PERSISTENTE no PostgreSQL (resolve Bug 3 — perda em restart)
+// Mantém também em memória pra performance (sincronizado com banco)
 const dashboardChatHistory = [];
+const DASHBOARD_SESSION_ID = 'gui_main'; // single user por enquanto; multi-user usa user_id
+
+// Carrega histórico do banco no boot pra sobreviver a restarts
+async function loadDashboardChatFromDB() {
+  try {
+    const { getChatHistory } = await import('./src/database.mjs');
+    const persisted = await getChatHistory(DASHBOARD_SESSION_ID, 30);
+    dashboardChatHistory.length = 0;
+    dashboardChatHistory.push(...persisted);
+    if (persisted.length > 0) console.log(`[DASHBOARD-CHAT] ✅ Histórico carregado do banco: ${persisted.length} mensagens`);
+  } catch (err) {
+    console.error('[DASHBOARD-CHAT] Erro ao carregar histórico:', err.message);
+  }
+}
+// Chamada no boot (depois que initDB termina)
+setTimeout(() => loadDashboardChatFromDB(), 8000);
 
 // Tools exclusivos do dashboard — acesso a mensagens e memórias
 // Tools exclusivas do dashboard (busca de mensagens, memórias, perfis)
@@ -2491,10 +2536,13 @@ Se a tool não retornar dados, diga honestamente que não encontrou. NUNCA fabri
 
 async function processDashboardChat(message, isVoice = false) {
   const { JARVIS_IDENTITY, CHANNEL_CONTEXT } = await import('./src/agents/master.mjs');
+  const { appendChatMessage, logApiCost } = await import('./src/database.mjs');
   const memoryCtx = await getMemoryContext(CONFIG.GUI_JID, 'dashboard', message);
 
+  // Persiste no banco IMEDIATAMENTE (resolve Bug 3 — sobrevive a restart)
   dashboardChatHistory.push({ role: 'user', content: message });
   while (dashboardChatHistory.length > 30) dashboardChatHistory.shift();
+  appendChatMessage({ sessionId: DASHBOARD_SESSION_ID, role: 'user', content: message }).catch(() => {});
 
   const msgs = [...dashboardChatHistory];
   if (msgs.length > 0 && msgs[0].role !== 'user') msgs.shift();
@@ -2529,6 +2577,16 @@ async function processDashboardChat(message, isVoice = false) {
     const response = await anthropic.messages.create(apiParams, {
       headers: { 'anthropic-beta': 'interleaved-thinking-2025-05-14' },
     });
+
+    // COST TRACKING — loga custo desta chamada em background (resolve auditoria)
+    logApiCost({
+      provider: 'anthropic',
+      model: dashboardModel,
+      operation: 'dashboard_chat',
+      tokensIn: response.usage?.input_tokens || 0,
+      tokensOut: response.usage?.output_tokens || 0,
+      canal: 'dashboard',
+    }).catch(() => {});
 
     let hasToolUse = false;
     const toolResults = [];
@@ -2570,6 +2628,14 @@ async function processDashboardChat(message, isVoice = false) {
   }
 
   dashboardChatHistory.push({ role: 'assistant', content: finalText });
+  // Persiste resposta no banco + tools usadas
+  appendChatMessage({
+    sessionId: DASHBOARD_SESSION_ID,
+    role: 'assistant',
+    content: finalText,
+    toolsUsed: [...toolsUsed],
+    model: CONFIG.AI_MODEL_STRONG || CONFIG.AI_MODEL,
+  }).catch(() => {});
 
   // Homework — Dashboard sempre é o Gui falando direto, mas ainda valida com Haiku
   const lower = message.toLowerCase();
@@ -2595,7 +2661,12 @@ async function processDashboardChat(message, isVoice = false) {
 app.post('/dashboard/chat', auth, async (req, res) => {
   try {
     const { message, clearHistory } = req.body;
-    if (clearHistory) { dashboardChatHistory.length = 0; return res.json({ response: 'Historico limpo.', cleared: true }); }
+    if (clearHistory) {
+      dashboardChatHistory.length = 0;
+      const { clearChatHistory } = await import('./src/database.mjs');
+      await clearChatHistory(DASHBOARD_SESSION_ID).catch(() => {});
+      return res.json({ response: 'Historico limpo.', cleared: true });
+    }
     if (!message) return res.status(400).json({ error: 'Mensagem obrigatoria' });
 
     console.log(`[DASHBOARD-CHAT] Mensagem recebida: "${message.substring(0, 80)}..."`);
@@ -3060,6 +3131,21 @@ function splitIntoSentences(text) {
 // CRON JOBS
 // ============================================
 function setupCronJobs() {
+  // HEALTH CHECK ATIVO — a cada 5min, alerta WhatsApp se 3 fails consecutivos
+  cron.schedule('*/5 * * * *', async () => {
+    try {
+      const { runHealthCheck, notifyPendingIncidents } = await import('./src/health.mjs');
+      await runHealthCheck(async (msg) => {
+        if (CONFIG.GUI_JID) await sendText(CONFIG.GUI_JID, msg).catch(() => {});
+      });
+      // Notifica incidentes pendentes (limita 1 alerta a cada 30min)
+      await notifyPendingIncidents(sendText);
+    } catch (err) {
+      console.error('[CRON-HEALTH] Erro:', err.message);
+    }
+  });
+  console.log('[CRON] Health check ativo (5min)');
+
   // Limpeza periódica de Maps/Sets em memória (evita memory leak)
   setInterval(() => {
     const now = Date.now();
@@ -3269,6 +3355,7 @@ async function startWhatsApp() {
 
   const WASocket = makeWASocket.default || makeWASocket;
   sock = WASocket({ auth: state, printQRInTerminal: false, version, syncFullHistory: true, fireInitQueries: true });
+  global.__jarvisSock = sock; // expõe pra health check
 
   sock.ev.on('creds.update', saveCreds);
 
@@ -3500,6 +3587,16 @@ initDB().then(async () => {
   await initMemory();
   await loadTeamContacts();
   await loadManagedClients(pool);
+  // BOOT VALIDATION DE MODELOS — alerta se algum estiver deprecado (resolve auditoria)
+  try {
+    const { validateModelsAtBoot } = await import('./src/health.mjs');
+    const result = await validateModelsAtBoot();
+    if (!result.success) {
+      console.error(`[BOOT] ⚠️ ${result.errors.length} modelo(s) com problema. Veja health_incidents.`);
+    }
+  } catch (err) {
+    console.error('[BOOT] Erro na validação de modelos:', err.message);
+  }
   // Restaurar toggles de grupos salvos no dashboard
   try {
     const { rows } = await pool.query("SELECT value FROM jarvis_config WHERE key = 'group_toggles'");

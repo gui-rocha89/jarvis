@@ -553,11 +553,12 @@ export const JARVIS_TOOLS = [
   },
   {
     name: 'relatorio_ads',
-    description: 'Gerar relatório de desempenho de campanhas do Meta Ads com métricas reais (CPC, CTR, CPM, impressões, cliques, gasto, alcance). USE SEMPRE antes de opinar sobre performance.',
+    description: 'Gerar relatório de desempenho de campanhas do Meta Ads com métricas reais (CPC, CTR, CPM, impressões, cliques, gasto, alcance). REGRA CRÍTICA: se a pergunta é sobre UM CLIENTE ESPECÍFICO (ex: "como foi o tráfego da Medical Planner?"), SEMPRE passe o parâmetro "cliente" pra filtrar. NUNCA use sem filtro quando o usuário perguntou sobre um cliente — vai vazar dados de outros clientes.',
     input_schema: {
       type: 'object',
       properties: {
-        campanha_id: { type: 'string', description: 'ID da campanha específica (opcional — se omitido, mostra métricas gerais da conta)' },
+        campanha_id: { type: 'string', description: 'ID da campanha específica (opcional)' },
+        cliente: { type: 'string', description: 'Nome do cliente para FILTRAR campanhas (ex: "medical planner", "rossato"). USE SEMPRE quando a pergunta for sobre um cliente específico — evita misturar dados de outros clientes.' },
         periodo: { type: 'string', enum: ['hoje', 'ontem', '7dias', '30dias', 'mes'], description: 'Período do relatório' },
       },
       required: ['periodo'],
@@ -1510,20 +1511,69 @@ export async function executeJarvisTool(toolName, input, context = {}) {
         // Relatório de campanha específica
         const insights = await getCampaignInsights(input.campanha_id, input.periodo);
         return { sucesso: true, tipo: 'campanha', ...insights };
-      } else {
-        // Relatório geral da conta + lista de campanhas
-        const [insights, campanhas] = await Promise.all([
-          getAccountInsights(input.periodo),
-          listCampaigns(),
-        ]);
+      }
+
+      // BUG 2 FIX: Se user perguntou de cliente específico, FILTRAR campanhas pelo nome
+      // Antes: cuspia conta inteira misturando clientes (vazou Stream Health no contexto Medical Planner)
+      const todasCampanhas = await listCampaigns();
+      let campanhasFiltradas = todasCampanhas;
+      let clienteFiltrado = null;
+
+      if (input.cliente) {
+        const filtro = input.cliente.toLowerCase().trim();
+        campanhasFiltradas = todasCampanhas.filter(c =>
+          (c.name || c.nome || '').toLowerCase().includes(filtro)
+        );
+        clienteFiltrado = input.cliente;
+      }
+
+      // Se filtrou por cliente: agrega insights APENAS das campanhas dele
+      if (clienteFiltrado) {
+        if (campanhasFiltradas.length === 0) {
+          return {
+            sucesso: true,
+            tipo: 'cliente_sem_campanhas',
+            cliente: clienteFiltrado,
+            mensagem: `Nenhuma campanha encontrada para "${clienteFiltrado}". Verifique se o nome do cliente está correto ou se ele tem campanhas ativas.`,
+            sugestao: 'Use listar_paginas_ads pra ver os clientes disponíveis.',
+          };
+        }
+        // Pega insights de cada campanha do cliente em paralelo (limite 10)
+        const insightsList = await Promise.all(
+          campanhasFiltradas.slice(0, 10).map(c =>
+            getCampaignInsights(c.id, input.periodo).catch(() => null)
+          )
+        );
+        // Agrega métricas
+        const agregado = insightsList.filter(Boolean).reduce((acc, i) => {
+          acc.impressoes += parseInt(i.impressoes || i.impressions || 0);
+          acc.alcance += parseInt(i.alcance || i.reach || 0);
+          acc.cliques += parseInt(i.cliques || i.clicks || 0);
+          acc.gasto += parseFloat(i.gasto || i.spend || 0);
+          return acc;
+        }, { impressoes: 0, alcance: 0, cliques: 0, gasto: 0 });
         return {
           sucesso: true,
-          tipo: 'conta_geral',
-          ...insights,
-          campanhas: campanhas.slice(0, 10),
-          total_campanhas: campanhas.length,
+          tipo: 'cliente',
+          cliente: clienteFiltrado,
+          periodo: input.periodo,
+          total_campanhas: campanhasFiltradas.length,
+          campanhas: campanhasFiltradas.slice(0, 10).map(c => ({ id: c.id, nome: c.name || c.nome, status: c.status })),
+          metricas_agregadas: agregado,
+          aviso_filtro: `Filtrado APENAS por "${clienteFiltrado}". Métricas NÃO incluem outros clientes.`,
         };
       }
+
+      // Sem filtro: relatório geral (com aviso explícito que está misturando)
+      const insights = await getAccountInsights(input.periodo);
+      return {
+        sucesso: true,
+        tipo: 'conta_geral',
+        aviso: 'ATENÇÃO: este é o relatório AGREGADO da conta inteira (todos os clientes misturados). Pra dados de um cliente específico, chame relatorio_ads com parâmetro "cliente".',
+        ...insights,
+        campanhas: todasCampanhas.slice(0, 10),
+        total_campanhas: todasCampanhas.length,
+      };
     } catch (err) {
       return { error: `Erro ao gerar relatório: ${err.message}` };
     }
