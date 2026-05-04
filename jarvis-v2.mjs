@@ -1667,7 +1667,7 @@ app.get('/dashboard/costs', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// v6.0 — Incidentes de saúde (alertas pendentes/históricos)
+// v6.0 — Incidentes de saúde
 app.get('/dashboard/incidents', auth, async (req, res) => {
   try {
     const { getRecentIncidents } = await import('./src/database.mjs');
@@ -1766,6 +1766,47 @@ app.post('/dashboard/contacts/merge', auth, async (req, res) => {
     if (!keep_id || !merge_from_id) return res.status(400).json({ error: 'keep_id e merge_from_id são obrigatórios' });
     const ok = await mergeCanonicals(keep_id, merge_from_id);
     res.json({ sucesso: ok });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ============================================
+// v6.0 Sprint 6 — TASK COPILOT (config + trigger manual)
+// ============================================
+app.get('/dashboard/task-copilot/config', auth, async (req, res) => {
+  try {
+    const { getTaskCopilotConfig } = await import('./src/task-copilot.mjs');
+    const cfg = await getTaskCopilotConfig();
+    res.json(cfg);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/dashboard/task-copilot/config', auth, async (req, res) => {
+  try {
+    const { saveTaskCopilotConfig, getTaskCopilotConfig } = await import('./src/task-copilot.mjs');
+    const current = await getTaskCopilotConfig();
+    const merged = { ...current, ...req.body };
+    const ok = await saveTaskCopilotConfig(merged);
+    res.json({ sucesso: ok, config: merged });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/dashboard/task-copilot/daily-now', auth, async (req, res) => {
+  try {
+    const { postDailyBriefing, generateDailyBriefing } = await import('./src/task-copilot.mjs');
+    if (req.body?.preview) {
+      const text = await generateDailyBriefing();
+      return res.json({ preview: true, briefing: text });
+    }
+    const ok = await postDailyBriefing(sendText);
+    res.json({ sucesso: ok, mensagem: ok ? 'Daily postado no grupo Tarefas' : 'Não postou (verifique config/feriado)' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/dashboard/task-copilot/followup-now', auth, async (req, res) => {
+  try {
+    const { pollOverdueForFollowUp } = await import('./src/task-copilot.mjs');
+    const r = await pollOverdueForFollowUp(sendText);
+    res.json({ sucesso: true, ...r });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -3224,13 +3265,49 @@ function setupCronJobs() {
       await runHealthCheck(async (msg) => {
         if (CONFIG.GUI_JID) await sendText(CONFIG.GUI_JID, msg).catch(() => {});
       });
-      // Notifica incidentes pendentes (limita 1 alerta a cada 30min)
       await notifyPendingIncidents(sendText);
     } catch (err) {
       console.error('[CRON-HEALTH] Erro:', err.message);
     }
   });
   console.log('[CRON] Health check ativo (5min)');
+
+  // ============================================
+  // v6.0 Sprint 6 — TASK COPILOT
+  // ============================================
+  cron.schedule('*/30 * * * *', async () => {
+    try {
+      const { pollTasksAssignedToJarvis, getTaskCopilotConfig } = await import('./src/task-copilot.mjs');
+      const cfg = await getTaskCopilotConfig();
+      if (cfg.poll_assigned_enabled === false) return;
+      const r = await pollTasksAssignedToJarvis();
+      if (r.processed > 0) console.log(`[CRON] Task copilot — ${r.processed} task(s) atribuída(s) processada(s)`);
+    } catch (err) {
+      console.error('[CRON] Task copilot (assigned) erro:', err.message);
+    }
+  });
+
+  cron.schedule('0 12,17 * * 1-5', async () => {
+    try {
+      const { pollOverdueForFollowUp, getTaskCopilotConfig } = await import('./src/task-copilot.mjs');
+      const cfg = await getTaskCopilotConfig();
+      if (cfg.poll_overdue_enabled === false) return;
+      const r = await pollOverdueForFollowUp(sendText);
+      console.log(`[CRON] Follow-up tasks atrasadas — ${r.processed || 0} processadas, ${r.escalated || 0} escaladas`);
+    } catch (err) {
+      console.error('[CRON] Task copilot (overdue) erro:', err.message);
+    }
+  });
+
+  cron.schedule('50 11 * * 1-5', async () => {
+    try {
+      const { postDailyBriefing } = await import('./src/task-copilot.mjs');
+      await postDailyBriefing(sendText);
+    } catch (err) {
+      console.error('[CRON] Daily briefing erro:', err.message);
+    }
+  });
+  console.log('[CRON] Task Copilot ativo: daily 08:50, follow-up 9h/14h, polling 30min');
 
   // Limpeza periódica de Maps/Sets em memória (evita memory leak)
   setInterval(() => {
