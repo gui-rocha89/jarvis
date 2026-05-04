@@ -1017,3 +1017,51 @@ describe('Keys Manager (Sprint 10)', () => {
     delete process.env.GUI_JID;
   });
 });
+
+// ============================================
+// extractAsanaGid (Sprint 15)
+// Resolve bug onde Jarvis pedia GID que ele mesmo já tinha mandado em URL
+// ============================================
+describe('extractAsanaGid', () => {
+  it('aceita GID puro', async () => {
+    const { extractAsanaGid } = await import('../src/skills/loader.mjs');
+    assert.strictEqual(extractAsanaGid('1213569651070390'), '1213569651070390');
+  });
+
+  it('extrai GID de URL Asana padrão', async () => {
+    const { extractAsanaGid } = await import('../src/skills/loader.mjs');
+    assert.strictEqual(
+      extractAsanaGid('https://app.asana.com/0/0/1213569651070390'),
+      '1213569651070390'
+    );
+  });
+
+  it('extrai GID quando URL tem fragmento /f no final', async () => {
+    const { extractAsanaGid } = await import('../src/skills/loader.mjs');
+    assert.strictEqual(
+      extractAsanaGid('https://app.asana.com/0/0/1213569651070390/f'),
+      '1213569651070390'
+    );
+  });
+
+  it('extrai GID quando URL tem projeto antes', async () => {
+    const { extractAsanaGid } = await import('../src/skills/loader.mjs');
+    assert.strictEqual(
+      extractAsanaGid('https://app.asana.com/0/1199943852675706/1213569651070390'),
+      '1213569651070390'
+    );
+  });
+
+  it('retorna null pra input vazio ou inválido', async () => {
+    const { extractAsanaGid } = await import('../src/skills/loader.mjs');
+    assert.strictEqual(extractAsanaGid(null), null);
+    assert.strictEqual(extractAsanaGid(''), null);
+    assert.strictEqual(extractAsanaGid('texto qualquer'), null);
+    assert.strictEqual(extractAsanaGid('123'), null); // muito curto
+  });
+
+  it('aceita number como input', async () => {
+    const { extractAsanaGid } = await import('../src/skills/loader.mjs');
+    assert.strictEqual(extractAsanaGid(1213569651070390), '1213569651070390');
+  });
+});
