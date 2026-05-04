@@ -660,30 +660,30 @@
     <div id="tab-memory" class="tab-content hidden space-y-6">
       <!-- Memory Stats -->
       <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
-        <div class="panel p-4 stat-card">
-          <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Total</div>
+        <div class="panel p-4 stat-card" title="Total de fatos extraídos pela IA. Cada mensagem ≥20 chars vira ~1 fato.">
+          <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Memórias</div>
           <div id="mem-total" class="font-orbitron text-2xl text-stark-purple" style="color:#7b61ff">--</div>
-          <div class="text-[9px] text-stark-dim mt-1">todas as memórias</div>
+          <div class="text-[9px] text-stark-dim mt-1">total de fatos</div>
         </div>
-        <div class="panel p-4 stat-card">
-          <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Pessoas</div>
+        <div class="panel p-4 stat-card" title="Cada pessoa pode ter múltiplos fatos (ex: nome, função, prazos, preferências).">
+          <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Fatos de pessoas</div>
           <div id="mem-user" class="font-orbitron text-2xl text-stark-blue">--</div>
-          <div class="text-[9px] text-stark-dim mt-1">equipe, clientes, contatos</div>
+          <div class="text-[9px] text-stark-dim mt-1"><span id="mem-user-unique">--</span> pessoas únicas</div>
         </div>
-        <div class="panel p-4 stat-card">
-          <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Conversas</div>
+        <div class="panel p-4 stat-card" title="Cada chat (grupo ou DM) pode ter múltiplos fatos sobre o que rolou.">
+          <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Fatos de chats</div>
           <div id="mem-chat" class="font-orbitron text-2xl text-stark-cyan" style="color:#00f0ff">--</div>
-          <div class="text-[9px] text-stark-dim mt-1">grupos e chats</div>
+          <div class="text-[9px] text-stark-dim mt-1"><span id="mem-chat-unique">--</span> chats únicos</div>
         </div>
-        <div class="panel p-4 stat-card">
-          <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Operacional</div>
+        <div class="panel p-4 stat-card" title="Regras, processos e decisões da operação (Asana, fluxos, padrões).">
+          <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Regras & Processos</div>
           <div id="mem-agent" class="font-orbitron text-2xl text-stark-gold" style="color:#ffd700">--</div>
-          <div class="text-[9px] text-stark-dim mt-1">asana, processos, regras</div>
+          <div class="text-[9px] text-stark-dim mt-1"><span id="mem-agent-unique">--</span> contextos</div>
         </div>
-        <div class="panel p-4 stat-card relative overflow-hidden">
+        <div class="panel p-4 stat-card relative overflow-hidden" title="Fatos aprendidos hoje em todas as conversas.">
           <div class="text-xs text-stark-dim uppercase tracking-wider mb-1">Hoje</div>
           <div id="mem-today" class="font-orbitron text-2xl text-stark-green">--</div>
-          <div class="text-[9px] text-stark-dim mt-1">aprendidas hoje</div>
+          <div class="text-[9px] text-stark-dim mt-1">aprendidos hoje</div>
         </div>
       </div>
 
@@ -2976,6 +2976,13 @@
         document.getElementById('mem-agent').textContent = (data.agent || 0).toLocaleString();
         document.getElementById('mem-today').textContent = today.total || 0;
         document.getElementById('stat-memories').textContent = (data.total || 0).toLocaleString();
+        // Sub-texto com entidades únicas (deixa explícito que 173k fatos ≠ 173k pessoas)
+        const userUnique = document.getElementById('mem-user-unique');
+        const chatUnique = document.getElementById('mem-chat-unique');
+        const agentUnique = document.getElementById('mem-agent-unique');
+        if (userUnique) userUnique.textContent = (data.user_unique || 0).toLocaleString();
+        if (chatUnique) chatUnique.textContent = (data.chat_unique || 0).toLocaleString();
+        if (agentUnique) agentUnique.textContent = (data.agent_unique || 0).toLocaleString();
       } catch (e) { console.error('Memory stats error:', e); }
     }
 
