@@ -738,3 +738,30 @@ describe('Anti-Leak v4 (Sprint 5)', () => {
     assert.equal(r.leaked, true, 'Deveria bloquear menção a outro cliente (Rossato)');
   });
 });
+
+// ============================================
+// v6.0 Sprint 3 — Profile Real-Time
+// ============================================
+describe('Profile Real-Time (Sprint 3)', () => {
+  it('exporta synthesizeProfileCached, invalidateProfileCache, getProfileCacheStats', async () => {
+    const m = await import('../src/profiles.mjs');
+    assert.ok(typeof m.synthesizeProfileCached === 'function', 'synthesizeProfileCached ausente');
+    assert.ok(typeof m.invalidateProfileCache === 'function', 'invalidateProfileCache ausente');
+    assert.ok(typeof m.getProfileCacheStats === 'function', 'getProfileCacheStats ausente');
+  });
+
+  it('getProfileCacheStats retorna shape correto', async () => {
+    const { getProfileCacheStats } = await import('../src/profiles.mjs');
+    const stats = getProfileCacheStats();
+    assert.ok(typeof stats.total === 'number');
+    assert.ok(typeof stats.valid === 'number');
+    assert.ok(typeof stats.expired === 'number');
+  });
+
+  it('invalidateProfileCache não quebra com args vazios', async () => {
+    const { invalidateProfileCache } = await import('../src/profiles.mjs');
+    invalidateProfileCache();
+    invalidateProfileCache('client_contact', 'fake-jid');
+    assert.ok(true, 'Não deveria lançar exceção');
+  });
+});

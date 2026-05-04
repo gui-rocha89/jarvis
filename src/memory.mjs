@@ -591,6 +591,28 @@ export async function processMemory(text, senderName, senderJid, chatId, isGroup
     console.log(`[MEMORY] ${facts.length} fato(s) extraído(s) de ${senderName}`);
     await storeFacts(facts, 'user', senderJid);
     if (isGroup) await storeFacts(facts, 'chat', chatId);
+
+    // v6.0 Sprint 3 — PROFILE REAL-TIME
+    // Atualiza perfil em background (não bloqueia). Cache 30min evita custo desnecessário.
+    if (senderJid) {
+      const senderContext = await getPersonContext(senderJid);
+      const entityType = senderContext === 'team' ? 'team_member' : 'client_contact';
+      import('./profiles.mjs').then(({ synthesizeProfileCached }) => {
+        synthesizeProfileCached(entityType, senderJid, senderName)
+          .catch(e => console.error('[PROFILE-RT] Erro update sender:', e.message));
+      }).catch(() => {});
+    }
+    if (isGroup && chatId) {
+      // Atualiza perfil do grupo (cliente ou interno)
+      const isInternal = groupContext?.isInternalGroup;
+      if (!isInternal) {
+        // Só atualiza profile de grupo de cliente (interno é fixo, não muda)
+        import('./profiles.mjs').then(({ synthesizeProfileCached }) => {
+          synthesizeProfileCached('group', chatId, groupContext?.groupName || null)
+            .catch(e => console.error('[PROFILE-RT] Erro update grupo:', e.message));
+        }).catch(() => {});
+      }
+    }
   } catch (err) {
     console.error('[MEMORY] processMemory ERRO:', err.message);
   }
