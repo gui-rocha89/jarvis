@@ -1684,6 +1684,25 @@ app.get('/dashboard/incidents', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Marca incidente específico como resolvido
+app.post('/dashboard/incidents/:id/resolve', auth, async (req, res) => {
+  try {
+    const { resolveIncident } = await import('./src/database.mjs');
+    await resolveIncident(req.params.id);
+    res.json({ sucesso: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Resolve TODOS os incidentes não resolvidos (limpeza em massa)
+app.post('/dashboard/incidents/resolve-all', auth, async (req, res) => {
+  try {
+    const { pool } = await import('./src/database.mjs');
+    const r = await pool.query("UPDATE health_incidents SET resolved_at = NOW() WHERE resolved_at IS NULL RETURNING id");
+    console.log(`[INCIDENTS] ${r.rowCount} incidentes resolvidos via dashboard por ${req.user?.email || 'desconhecido'}`);
+    res.json({ sucesso: true, resolvidos: r.rowCount });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ============================================
 // v6.0 Sprint 2 — KNOWLEDGE GRAPH (CRUD via dashboard)
 // ============================================

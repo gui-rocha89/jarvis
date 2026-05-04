@@ -15,8 +15,11 @@ import { logIncident, getRecentIncidents, markIncidentNotified } from './databas
 // 1. BOOT VALIDATION DE MODELOS
 // ============================================
 // Roda no boot — testa cada modelo configurado e alerta se algum retornar 404
+// IMPORTANTE: lê de process.env direto (não de CONFIG), porque o loadKeysFromDb pode ter
+// sobrescrito process.env com valores do banco DEPOIS do CONFIG ter sido importado.
 export async function validateModelsAtBoot() {
-  if (!CONFIG.ANTHROPIC_API_KEY) {
+  const apiKey = process.env.ANTHROPIC_API_KEY || CONFIG.ANTHROPIC_API_KEY || '';
+  if (!apiKey) {
     await logIncident({
       component: 'models',
       severity: 'critical',
@@ -26,13 +29,13 @@ export async function validateModelsAtBoot() {
   }
 
   const modelsToTest = [
-    { name: 'AI_MODEL', value: CONFIG.AI_MODEL || 'claude-sonnet-4-6' },
-    { name: 'AI_MODEL_STRONG', value: CONFIG.AI_MODEL_STRONG || 'claude-opus-4-6' },
+    { name: 'AI_MODEL', value: process.env.AI_MODEL || CONFIG.AI_MODEL || 'claude-sonnet-4-6' },
+    { name: 'AI_MODEL_STRONG', value: process.env.AI_MODEL_STRONG || CONFIG.AI_MODEL_STRONG || 'claude-opus-4-6' },
     { name: 'MEMORY_MODEL', value: process.env.MEMORY_MODEL || 'claude-sonnet-4-5' },
   ];
 
   const Anthropic = (await import('@anthropic-ai/sdk')).default;
-  const anthropic = new Anthropic({ apiKey: CONFIG.ANTHROPIC_API_KEY });
+  const anthropic = new Anthropic({ apiKey });
 
   const errors = [];
   const ok = [];

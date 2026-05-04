@@ -1385,10 +1385,11 @@
         <p class="text-xs text-stark-dim">Histórico de incidentes (banco, WhatsApp, modelos IA, alertas). Modelo deprecado, processo caído, RAM alta — tudo aqui antes de virar problema.</p>
       </div>
 
-      <div class="flex gap-2 mb-2">
+      <div class="flex gap-2 mb-2 flex-wrap">
         <button onclick="loadIncidents(24)" class="px-4 py-2 bg-stark-blue/20 border border-stark-blue text-stark-blue rounded text-sm">24h</button>
         <button onclick="loadIncidents(168)" class="px-4 py-2 bg-stark-blue/20 border border-stark-blue text-stark-blue rounded text-sm">7 dias</button>
         <button onclick="loadIncidents(720)" class="px-4 py-2 bg-stark-blue/20 border border-stark-blue text-stark-blue rounded text-sm">30 dias</button>
+        <button onclick="resolveAllIncidents()" class="px-4 py-2 bg-stark-green/20 border border-stark-green text-stark-green rounded text-sm" title="Marca todos os incidentes pendentes como resolvidos">✓ Resolver todos</button>
       </div>
 
       <div id="incidents-summary" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
@@ -1914,6 +1915,18 @@
 
     function escapeHtml(s) {
       return (s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    async function resolveAllIncidents() {
+      if (!confirm('Marcar TODOS os incidentes pendentes como resolvidos?\n\nUse depois de corrigir a causa raiz pra parar de receber alertas duplicados.')) return;
+      try {
+        const res = await api('/dashboard/incidents/resolve-all', { method: 'POST' });
+        const data = await res.json();
+        notify(`${data.resolvidos || 0} incidente(s) marcados como resolvidos`, 'ok');
+        loadIncidents(24);
+      } catch (err) {
+        notify('Erro: ' + err.message, 'err');
+      }
     }
 
     // ============================================

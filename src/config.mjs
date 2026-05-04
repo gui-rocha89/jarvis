@@ -14,6 +14,12 @@ export const CONFIG = {
   MAX_CONTEXT_MESSAGES: 30,
   ASANA_PAT: process.env.ASANA_PAT || '',
   ASANA_WORKSPACE: process.env.ASANA_WORKSPACE || '',
+  // Chaves de IA (também lidas direto pelos SDKs, mas expostas aqui pra consistência e validação)
+  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+  ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY || '',
+  ELEVENLABS_VOICE_ID: process.env.ELEVENLABS_VOICE_ID || '',
+  MEMORY_MODEL: process.env.MEMORY_MODEL || '',
   JARVIS_VERSION: '6.0.0',
   JWT_SECRET: process.env.JWT_SECRET || '',
   // Meta Ads (Facebook/Instagram)
