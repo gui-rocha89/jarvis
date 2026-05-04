@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 5.0 - Asana Webhook Handler
+// JARVIS 6.0 - Asana Webhook Handler
 // Processa eventos em tempo real do Asana
 // ============================================
 import { CONFIG } from '../config.mjs';

@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 5.0 - MCP Server (Model Context Protocol)
+// JARVIS 6.0 - MCP Server (Model Context Protocol)
 // Entry point separado para integração com
 // ferramentas externas (Claude Code, Cursor, etc.)
 // ============================================
@@ -303,7 +303,7 @@ async function main() {
   // ============================================
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('[MCP] Jarvis MCP Server v5.0.0 iniciado via stdio');
+  console.error('[MCP] Jarvis MCP Server v6.0.0 iniciado via stdio');
 }
 
 main().catch((err) => {

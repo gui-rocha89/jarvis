@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 3.0 - Asana Email Monitor (IMAP)
+// JARVIS 6.0 - Asana Email Monitor (IMAP)
 // Monitora @menções no Asana via email
 // Responde com comentários na task
 // ============================================

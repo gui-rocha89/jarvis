@@ -68,7 +68,7 @@ export function Sidebar() {
             <h1 className="text-sm font-bold text-stark-cyan" style={{ fontFamily: 'Orbitron, sans-serif' }}>
               JARVIS
             </h1>
-            <p className="text-xs text-stark-dim">v5.0 Dashboard</p>
+            <p className="text-xs text-stark-dim">v6.0 Dashboard</p>
           </div>
         </div>
         <div className="flex items-center gap-2 mt-3">

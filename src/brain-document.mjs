@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 4.0 - Cérebro Persistente
+// JARVIS 6.0 - Cérebro Persistente
 // Documento de conhecimento sintetizado que o Jarvis carrega SEMPRE no system prompt.
 // Atualizado 1x/dia via cron. Substitui a dependência de memórias aleatórias
 // por um "manual operacional" completo e coerente.

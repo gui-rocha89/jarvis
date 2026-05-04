@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 3.0 - Meta Ads Skill
+// JARVIS 6.0 - Meta Ads Skill
 // Integração com Meta Marketing API v25.0
 // ============================================
 import { CONFIG, META_PAGES_MAP, META_WHATSAPP_MAP } from '../config.mjs';

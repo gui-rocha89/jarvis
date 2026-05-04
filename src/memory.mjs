@@ -1,5 +1,5 @@
 // ============================================
-// JARVIS 5.0 - Sistema de Memória Inteligente
+// JARVIS 6.0 - Sistema de Memória Inteligente
 // Mem0-inspired + pgvector (busca semântica)
 // ============================================
 import Anthropic from '@anthropic-ai/sdk';
