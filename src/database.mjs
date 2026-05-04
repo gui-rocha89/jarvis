@@ -267,6 +267,47 @@ export async function initDB() {
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_health_unresolved ON health_incidents(component, created_at DESC) WHERE resolved_at IS NULL`);
 
+    // ============================================
+    // v6.0 Sprint 2 — KNOWLEDGE GRAPH
+    // ============================================
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS knowledge_entities (
+        id SERIAL PRIMARY KEY,
+        nome TEXT NOT NULL,
+        tipo TEXT NOT NULL,
+        descricao TEXT,
+        aliases TEXT[] DEFAULT ARRAY[]::TEXT[],
+        status TEXT DEFAULT 'ativo',
+        metadata JSONB DEFAULT '{}',
+        source TEXT DEFAULT 'manual',
+        criado_em TIMESTAMPTZ DEFAULT NOW(),
+        atualizado_em TIMESTAMPTZ DEFAULT NOW(),
+        deprecated_em TIMESTAMPTZ,
+        deprecated_motivo TEXT,
+        UNIQUE(nome, tipo)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_kg_nome_lower ON knowledge_entities(LOWER(nome))`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_kg_tipo ON knowledge_entities(tipo)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_kg_aliases ON knowledge_entities USING GIN(aliases)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_kg_status ON knowledge_entities(status) WHERE status = 'ativo'`);
+    try {
+      await pool.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_kg_nome_trgm ON knowledge_entities USING GIN(nome gin_trgm_ops)`);
+    } catch (e) { console.log('[DB] pg_trgm extension skipped:', e.message); }
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS entity_mentions (
+        id SERIAL PRIMARY KEY,
+        entity_id INTEGER REFERENCES knowledge_entities(id) ON DELETE CASCADE,
+        memory_id INTEGER,
+        message_id TEXT,
+        contexto TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_mentions_entity ON entity_mentions(entity_id, created_at DESC)`);
+
     // Migração: adicionar coluna message_key se não existe
     await pool.query(`
       ALTER TABLE jarvis_messages ADD COLUMN IF NOT EXISTS message_key JSONB
@@ -618,5 +659,158 @@ export async function markIncidentNotified(id) {
 export async function resolveIncident(id) {
   try {
     await pool.query('UPDATE health_incidents SET resolved_at = NOW() WHERE id = $1', [id]);
+  } catch {}
+}
+
+// ============================================================
+// v6.0 Sprint 2 — KNOWLEDGE GRAPH (entities estruturadas)
+// ============================================================
+export const KG_VALID_TYPES = [
+  'cliente', 'sub_marca', 'projeto', 'ferramenta_interna',
+  'evento', 'campanha', 'processo', 'decisao',
+  'pessoa_externa', 'pessoa_equipe',
+];
+
+export async function upsertEntity({ nome, tipo, descricao = null, aliases = [], metadata = {}, source = 'manual', status = 'ativo' }) {
+  if (!nome || !tipo) throw new Error('nome e tipo são obrigatórios');
+  if (!KG_VALID_TYPES.includes(tipo)) throw new Error(`tipo inválido: ${tipo}. Válidos: ${KG_VALID_TYPES.join(', ')}`);
+  const cleanAliases = [...new Set(aliases.filter(a => a && a.toLowerCase() !== nome.toLowerCase()))];
+  try {
+    const { rows } = await pool.query(`
+      INSERT INTO knowledge_entities (nome, tipo, descricao, aliases, metadata, source, status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      ON CONFLICT (nome, tipo) DO UPDATE SET
+        descricao = COALESCE(EXCLUDED.descricao, knowledge_entities.descricao),
+        aliases = ARRAY(SELECT DISTINCT unnest(knowledge_entities.aliases || EXCLUDED.aliases)),
+        metadata = knowledge_entities.metadata || EXCLUDED.metadata,
+        atualizado_em = NOW()
+      RETURNING *
+    `, [nome, tipo, descricao, cleanAliases, JSON.stringify(metadata), source, status]);
+    return rows[0];
+  } catch (err) {
+    console.error('[KG] Erro upsertEntity:', err.message);
+    throw err;
+  }
+}
+
+export async function findEntity(query, { tipo = null } = {}) {
+  if (!query) return null;
+  const q = query.trim();
+  const tipoFilter = tipo ? 'AND tipo = $2' : '';
+  const params = tipo ? [q, tipo] : [q];
+  try {
+    const exact = await pool.query(
+      `SELECT * FROM knowledge_entities WHERE LOWER(nome) = LOWER($1) ${tipoFilter} AND status = 'ativo' LIMIT 1`,
+      params
+    );
+    if (exact.rows[0]) return exact.rows[0];
+    const alias = await pool.query(
+      `SELECT * FROM knowledge_entities
+       WHERE EXISTS (SELECT 1 FROM unnest(aliases) a WHERE LOWER(a) = LOWER($1))
+       ${tipoFilter} AND status = 'ativo' LIMIT 1`,
+      params
+    );
+    if (alias.rows[0]) return alias.rows[0];
+    const partial = await pool.query(
+      `SELECT * FROM knowledge_entities
+       WHERE (nome ILIKE '%' || $1 || '%'
+              OR EXISTS (SELECT 1 FROM unnest(aliases) a WHERE a ILIKE '%' || $1 || '%'))
+       ${tipoFilter} AND status = 'ativo' LIMIT 1`,
+      params
+    );
+    if (partial.rows[0]) return partial.rows[0];
+    return null;
+  } catch (err) {
+    console.error('[KG] Erro findEntity:', err.message);
+    return null;
+  }
+}
+
+export async function searchEntities(query = '', { tipo = null, limit = 20 } = {}) {
+  try {
+    let sql = `SELECT * FROM knowledge_entities WHERE status = 'ativo'`;
+    const params = [];
+    if (query) {
+      params.push(query);
+      sql += ` AND (nome ILIKE '%' || $${params.length} || '%'
+                   OR descricao ILIKE '%' || $${params.length} || '%'
+                   OR EXISTS (SELECT 1 FROM unnest(aliases) a WHERE a ILIKE '%' || $${params.length} || '%'))`;
+    }
+    if (tipo) {
+      params.push(tipo);
+      sql += ` AND tipo = $${params.length}`;
+    }
+    params.push(limit);
+    sql += ` ORDER BY atualizado_em DESC LIMIT $${params.length}`;
+    const { rows } = await pool.query(sql, params);
+    return rows;
+  } catch (err) {
+    console.error('[KG] Erro searchEntities:', err.message);
+    return [];
+  }
+}
+
+export async function listEntitiesByType(tipo, limit = 100) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM knowledge_entities WHERE tipo = $1 AND status = 'ativo' ORDER BY nome LIMIT $2`,
+      [tipo, limit]
+    );
+    return rows;
+  } catch { return []; }
+}
+
+export async function getEntityStats() {
+  try {
+    const { rows } = await pool.query(`
+      SELECT tipo, COUNT(*)::int as total, COUNT(*) FILTER (WHERE deprecated_em IS NULL)::int as ativos
+      FROM knowledge_entities GROUP BY tipo ORDER BY total DESC
+    `);
+    return rows;
+  } catch { return []; }
+}
+
+export async function deprecateEntity(id, motivo = null) {
+  try {
+    await pool.query(
+      `UPDATE knowledge_entities SET status = 'deprecated', deprecated_em = NOW(), deprecated_motivo = $2 WHERE id = $1`,
+      [id, motivo]
+    );
+    return true;
+  } catch { return false; }
+}
+
+export async function detectEntitiesInText(text) {
+  if (!text || text.length < 3) return [];
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, nome, tipo, descricao, aliases FROM knowledge_entities WHERE status = 'ativo'`
+    );
+    const found = [];
+    for (const e of rows) {
+      const candidates = [e.nome, ...(e.aliases || [])];
+      for (const c of candidates) {
+        if (!c || c.length < 3) continue;
+        const escaped = c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`\\b${escaped}\\b`, 'i');
+        if (regex.test(text)) {
+          found.push(e);
+          break;
+        }
+      }
+    }
+    return found;
+  } catch (err) {
+    console.error('[KG] Erro detectEntitiesInText:', err.message);
+    return [];
+  }
+}
+
+export async function logEntityMention({ entityId, memoryId = null, messageId = null, contexto = null }) {
+  try {
+    await pool.query(
+      `INSERT INTO entity_mentions (entity_id, memory_id, message_id, contexto) VALUES ($1, $2, $3, $4)`,
+      [entityId, memoryId, messageId, contexto?.substring(0, 500)]
+    );
   } catch {}
 }
