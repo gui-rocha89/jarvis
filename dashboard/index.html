@@ -247,6 +247,9 @@
         <button onclick="switchTab('security')" data-tab="security" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Segurança</button>
         <button onclick="switchTab('groups')" data-tab="groups" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Grupos</button>
         <button onclick="switchTab('channels')" data-tab="channels" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Canais</button>
+        <button onclick="switchTab('knowledge')" data-tab="knowledge" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Conhecimento</button>
+        <button onclick="switchTab('costs')" data-tab="costs" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Custos</button>
+        <button onclick="switchTab('incidents')" data-tab="incidents" class="tab-btn px-3 py-4 text-xs font-semibold tracking-wider uppercase text-stark-dim transition-colors hover:text-stark-blue">Saúde</button>
       </nav>
 
       <!-- Status -->
@@ -1268,6 +1271,129 @@
       </div>
     </div>
 
+    <!-- ==================================================== -->
+    <!-- TAB CONTENT: KNOWLEDGE GRAPH (v6.0 Sprint 8)         -->
+    <!-- ==================================================== -->
+    <div id="tab-knowledge" class="tab-content hidden space-y-6">
+      <div class="border-2 border-stark-blue/50 bg-stark-blue/5 rounded-lg p-4">
+        <h2 class="text-lg font-orbitron text-stark-blue mb-1">CONHECIMENTO INSTITUCIONAL</h2>
+        <p class="text-xs text-stark-dim">Tudo que o Jarvis sabe, estruturado: clientes, sub-marcas, equipe, projetos, ferramentas, eventos, campanhas. Edite manualmente quando precisar.</p>
+      </div>
+
+      <!-- Filtros + busca -->
+      <div class="bg-stark-card border border-stark-border rounded-lg p-4 space-y-3">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <input id="kg-search" type="text" placeholder="🔍 Buscar entidade..." onkeyup="if(event.key==='Enter') loadKnowledge()"
+            class="bg-stark-bg border border-stark-border rounded px-3 py-2 text-sm text-white focus:border-stark-blue focus:outline-none">
+          <select id="kg-tipo-filter" onchange="loadKnowledge()" class="bg-stark-bg border border-stark-border rounded px-3 py-2 text-sm text-white focus:border-stark-blue focus:outline-none">
+            <option value="">Todos os tipos</option>
+            <option value="cliente">Clientes</option>
+            <option value="sub_marca">Sub-marcas</option>
+            <option value="projeto">Projetos</option>
+            <option value="ferramenta_interna">Ferramentas</option>
+            <option value="evento">Eventos</option>
+            <option value="campanha">Campanhas</option>
+            <option value="processo">Processos</option>
+            <option value="decisao">Decisões</option>
+            <option value="pessoa_externa">Pessoas externas</option>
+            <option value="pessoa_equipe">Equipe</option>
+          </select>
+          <div class="flex gap-2">
+            <button onclick="openKgEditor(null)" class="flex-1 bg-stark-green/20 border border-stark-green text-stark-green px-4 py-2 rounded hover:bg-stark-green/30 text-sm">+ Nova</button>
+            <button onclick="seedKnowledge()" class="flex-1 bg-stark-blue/20 border border-stark-blue text-stark-blue px-4 py-2 rounded hover:bg-stark-blue/30 text-sm" title="Re-popular com dados conhecidos">Sync</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stats por tipo -->
+      <div id="kg-stats" class="grid grid-cols-2 md:grid-cols-5 gap-3"></div>
+
+      <!-- Lista de entidades -->
+      <div id="kg-list" class="space-y-2"></div>
+
+      <!-- Editor modal -->
+      <div id="kg-editor-modal" class="hidden fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+        <div class="bg-stark-card border border-stark-blue rounded-lg p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+          <h3 id="kg-editor-title" class="text-lg font-orbitron text-stark-blue mb-4">Nova entidade</h3>
+          <div class="space-y-3">
+            <input id="kg-edit-id" type="hidden">
+            <div>
+              <label class="text-xs text-stark-dim uppercase block mb-1">Nome</label>
+              <input id="kg-edit-nome" type="text" class="w-full bg-stark-bg border border-stark-border rounded px-3 py-2 text-sm text-white">
+            </div>
+            <div>
+              <label class="text-xs text-stark-dim uppercase block mb-1">Tipo</label>
+              <select id="kg-edit-tipo" class="w-full bg-stark-bg border border-stark-border rounded px-3 py-2 text-sm text-white">
+                <option value="cliente">Cliente</option>
+                <option value="sub_marca">Sub-marca</option>
+                <option value="projeto">Projeto</option>
+                <option value="ferramenta_interna">Ferramenta interna</option>
+                <option value="evento">Evento</option>
+                <option value="campanha">Campanha</option>
+                <option value="processo">Processo</option>
+                <option value="decisao">Decisão</option>
+                <option value="pessoa_externa">Pessoa externa</option>
+                <option value="pessoa_equipe">Equipe</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-stark-dim uppercase block mb-1">Descrição</label>
+              <textarea id="kg-edit-descricao" rows="3" class="w-full bg-stark-bg border border-stark-border rounded px-3 py-2 text-sm text-white"></textarea>
+            </div>
+            <div>
+              <label class="text-xs text-stark-dim uppercase block mb-1">Aliases (separados por vírgula)</label>
+              <input id="kg-edit-aliases" type="text" placeholder="ex: streamhealth, stream_health, sh" class="w-full bg-stark-bg border border-stark-border rounded px-3 py-2 text-sm text-white">
+            </div>
+            <div class="flex gap-2 justify-end pt-2">
+              <button onclick="closeKgEditor()" class="px-4 py-2 border border-stark-dim text-stark-dim rounded hover:bg-stark-dim/10 text-sm">Cancelar</button>
+              <button onclick="saveKgEntity()" class="px-4 py-2 bg-stark-green/20 border border-stark-green text-stark-green rounded hover:bg-stark-green/30 text-sm">Salvar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================================================== -->
+    <!-- TAB CONTENT: COSTS (v6.0 Sprint 1)                   -->
+    <!-- ==================================================== -->
+    <div id="tab-costs" class="tab-content hidden space-y-6">
+      <div class="border-2 border-stark-gold/50 bg-stark-gold/5 rounded-lg p-4">
+        <h2 class="text-lg font-orbitron text-stark-gold mb-1">CUSTOS DA API</h2>
+        <p class="text-xs text-stark-dim">Tokens e custo USD por modelo, dia e canal. Visibilidade end-to-end pra evitar surpresas no fim do mês.</p>
+      </div>
+
+      <div class="flex gap-2 mb-2">
+        <button onclick="loadCosts(7)" class="px-4 py-2 bg-stark-blue/20 border border-stark-blue text-stark-blue rounded text-sm">7 dias</button>
+        <button onclick="loadCosts(30)" class="px-4 py-2 bg-stark-blue/20 border border-stark-blue text-stark-blue rounded text-sm">30 dias</button>
+        <button onclick="loadCosts(90)" class="px-4 py-2 bg-stark-blue/20 border border-stark-blue text-stark-blue rounded text-sm">90 dias</button>
+      </div>
+
+      <div id="costs-summary" class="bg-stark-card border border-stark-border rounded-lg p-6">
+        <p class="text-stark-dim text-sm">Carregando custos...</p>
+      </div>
+
+      <div id="costs-table" class="bg-stark-card border border-stark-border rounded-lg overflow-x-auto"></div>
+    </div>
+
+    <!-- ==================================================== -->
+    <!-- TAB CONTENT: INCIDENTS / HEALTH (v6.0 Sprint 1)      -->
+    <!-- ==================================================== -->
+    <div id="tab-incidents" class="tab-content hidden space-y-6">
+      <div class="border-2 border-stark-red/50 bg-stark-red/5 rounded-lg p-4">
+        <h2 class="text-lg font-orbitron text-stark-red mb-1">SAÚDE DO SISTEMA</h2>
+        <p class="text-xs text-stark-dim">Histórico de incidentes (banco, WhatsApp, modelos IA, alertas). Modelo deprecado, processo caído, RAM alta — tudo aqui antes de virar problema.</p>
+      </div>
+
+      <div class="flex gap-2 mb-2">
+        <button onclick="loadIncidents(24)" class="px-4 py-2 bg-stark-blue/20 border border-stark-blue text-stark-blue rounded text-sm">24h</button>
+        <button onclick="loadIncidents(168)" class="px-4 py-2 bg-stark-blue/20 border border-stark-blue text-stark-blue rounded text-sm">7 dias</button>
+        <button onclick="loadIncidents(720)" class="px-4 py-2 bg-stark-blue/20 border border-stark-blue text-stark-blue rounded text-sm">30 dias</button>
+      </div>
+
+      <div id="incidents-summary" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+      <div id="incidents-list" class="space-y-2"></div>
+    </div>
+
   </main>
 
   <!-- Notification Container -->
@@ -1507,6 +1633,235 @@
       if (tab === 'security') loadAccessLog();
       if (tab === 'groups') loadGroups();
       if (tab === 'channels') loadChannels();
+      if (tab === 'knowledge') loadKnowledge();
+      if (tab === 'costs') loadCosts(7);
+      if (tab === 'incidents') loadIncidents(24);
+    }
+
+    // ============================================
+    // v6.0 — KNOWLEDGE GRAPH
+    // ============================================
+    async function loadKnowledge() {
+      const q = document.getElementById('kg-search')?.value || '';
+      const tipo = document.getElementById('kg-tipo-filter')?.value || '';
+      try {
+        const params = new URLSearchParams();
+        if (q) params.set('q', q);
+        if (tipo) params.set('tipo', tipo);
+        params.set('limit', '100');
+        const data = await api(`/dashboard/knowledge?${params.toString()}`);
+
+        // Stats
+        const statsContainer = document.getElementById('kg-stats');
+        if (statsContainer && data.total_por_tipo) {
+          statsContainer.innerHTML = data.total_por_tipo.slice(0, 5).map(s => `
+            <div class="bg-stark-card border border-stark-border rounded p-3 text-center">
+              <div class="text-xl font-bold text-stark-blue">${s.total}</div>
+              <div class="text-xs text-stark-dim uppercase">${s.tipo.replace(/_/g, ' ')}</div>
+            </div>
+          `).join('');
+        }
+
+        // Lista
+        const listContainer = document.getElementById('kg-list');
+        if (!listContainer) return;
+        if (!data.entidades || data.entidades.length === 0) {
+          listContainer.innerHTML = '<p class="text-stark-dim text-center py-8">Nenhuma entidade encontrada.</p>';
+          return;
+        }
+        listContainer.innerHTML = data.entidades.map(e => `
+          <div class="bg-stark-card border border-stark-border rounded p-3 hover:border-stark-blue/50 transition-colors">
+            <div class="flex justify-between items-start gap-3">
+              <div class="flex-1">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="text-sm font-bold text-white">${escapeHtml(e.nome)}</span>
+                  <span class="text-xs px-2 py-0.5 bg-stark-blue/20 text-stark-blue rounded uppercase">${e.tipo.replace(/_/g, ' ')}</span>
+                  ${e.status === 'deprecated' ? '<span class="text-xs px-2 py-0.5 bg-stark-red/20 text-stark-red rounded">DEPRECATED</span>' : ''}
+                </div>
+                ${e.descricao ? `<div class="text-xs text-stark-dim mt-1">${escapeHtml(e.descricao.substring(0, 200))}${e.descricao.length > 200 ? '...' : ''}</div>` : ''}
+                ${e.aliases && e.aliases.length ? `<div class="text-xs text-stark-dim/70 mt-1">aliases: ${e.aliases.slice(0, 6).join(', ')}</div>` : ''}
+              </div>
+              <div class="flex gap-1">
+                <button onclick='openKgEditor(${JSON.stringify(e).replace(/'/g, "&apos;")})' class="px-2 py-1 text-xs bg-stark-blue/20 border border-stark-blue text-stark-blue rounded hover:bg-stark-blue/30">Editar</button>
+                <button onclick="deleteKg('${e.id}')" class="px-2 py-1 text-xs bg-stark-red/20 border border-stark-red text-stark-red rounded hover:bg-stark-red/30">Deprecar</button>
+              </div>
+            </div>
+          </div>
+        `).join('');
+      } catch (err) {
+        console.error('loadKnowledge erro:', err);
+        document.getElementById('kg-list').innerHTML = `<p class="text-stark-red text-sm">Erro: ${err.message}</p>`;
+      }
+    }
+
+    function openKgEditor(entity) {
+      document.getElementById('kg-edit-id').value = entity?.id || '';
+      document.getElementById('kg-edit-nome').value = entity?.nome || '';
+      document.getElementById('kg-edit-tipo').value = entity?.tipo || 'cliente';
+      document.getElementById('kg-edit-descricao').value = entity?.descricao || '';
+      document.getElementById('kg-edit-aliases').value = (entity?.aliases || []).join(', ');
+      document.getElementById('kg-editor-title').textContent = entity ? `Editando: ${entity.nome}` : 'Nova entidade';
+      document.getElementById('kg-editor-modal').classList.remove('hidden');
+    }
+    function closeKgEditor() {
+      document.getElementById('kg-editor-modal').classList.add('hidden');
+    }
+    async function saveKgEntity() {
+      const nome = document.getElementById('kg-edit-nome').value.trim();
+      const tipo = document.getElementById('kg-edit-tipo').value;
+      const descricao = document.getElementById('kg-edit-descricao').value.trim();
+      const aliases = document.getElementById('kg-edit-aliases').value.split(',').map(a => a.trim()).filter(Boolean);
+      if (!nome) { notify('Nome obrigatório', 'warn'); return; }
+      try {
+        await api('/dashboard/knowledge', { method: 'POST', body: JSON.stringify({ nome, tipo, descricao, aliases }) });
+        notify('Entidade salva!', 'ok');
+        closeKgEditor();
+        loadKnowledge();
+      } catch (err) { notify('Erro: ' + err.message, 'err'); }
+    }
+    async function deleteKg(id) {
+      if (!confirm('Deprecar esta entidade?')) return;
+      try {
+        await api(`/dashboard/knowledge/${id}`, { method: 'DELETE' });
+        notify('Entidade deprecada', 'ok');
+        loadKnowledge();
+      } catch (err) { notify('Erro: ' + err.message, 'err'); }
+    }
+    async function seedKnowledge() {
+      if (!confirm('Re-popular Knowledge Graph com clientes/equipe conhecidos?')) return;
+      try {
+        const r = await api('/dashboard/knowledge/seed', { method: 'POST' });
+        notify(`Sync OK — ${r.added || 0} novos, ${r.updated || 0} atualizados`, 'ok');
+        loadKnowledge();
+      } catch (err) { notify('Erro: ' + err.message, 'err'); }
+    }
+
+    // ============================================
+    // v6.0 — COSTS
+    // ============================================
+    async function loadCosts(days) {
+      try {
+        const data = await api(`/dashboard/costs?days=${days}`);
+        const summary = document.getElementById('costs-summary');
+        if (summary) {
+          summary.innerHTML = `
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+              <div>
+                <div class="text-xs text-stark-dim uppercase">Total ${days}d</div>
+                <div class="text-2xl font-bold text-stark-gold">$ ${parseFloat(data.total_usd || 0).toFixed(4)}</div>
+              </div>
+              <div>
+                <div class="text-xs text-stark-dim uppercase">Médio/dia</div>
+                <div class="text-2xl font-bold text-stark-blue">$ ${(parseFloat(data.total_usd || 0) / days).toFixed(4)}</div>
+              </div>
+              <div>
+                <div class="text-xs text-stark-dim uppercase">Estimativa/mês</div>
+                <div class="text-2xl font-bold text-stark-green">$ ${((parseFloat(data.total_usd || 0) / days) * 30).toFixed(2)}</div>
+              </div>
+            </div>
+          `;
+        }
+
+        const tableContainer = document.getElementById('costs-table');
+        if (tableContainer) {
+          if (!data.breakdown || data.breakdown.length === 0) {
+            tableContainer.innerHTML = '<p class="p-6 text-stark-dim text-center">Sem dados de custo ainda. Cost tracking começa a registrar a partir da próxima chamada da API.</p>';
+            return;
+          }
+          tableContainer.innerHTML = `
+            <table class="w-full text-xs">
+              <thead class="bg-stark-bg/50 text-stark-dim uppercase">
+                <tr>
+                  <th class="text-left p-3">Dia</th>
+                  <th class="text-left p-3">Modelo</th>
+                  <th class="text-right p-3">Tokens In</th>
+                  <th class="text-right p-3">Tokens Out</th>
+                  <th class="text-right p-3">Chamadas</th>
+                  <th class="text-right p-3">Custo USD</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${data.breakdown.map(r => `
+                  <tr class="border-t border-stark-border/30 hover:bg-stark-blue/5">
+                    <td class="p-3 text-white">${new Date(r.dia).toLocaleDateString('pt-BR')}</td>
+                    <td class="p-3 text-stark-blue font-mono">${r.model}</td>
+                    <td class="p-3 text-right text-stark-dim">${parseInt(r.tokens_in).toLocaleString('pt-BR')}</td>
+                    <td class="p-3 text-right text-stark-dim">${parseInt(r.tokens_out).toLocaleString('pt-BR')}</td>
+                    <td class="p-3 text-right text-stark-dim">${r.chamadas}</td>
+                    <td class="p-3 text-right text-stark-gold font-bold">$ ${parseFloat(r.custo_usd).toFixed(4)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `;
+        }
+      } catch (err) {
+        document.getElementById('costs-summary').innerHTML = `<p class="text-stark-red">Erro: ${err.message}</p>`;
+      }
+    }
+
+    // ============================================
+    // v6.0 — INCIDENTS / HEALTH
+    // ============================================
+    async function loadIncidents(hours) {
+      try {
+        const data = await api(`/dashboard/incidents?hours=${hours}`);
+        const summaryContainer = document.getElementById('incidents-summary');
+        if (summaryContainer) {
+          summaryContainer.innerHTML = `
+            <div class="bg-stark-card border border-stark-border rounded p-3 text-center">
+              <div class="text-2xl font-bold text-white">${data.total || 0}</div>
+              <div class="text-xs text-stark-dim uppercase">Total</div>
+            </div>
+            <div class="bg-stark-card border border-stark-red rounded p-3 text-center">
+              <div class="text-2xl font-bold text-stark-red">${data.critical || 0}</div>
+              <div class="text-xs text-stark-dim uppercase">Críticos</div>
+            </div>
+            <div class="bg-stark-card border border-stark-blue rounded p-3 text-center">
+              <div class="text-2xl font-bold text-stark-blue">${data.pending || 0}</div>
+              <div class="text-xs text-stark-dim uppercase">Pendentes</div>
+            </div>
+            <div class="bg-stark-card border border-stark-green rounded p-3 text-center">
+              <div class="text-2xl font-bold text-stark-green">${(data.total || 0) - (data.pending || 0)}</div>
+              <div class="text-xs text-stark-dim uppercase">Resolvidos</div>
+            </div>
+          `;
+        }
+
+        const listContainer = document.getElementById('incidents-list');
+        if (listContainer) {
+          if (!data.incidents || data.incidents.length === 0) {
+            listContainer.innerHTML = '<p class="text-stark-green text-center py-8">✅ Nenhum incidente nos últimos ' + hours + 'h</p>';
+            return;
+          }
+          const sevColors = { critical: 'red', error: 'red', warn: 'gold', info: 'blue' };
+          listContainer.innerHTML = data.incidents.map(i => {
+            const c = sevColors[i.severity] || 'dim';
+            return `
+              <div class="bg-stark-card border-l-4 border-stark-${c} border-y border-r border-stark-border rounded-r p-3">
+                <div class="flex justify-between items-start gap-3">
+                  <div class="flex-1">
+                    <div class="flex items-center gap-2 mb-1">
+                      <span class="text-xs px-2 py-0.5 bg-stark-${c}/20 text-stark-${c} rounded uppercase font-bold">${i.severity}</span>
+                      <span class="text-xs text-stark-dim uppercase">${i.component}</span>
+                      ${i.notified ? '<span class="text-xs text-stark-green">✓ notificado</span>' : ''}
+                      ${i.resolved_at ? '<span class="text-xs text-stark-green">✓ resolvido</span>' : ''}
+                    </div>
+                    <div class="text-sm text-white">${escapeHtml(i.message.substring(0, 300))}</div>
+                    <div class="text-xs text-stark-dim mt-1">${new Date(i.created_at).toLocaleString('pt-BR')}</div>
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join('');
+        }
+      } catch (err) {
+        document.getElementById('incidents-list').innerHTML = `<p class="text-stark-red">Erro: ${err.message}</p>`;
+      }
+    }
+
+    function escapeHtml(s) {
+      return (s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
 
     // ============================================
