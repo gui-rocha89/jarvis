@@ -6,7 +6,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import { pool } from './database.mjs';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
-const PROFILE_MODEL = process.env.MEMORY_MODEL || 'claude-haiku-3-5-20241022';
+// Default = Sonnet 4.5 (melhor classificação de contexto). MEMORY_MODEL no .env sobrescreve.
+const PROFILE_MODEL = process.env.MEMORY_MODEL || 'claude-sonnet-4-5';
 
 /**
  * Sintetiza um perfil a partir das memórias de uma entidade

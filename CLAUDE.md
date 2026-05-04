@@ -913,8 +913,10 @@ Consulte `.env.example` para a lista completa. Variáveis organizadas por domín
 | Variável | Exemplo | Uso |
 |----------|---------|-----|
 | `AI_MODEL` | claude-sonnet-4-6 | Respostas padrão |
-| `AI_MODEL_STRONG` | claude-opus-4-0-20250514 | Queries complexas |
-| `MEMORY_MODEL` | claude-3-haiku-20240307 | Extração de fatos |
+| `AI_MODEL_STRONG` | claude-opus-4-6 | Queries complexas |
+| `MEMORY_MODEL` | claude-sonnet-4-5 | Extração de fatos + perfis (Sonnet pra inteligência real, sem economizar) |
+
+> ⚠️ **Modelos deprecados — NUNCA usar:** `claude-3-haiku-20240307`, `claude-3-sonnet-20240229`, `claude-3-opus-20240229`. A Anthropic remove modelos antigos e o Jarvis começa a retornar 404 silenciosamente em background.
 
 ### 13.4 WhatsApp
 

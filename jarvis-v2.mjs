@@ -135,7 +135,7 @@ async function validateHomework(text, isAudio = false) {
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 
     const response = await anthropic.messages.create({
-      model: process.env.MEMORY_MODEL || 'claude-haiku-3-5-20241022',
+      model: process.env.MEMORY_MODEL || 'claude-sonnet-4-5',
       max_tokens: 10,
       system: `Você é um classificador. Analise se o texto é uma INSTRUÇÃO DIRETA do dono da empresa para o assistente de IA (Jarvis), ou se é apenas conversa casual, transcrição de áudio de terceiros, ou conteúdo genérico.
 
