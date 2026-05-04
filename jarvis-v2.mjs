@@ -174,6 +174,8 @@ async function sendText(jid, text, quotedMsg) {
     if (quotedMsg) msgPayload.quoted = quotedMsg;
     const result = await sock.sendMessage(jid, msgPayload);
     if (result?.key?.id) sentByBot.add(result.key.id);
+    // Timestamp da última msg enviada com sucesso (usado pelo health check pra confirmar conectividade real)
+    global.__jarvisLastSentAt = Date.now();
     await sock.sendPresenceUpdate('paused', jid).catch(() => {});
     if (sentByBot.size > 200) {
       const arr = [...sentByBot];
@@ -3694,6 +3696,7 @@ async function startWhatsApp() {
     }
     if (connection === 'open') {
       connectionStatus = 'connected';
+      global.__jarvisConnectionStatus = 'connected'; // expõe pra health check
       // Salvar JID do bot para identificação de mensagens próprias
       const botJid = sock.user?.id || '';
       CONFIG.BOT_JID = botJid;
@@ -3810,6 +3813,7 @@ async function startWhatsApp() {
     }
     if (connection === 'close') {
       connectionStatus = 'reconnecting';
+      global.__jarvisConnectionStatus = 'reconnecting';
       const code = lastDisconnect?.error?.output?.statusCode;
       console.log('[JARVIS] Conexao fechou, codigo:', code);
       if (code !== DisconnectReason.loggedOut) {
@@ -3817,6 +3821,7 @@ async function startWhatsApp() {
         setTimeout(() => startWhatsApp(), 5000);
       } else {
         connectionStatus = 'logged_out';
+        global.__jarvisConnectionStatus = 'logged_out';
         console.log('[JARVIS] Deslogado!');
       }
     }
