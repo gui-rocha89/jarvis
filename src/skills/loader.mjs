@@ -330,6 +330,33 @@ function resolveCustomFields({ cliente, urgencia, tier, tipo_demanda }) {
 // ============================================
 export const JARVIS_TOOLS = [
   {
+    name: 'consultar_conhecimento',
+    description: 'CONSULTAR a base de conhecimento estruturada (Knowledge Graph) sobre uma entidade — cliente, sub-marca, projeto, ferramenta, evento, campanha, processo ou pessoa. USE SEMPRE ANTES de afirmar que não conhece algo. Retorna nome oficial, tipo, descrição, aliases e metadata.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        termo: { type: 'string', description: 'Nome ou referência da entidade buscada (ex: "Stream Health", "Medical Planner", "Bruna")' },
+        tipo: { type: 'string', enum: ['cliente', 'sub_marca', 'projeto', 'ferramenta_interna', 'evento', 'campanha', 'processo', 'decisao', 'pessoa_externa', 'pessoa_equipe'], description: 'Filtrar por tipo (opcional). Se omitido, busca em todos.' },
+      },
+      required: ['termo'],
+    },
+  },
+  {
+    name: 'registrar_conhecimento',
+    description: 'REGISTRAR algo novo no Knowledge Graph quando alguém TE EXPLICAR o que é uma entidade. Use quando o usuário disser frases como "X é nosso projeto Y", "X é sub-marca", "X foi descontinuado", etc. Cria ou atualiza a entity. Idempotente: se já existe, mescla aliases e atualiza descrição.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        nome: { type: 'string', description: 'Nome oficial da entidade' },
+        tipo: { type: 'string', enum: ['cliente', 'sub_marca', 'projeto', 'ferramenta_interna', 'evento', 'campanha', 'processo', 'decisao', 'pessoa_externa', 'pessoa_equipe'], description: 'Tipo da entidade' },
+        descricao: { type: 'string', description: 'O que é, contexto, status, relevância (1-3 frases)' },
+        aliases: { type: 'array', items: { type: 'string' }, description: 'Outros nomes/sinônimos pelos quais a entidade pode ser chamada' },
+        status: { type: 'string', enum: ['ativo', 'deprecated'], description: 'Status atual. Default: ativo' },
+      },
+      required: ['nome', 'tipo'],
+    },
+  },
+  {
     name: 'agendar_captacao',
     description: 'Agendar uma captacao no Calendario de Captacao do Asana e Google Calendar.',
     input_schema: {
@@ -553,12 +580,11 @@ export const JARVIS_TOOLS = [
   },
   {
     name: 'relatorio_ads',
-    description: 'Gerar relatório de desempenho de campanhas do Meta Ads com métricas reais (CPC, CTR, CPM, impressões, cliques, gasto, alcance). REGRA CRÍTICA: se a pergunta é sobre UM CLIENTE ESPECÍFICO (ex: "como foi o tráfego da Medical Planner?"), SEMPRE passe o parâmetro "cliente" pra filtrar. NUNCA use sem filtro quando o usuário perguntou sobre um cliente — vai vazar dados de outros clientes.',
+    description: 'Gerar relatório de desempenho de campanhas do Meta Ads com métricas reais (CPC, CTR, CPM, impressões, cliques, gasto, alcance). USE SEMPRE antes de opinar sobre performance.',
     input_schema: {
       type: 'object',
       properties: {
-        campanha_id: { type: 'string', description: 'ID da campanha específica (opcional)' },
-        cliente: { type: 'string', description: 'Nome do cliente para FILTRAR campanhas (ex: "medical planner", "rossato"). USE SEMPRE quando a pergunta for sobre um cliente específico — evita misturar dados de outros clientes.' },
+        campanha_id: { type: 'string', description: 'ID da campanha específica (opcional — se omitido, mostra métricas gerais da conta)' },
         periodo: { type: 'string', enum: ['hoje', 'ontem', '7dias', '30dias', 'mes'], description: 'Período do relatório' },
       },
       required: ['periodo'],
@@ -911,6 +937,64 @@ function fuzzyMatch(a, b) {
 
 export async function executeJarvisTool(toolName, input, context = {}) {
   console.log(`[TOOL] Executando: ${toolName}`, JSON.stringify(input));
+
+  // === KNOWLEDGE GRAPH (v6.0) ===
+  if (toolName === 'consultar_conhecimento') {
+    if (!input.termo) return { error: 'termo é obrigatório' };
+    try {
+      const { findEntity, searchEntities } = await import('../database.mjs');
+      const exact = await findEntity(input.termo, { tipo: input.tipo });
+      if (exact) {
+        return {
+          encontrado: true,
+          entidade: {
+            nome: exact.nome,
+            tipo: exact.tipo,
+            descricao: exact.descricao || '(sem descrição)',
+            aliases: exact.aliases || [],
+            status: exact.status,
+            metadata: exact.metadata || {},
+          },
+        };
+      }
+      // Não achou exato — busca similares
+      const similar = await searchEntities(input.termo, { tipo: input.tipo, limit: 5 });
+      return {
+        encontrado: false,
+        termo_buscado: input.termo,
+        similares: similar.map(s => ({ nome: s.nome, tipo: s.tipo, descricao: (s.descricao || '').substring(0, 100) })),
+        sugestao: similar.length === 0
+          ? 'Nada encontrado. Se o usuário explicar o que é, use registrar_conhecimento pra salvar.'
+          : 'Achei coisas parecidas. Pergunte ao usuário se é alguma dessas, ou use registrar_conhecimento pra criar nova.',
+      };
+    } catch (err) {
+      return { error: `Erro ao consultar: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'registrar_conhecimento') {
+    if (!input.nome || !input.tipo) return { error: 'nome e tipo são obrigatórios' };
+    try {
+      const { upsertEntity } = await import('../database.mjs');
+      const entity = await upsertEntity({
+        nome: input.nome,
+        tipo: input.tipo,
+        descricao: input.descricao || null,
+        aliases: input.aliases || [],
+        status: input.status || 'ativo',
+        source: 'tool_registrar_conhecimento',
+      });
+      return {
+        sucesso: true,
+        id: entity.id,
+        nome: entity.nome,
+        tipo: entity.tipo,
+        mensagem: `Entidade "${entity.nome}" (${entity.tipo}) registrada/atualizada no Knowledge Graph.`,
+      };
+    } catch (err) {
+      return { error: `Erro ao registrar: ${err.message}` };
+    }
+  }
 
   if (toolName === 'agendar_captacao') {
     const taskData = { name: input.nome, projects: [ASANA_PROJECTS.CAPTACAO], due_on: input.data };
@@ -1511,69 +1595,20 @@ export async function executeJarvisTool(toolName, input, context = {}) {
         // Relatório de campanha específica
         const insights = await getCampaignInsights(input.campanha_id, input.periodo);
         return { sucesso: true, tipo: 'campanha', ...insights };
-      }
-
-      // BUG 2 FIX: Se user perguntou de cliente específico, FILTRAR campanhas pelo nome
-      // Antes: cuspia conta inteira misturando clientes (vazou Stream Health no contexto Medical Planner)
-      const todasCampanhas = await listCampaigns();
-      let campanhasFiltradas = todasCampanhas;
-      let clienteFiltrado = null;
-
-      if (input.cliente) {
-        const filtro = input.cliente.toLowerCase().trim();
-        campanhasFiltradas = todasCampanhas.filter(c =>
-          (c.name || c.nome || '').toLowerCase().includes(filtro)
-        );
-        clienteFiltrado = input.cliente;
-      }
-
-      // Se filtrou por cliente: agrega insights APENAS das campanhas dele
-      if (clienteFiltrado) {
-        if (campanhasFiltradas.length === 0) {
-          return {
-            sucesso: true,
-            tipo: 'cliente_sem_campanhas',
-            cliente: clienteFiltrado,
-            mensagem: `Nenhuma campanha encontrada para "${clienteFiltrado}". Verifique se o nome do cliente está correto ou se ele tem campanhas ativas.`,
-            sugestao: 'Use listar_paginas_ads pra ver os clientes disponíveis.',
-          };
-        }
-        // Pega insights de cada campanha do cliente em paralelo (limite 10)
-        const insightsList = await Promise.all(
-          campanhasFiltradas.slice(0, 10).map(c =>
-            getCampaignInsights(c.id, input.periodo).catch(() => null)
-          )
-        );
-        // Agrega métricas
-        const agregado = insightsList.filter(Boolean).reduce((acc, i) => {
-          acc.impressoes += parseInt(i.impressoes || i.impressions || 0);
-          acc.alcance += parseInt(i.alcance || i.reach || 0);
-          acc.cliques += parseInt(i.cliques || i.clicks || 0);
-          acc.gasto += parseFloat(i.gasto || i.spend || 0);
-          return acc;
-        }, { impressoes: 0, alcance: 0, cliques: 0, gasto: 0 });
+      } else {
+        // Relatório geral da conta + lista de campanhas
+        const [insights, campanhas] = await Promise.all([
+          getAccountInsights(input.periodo),
+          listCampaigns(),
+        ]);
         return {
           sucesso: true,
-          tipo: 'cliente',
-          cliente: clienteFiltrado,
-          periodo: input.periodo,
-          total_campanhas: campanhasFiltradas.length,
-          campanhas: campanhasFiltradas.slice(0, 10).map(c => ({ id: c.id, nome: c.name || c.nome, status: c.status })),
-          metricas_agregadas: agregado,
-          aviso_filtro: `Filtrado APENAS por "${clienteFiltrado}". Métricas NÃO incluem outros clientes.`,
+          tipo: 'conta_geral',
+          ...insights,
+          campanhas: campanhas.slice(0, 10),
+          total_campanhas: campanhas.length,
         };
       }
-
-      // Sem filtro: relatório geral (com aviso explícito que está misturando)
-      const insights = await getAccountInsights(input.periodo);
-      return {
-        sucesso: true,
-        tipo: 'conta_geral',
-        aviso: 'ATENÇÃO: este é o relatório AGREGADO da conta inteira (todos os clientes misturados). Pra dados de um cliente específico, chame relatorio_ads com parâmetro "cliente".',
-        ...insights,
-        campanhas: todasCampanhas.slice(0, 10),
-        total_campanhas: todasCampanhas.length,
-      };
     } catch (err) {
       return { error: `Erro ao gerar relatório: ${err.message}` };
     }
