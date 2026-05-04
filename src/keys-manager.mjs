@@ -203,5 +203,253 @@ export async function listKeys() {
   });
 }
 
+// ============================================
+// TESTE DE CONECTIVIDADE
+// Faz uma chamada real à API correspondente pra confirmar que a chave é válida.
+// Retorna { ok: bool, message: string, latency_ms: number, details?: any }
+// ============================================
+
+const TEST_TIMEOUT_MS = 10000;
+
+async function fetchWithTimeout(url, opts = {}, timeoutMs = TEST_TIMEOUT_MS) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } finally { clearTimeout(t); }
+}
+
+// Testers por chave — cada um faz 1 chamada barata pra validar
+const TESTERS = {
+  ANTHROPIC_API_KEY: async () => {
+    const k = process.env.ANTHROPIC_API_KEY;
+    if (!k) return { ok: false, message: 'Chave vazia' };
+    const r = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': k, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
+    });
+    if (r.ok) return { ok: true, message: 'Chave válida — Claude API respondeu' };
+    const body = await r.text();
+    if (r.status === 401) return { ok: false, message: 'Chave inválida (401 Unauthorized)' };
+    if (r.status === 429) return { ok: true, message: 'Chave válida (rate-limited mas autenticou)', warn: true };
+    return { ok: false, message: `Erro ${r.status}: ${body.substring(0, 200)}` };
+  },
+
+  OPENAI_API_KEY: async () => {
+    const k = process.env.OPENAI_API_KEY;
+    if (!k) return { ok: false, message: 'Chave vazia' };
+    const r = await fetchWithTimeout('https://api.openai.com/v1/models', {
+      headers: { 'Authorization': `Bearer ${k}` },
+    });
+    if (r.ok) {
+      const data = await r.json();
+      return { ok: true, message: `Chave válida — ${data.data?.length || 0} modelos disponíveis` };
+    }
+    if (r.status === 401) return { ok: false, message: 'Chave inválida (401 Unauthorized)' };
+    return { ok: false, message: `Erro ${r.status}` };
+  },
+
+  ELEVENLABS_API_KEY: async () => {
+    const k = process.env.ELEVENLABS_API_KEY;
+    if (!k) return { ok: false, message: 'Chave vazia' };
+    const r = await fetchWithTimeout('https://api.elevenlabs.io/v1/user', {
+      headers: { 'xi-api-key': k },
+    });
+    if (r.ok) {
+      const data = await r.json();
+      const tier = data.subscription?.tier || 'desconhecido';
+      const usage = data.subscription?.character_count || 0;
+      const limit = data.subscription?.character_limit || 0;
+      return { ok: true, message: `Tier: ${tier} — ${usage}/${limit} chars usados` };
+    }
+    if (r.status === 401) return { ok: false, message: 'Chave inválida (401 Unauthorized)' };
+    return { ok: false, message: `Erro ${r.status}` };
+  },
+
+  ELEVENLABS_VOICE_ID: async () => {
+    const id = process.env.ELEVENLABS_VOICE_ID;
+    const k = process.env.ELEVENLABS_API_KEY;
+    if (!id) return { ok: false, message: 'Voice ID vazio' };
+    if (!k) return { ok: false, message: 'Precisa de ELEVENLABS_API_KEY pra testar' };
+    const r = await fetchWithTimeout(`https://api.elevenlabs.io/v1/voices/${id}`, {
+      headers: { 'xi-api-key': k },
+    });
+    if (r.ok) {
+      const data = await r.json();
+      return { ok: true, message: `Voz: ${data.name || id}` };
+    }
+    if (r.status === 404) return { ok: false, message: 'Voice ID não encontrado nesta conta' };
+    return { ok: false, message: `Erro ${r.status}` };
+  },
+
+  ASANA_PAT: async () => {
+    const k = process.env.ASANA_PAT;
+    if (!k) return { ok: false, message: 'Token vazio' };
+    const r = await fetchWithTimeout('https://app.asana.com/api/1.0/users/me', {
+      headers: { 'Authorization': `Bearer ${k}` },
+    });
+    if (r.ok) {
+      const data = await r.json();
+      return { ok: true, message: `Conectado como: ${data.data?.name || data.data?.email || 'desconhecido'}` };
+    }
+    if (r.status === 401) return { ok: false, message: 'Token inválido ou expirado (401)' };
+    return { ok: false, message: `Erro ${r.status}` };
+  },
+
+  ASANA_WORKSPACE: async () => {
+    const ws = process.env.ASANA_WORKSPACE;
+    const k = process.env.ASANA_PAT;
+    if (!ws) return { ok: false, message: 'Workspace GID vazio' };
+    if (!k) return { ok: false, message: 'Precisa de ASANA_PAT pra testar' };
+    const r = await fetchWithTimeout(`https://app.asana.com/api/1.0/workspaces/${ws}`, {
+      headers: { 'Authorization': `Bearer ${k}` },
+    });
+    if (r.ok) {
+      const data = await r.json();
+      return { ok: true, message: `Workspace: ${data.data?.name || ws}` };
+    }
+    if (r.status === 404) return { ok: false, message: 'Workspace não encontrado' };
+    return { ok: false, message: `Erro ${r.status}` };
+  },
+
+  META_ACCESS_TOKEN: async () => {
+    const k = process.env.META_ACCESS_TOKEN;
+    if (!k) return { ok: false, message: 'Token vazio' };
+    const v = process.env.META_API_VERSION || 'v25.0';
+    const r = await fetchWithTimeout(`https://graph.facebook.com/${v}/me?access_token=${encodeURIComponent(k)}`);
+    const data = await r.json().catch(() => ({}));
+    if (r.ok && data.id) {
+      // Tenta descobrir se é System User Token (não expira) ou User Token
+      const debug = await fetchWithTimeout(`https://graph.facebook.com/${v}/debug_token?input_token=${encodeURIComponent(k)}&access_token=${encodeURIComponent(k)}`);
+      let tipo = 'desconhecido';
+      let expira = null;
+      if (debug.ok) {
+        const d = await debug.json();
+        tipo = d.data?.type || 'desconhecido';
+        expira = d.data?.expires_at;
+      }
+      const expiraStr = expira === 0 ? 'NUNCA (System User)' : (expira ? new Date(expira * 1000).toLocaleString('pt-BR') : 'desconhecido');
+      return { ok: true, message: `Conta: ${data.name || data.id} | Tipo: ${tipo} | Expira: ${expiraStr}` };
+    }
+    if (data.error) return { ok: false, message: `${data.error.message} (code ${data.error.code})` };
+    return { ok: false, message: `Erro ${r.status}` };
+  },
+
+  META_AD_ACCOUNT_ID: async () => {
+    const id = process.env.META_AD_ACCOUNT_ID;
+    const k = process.env.META_ACCESS_TOKEN;
+    if (!id) return { ok: false, message: 'Ad Account ID vazio' };
+    if (!k) return { ok: false, message: 'Precisa de META_ACCESS_TOKEN pra testar' };
+    const v = process.env.META_API_VERSION || 'v25.0';
+    const cleanId = id.startsWith('act_') ? id : `act_${id}`;
+    const r = await fetchWithTimeout(`https://graph.facebook.com/${v}/${cleanId}?fields=name,account_status,currency&access_token=${encodeURIComponent(k)}`);
+    const data = await r.json().catch(() => ({}));
+    if (r.ok && data.name) {
+      const status = data.account_status === 1 ? 'ATIVA' : 'INATIVA';
+      return { ok: true, message: `Conta: ${data.name} | Status: ${status} | Moeda: ${data.currency}` };
+    }
+    return { ok: false, message: data.error?.message || `Erro ${r.status}` };
+  },
+
+  META_PAGE_ID: async () => {
+    const id = process.env.META_PAGE_ID;
+    const k = process.env.META_ACCESS_TOKEN;
+    if (!id) return { ok: false, message: 'Page ID vazio' };
+    if (!k) return { ok: false, message: 'Precisa de META_ACCESS_TOKEN pra testar' };
+    const v = process.env.META_API_VERSION || 'v25.0';
+    const r = await fetchWithTimeout(`https://graph.facebook.com/${v}/${id}?fields=name,fan_count&access_token=${encodeURIComponent(k)}`);
+    const data = await r.json().catch(() => ({}));
+    if (r.ok && data.name) {
+      return { ok: true, message: `Página: ${data.name}${data.fan_count ? ` (${data.fan_count} seguidores)` : ''}` };
+    }
+    return { ok: false, message: data.error?.message || `Erro ${r.status}` };
+  },
+
+  META_PIXEL_ID: async () => {
+    const id = process.env.META_PIXEL_ID;
+    const k = process.env.META_ACCESS_TOKEN;
+    if (!id) return { ok: false, message: 'Pixel ID vazio' };
+    if (!k) return { ok: false, message: 'Precisa de META_ACCESS_TOKEN pra testar' };
+    const v = process.env.META_API_VERSION || 'v25.0';
+    const r = await fetchWithTimeout(`https://graph.facebook.com/${v}/${id}?fields=name,is_active&access_token=${encodeURIComponent(k)}`);
+    const data = await r.json().catch(() => ({}));
+    if (r.ok && data.name) {
+      return { ok: true, message: `Pixel: ${data.name} | Ativo: ${data.is_active ? 'SIM' : 'NÃO'}` };
+    }
+    return { ok: false, message: data.error?.message || `Erro ${r.status}` };
+  },
+
+  IMAP_PASSWORD: async () => {
+    const host = process.env.IMAP_HOST;
+    const user = process.env.IMAP_USER;
+    const pass = process.env.IMAP_PASSWORD;
+    const port = parseInt(process.env.IMAP_PORT || '993');
+    if (!host || !user || !pass) return { ok: false, message: 'IMAP_HOST/USER/PASSWORD precisam estar configurados' };
+    try {
+      const { ImapFlow } = await import('imapflow');
+      const client = new ImapFlow({ host, port, secure: true, auth: { user, pass }, logger: false });
+      await client.connect();
+      await client.logout();
+      return { ok: true, message: `Conectado em ${host} como ${user}` };
+    } catch (e) {
+      return { ok: false, message: `Falhou: ${e.message}` };
+    }
+  },
+
+  EMAIL_PASSWORD: async () => {
+    const host = process.env.EMAIL_IMAP_HOST;
+    const user = process.env.EMAIL_USER;
+    const pass = process.env.EMAIL_PASSWORD;
+    const port = parseInt(process.env.EMAIL_IMAP_PORT || '993');
+    if (!host || !user || !pass) return { ok: false, message: 'EMAIL_IMAP_HOST/USER/PASSWORD precisam estar configurados' };
+    try {
+      const { ImapFlow } = await import('imapflow');
+      const client = new ImapFlow({ host, port, secure: true, auth: { user, pass }, logger: false });
+      await client.connect();
+      await client.logout();
+      return { ok: true, message: `Conectado em ${host} como ${user}` };
+    } catch (e) {
+      return { ok: false, message: `Falhou: ${e.message}` };
+    }
+  },
+
+  // Validação de formato (sem chamar API externa)
+  GROUP_TAREFAS: async () => {
+    const v = process.env.GROUP_TAREFAS;
+    if (!v) return { ok: false, message: 'JID vazio' };
+    if (!/@g\.us$/.test(v)) return { ok: false, message: 'Formato inválido — deve terminar em @g.us' };
+    return { ok: true, message: 'Formato válido (@g.us)' };
+  },
+  GROUP_GALAXIAS: async () => {
+    const v = process.env.GROUP_GALAXIAS;
+    if (!v) return { ok: false, message: 'JID vazio' };
+    if (!/@g\.us$/.test(v)) return { ok: false, message: 'Formato inválido — deve terminar em @g.us' };
+    return { ok: true, message: 'Formato válido (@g.us)' };
+  },
+  GUI_JID: async () => {
+    const v = process.env.GUI_JID;
+    if (!v) return { ok: false, message: 'JID vazio' };
+    if (!/@s\.whatsapp\.net$/.test(v)) return { ok: false, message: 'Formato inválido — deve terminar em @s.whatsapp.net' };
+    return { ok: true, message: 'Formato válido (@s.whatsapp.net)' };
+  },
+};
+
+export const TESTABLE_KEYS = Object.keys(TESTERS);
+
+export async function testKey(keyName) {
+  if (!KEY_NAMES.includes(keyName)) throw new Error(`Chave "${keyName}" não está na whitelist`);
+  if (!TESTERS[keyName]) {
+    return { ok: null, message: 'Chave configurável mas sem teste de conectividade implementado', untestable: true };
+  }
+  const start = Date.now();
+  try {
+    const result = await TESTERS[keyName]();
+    return { ...result, latency_ms: Date.now() - start, tested_at: new Date().toISOString() };
+  } catch (e) {
+    return { ok: false, message: `Erro inesperado: ${e.message}`, latency_ms: Date.now() - start, tested_at: new Date().toISOString() };
+  }
+}
+
 // Para testes
 export const _internal = { encrypt, decrypt };

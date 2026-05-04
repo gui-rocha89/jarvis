@@ -1410,8 +1410,9 @@
         <p class="text-xs text-stark-dim mt-2 italic">⚠️ Após salvar, alguns SDKs (Anthropic, OpenAI) precisam de restart pra recarregar. Use o botão "Reiniciar Jarvis" abaixo quando necessário.</p>
       </div>
 
-      <div class="flex gap-2 mb-2">
+      <div class="flex gap-2 mb-2 flex-wrap">
         <button onclick="loadKeys()" class="px-4 py-2 bg-stark-blue/20 border border-stark-blue text-stark-blue rounded text-sm hover:bg-stark-blue/30">🔄 Recarregar</button>
+        <button onclick="testAllKeys()" class="px-4 py-2 bg-stark-gold/20 border border-stark-gold text-stark-gold rounded text-sm hover:bg-stark-gold/30" title="Testa conectividade de todas as chaves em paralelo">🩺 Testar todas</button>
         <button onclick="restartJarvis()" class="px-4 py-2 bg-stark-red/20 border border-stark-red text-stark-red rounded text-sm hover:bg-stark-red/30">⚡ Reiniciar Jarvis</button>
       </div>
 
@@ -1937,23 +1938,28 @@
             </div>
             <div class="divide-y divide-stark-border">
               ${items.map(k => `
-                <div class="px-4 py-3 flex items-center justify-between gap-4 hover:bg-white/[0.02]">
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2 flex-wrap">
-                      <span class="text-sm font-mono text-white">${escapeHtml(k.key)}</span>
-                      ${sourceBadge(k.source)}
-                      ${k.sensitive ? '<span class="text-[10px] px-1.5 py-0.5 bg-stark-red/20 text-stark-red rounded">SENSÍVEL</span>' : ''}
+                <div class="px-4 py-3 hover:bg-white/[0.02]" id="key-row-${k.key}">
+                  <div class="flex items-center justify-between gap-4">
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <span class="text-sm font-mono text-white">${escapeHtml(k.key)}</span>
+                        ${sourceBadge(k.source)}
+                        ${k.sensitive ? '<span class="text-[10px] px-1.5 py-0.5 bg-stark-red/20 text-stark-red rounded">SENSÍVEL</span>' : ''}
+                        <span id="key-test-badge-${k.key}" class="text-[10px] hidden"></span>
+                      </div>
+                      <div class="text-xs text-stark-dim mt-0.5">${escapeHtml(k.label)}</div>
+                      ${k.preview ? `<div class="text-xs font-mono text-stark-gold mt-1">${escapeHtml(k.preview)}</div>` : '<div class="text-xs text-stark-red mt-1 italic">não configurada</div>'}
                     </div>
-                    <div class="text-xs text-stark-dim mt-0.5">${escapeHtml(k.label)}</div>
-                    ${k.preview ? `<div class="text-xs font-mono text-stark-gold mt-1">${escapeHtml(k.preview)}</div>` : '<div class="text-xs text-stark-red mt-1 italic">não configurada</div>'}
+                    <div class="flex gap-2 flex-shrink-0 flex-wrap justify-end">
+                      ${k.configured ? `<button onclick="testKey('${k.key}')" class="px-3 py-1.5 bg-stark-gold/20 border border-stark-gold text-stark-gold text-xs rounded hover:bg-stark-gold/30" title="Faz uma chamada real à API pra verificar se a chave funciona">Testar</button>` : ''}
+                      <button onclick='openKeyEditor(${JSON.stringify({ key: k.key, label: k.label, hint: k.hint || "" }).replace(/'/g, "&apos;")})'
+                        class="px-3 py-1.5 bg-stark-blue/20 border border-stark-blue text-stark-blue text-xs rounded hover:bg-stark-blue/30">
+                        ${k.source === 'database' ? 'Substituir' : k.configured ? 'Substituir' : 'Adicionar'}
+                      </button>
+                      ${k.source === 'database' ? `<button onclick="deleteKey('${k.key}')" class="px-3 py-1.5 bg-stark-red/20 border border-stark-red text-stark-red text-xs rounded hover:bg-stark-red/30" title="Remove do banco. Após restart, volta a usar valor do .env">Remover</button>` : ''}
+                    </div>
                   </div>
-                  <div class="flex gap-2 flex-shrink-0">
-                    <button onclick='openKeyEditor(${JSON.stringify({ key: k.key, label: k.label, hint: k.hint || "" }).replace(/'/g, "&apos;")})'
-                      class="px-3 py-1.5 bg-stark-blue/20 border border-stark-blue text-stark-blue text-xs rounded hover:bg-stark-blue/30">
-                      ${k.source === 'database' ? 'Substituir' : k.configured ? 'Substituir' : 'Adicionar'}
-                    </button>
-                    ${k.source === 'database' ? `<button onclick="deleteKey('${k.key}')" class="px-3 py-1.5 bg-stark-red/20 border border-stark-red text-stark-red text-xs rounded hover:bg-stark-red/30" title="Remove do banco. Após restart, volta a usar valor do .env">Remover</button>` : ''}
-                  </div>
+                  <div id="key-test-result-${k.key}" class="mt-2 hidden"></div>
                 </div>
               `).join('')}
             </div>
@@ -2018,6 +2024,78 @@
         loadKeys();
       } catch (err) {
         notify('Erro: ' + err.message, 'err');
+      }
+    }
+
+    function renderTestResult(keyName, result) {
+      const badge = document.getElementById(`key-test-badge-${keyName}`);
+      const box = document.getElementById(`key-test-result-${keyName}`);
+      if (!badge || !box) return;
+      badge.classList.remove('hidden');
+      box.classList.remove('hidden');
+      if (result.untestable) {
+        badge.className = 'text-[10px] px-1.5 py-0.5 bg-stark-dim/20 text-stark-dim rounded';
+        badge.textContent = '— SEM TESTE';
+        box.innerHTML = `<div class="text-xs text-stark-dim italic">${escapeHtml(result.message || '')}</div>`;
+        return;
+      }
+      if (result.ok) {
+        badge.className = 'text-[10px] px-1.5 py-0.5 bg-stark-green/20 text-stark-green rounded font-bold';
+        badge.textContent = '✓ FUNCIONA';
+        box.innerHTML = `<div class="text-xs text-stark-green border-l-2 border-stark-green pl-2">
+          <strong>OK</strong> · ${escapeHtml(result.message || '')}
+          <span class="text-stark-dim ml-2">(${result.latency_ms}ms)</span>
+        </div>`;
+      } else {
+        badge.className = 'text-[10px] px-1.5 py-0.5 bg-stark-red/20 text-stark-red rounded font-bold';
+        badge.textContent = '✗ FALHOU';
+        box.innerHTML = `<div class="text-xs text-stark-red border-l-2 border-stark-red pl-2">
+          <strong>FALHOU</strong> · ${escapeHtml(result.message || '')}
+          <span class="text-stark-dim ml-2">(${result.latency_ms}ms)</span>
+        </div>`;
+      }
+    }
+
+    async function testKey(keyName) {
+      const badge = document.getElementById(`key-test-badge-${keyName}`);
+      const box = document.getElementById(`key-test-result-${keyName}`);
+      if (badge) {
+        badge.className = 'text-[10px] px-1.5 py-0.5 bg-stark-blue/20 text-stark-blue rounded';
+        badge.textContent = '⏳ TESTANDO...';
+        badge.classList.remove('hidden');
+      }
+      if (box) {
+        box.classList.remove('hidden');
+        box.innerHTML = '<div class="text-xs text-stark-blue">Testando conectividade...</div>';
+      }
+      try {
+        const res = await api(`/dashboard/keys/${encodeURIComponent(keyName)}/test`, { method: 'POST' });
+        const result = await res.json();
+        renderTestResult(keyName, result);
+      } catch (err) {
+        if (box) box.innerHTML = `<div class="text-xs text-stark-red">Erro: ${escapeHtml(err.message)}</div>`;
+        if (badge) {
+          badge.className = 'text-[10px] px-1.5 py-0.5 bg-stark-red/20 text-stark-red rounded';
+          badge.textContent = '✗ ERRO';
+        }
+      }
+    }
+
+    async function testAllKeys() {
+      notify('Testando todas as chaves em paralelo...', 'info');
+      try {
+        const res = await api('/dashboard/keys/test-all', { method: 'POST' });
+        const data = await res.json();
+        let okCount = 0, failCount = 0, untested = 0;
+        for (const r of data.results) {
+          renderTestResult(r.key, r);
+          if (r.untestable) untested++;
+          else if (r.ok) okCount++;
+          else failCount++;
+        }
+        notify(`Teste completo: ${okCount} OK · ${failCount} falharam · ${untested} sem teste`, failCount > 0 ? 'warn' : 'ok');
+      } catch (err) {
+        notify('Erro ao testar todas: ' + err.message, 'err');
       }
     }
 
