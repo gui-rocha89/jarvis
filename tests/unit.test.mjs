@@ -997,6 +997,13 @@ describe('Keys Manager (Sprint 10)', () => {
     delete process.env.GROUP_TAREFAS;
   });
 
+  it('TESTABLE_KEYS inclui modelos AI_MODEL/AI_MODEL_STRONG/MEMORY_MODEL', async () => {
+    const { TESTABLE_KEYS } = await import('../src/keys-manager.mjs');
+    assert.ok(TESTABLE_KEYS.includes('AI_MODEL'), 'AI_MODEL deve ser testável');
+    assert.ok(TESTABLE_KEYS.includes('AI_MODEL_STRONG'), 'AI_MODEL_STRONG deve ser testável');
+    assert.ok(TESTABLE_KEYS.includes('MEMORY_MODEL'), 'MEMORY_MODEL deve ser testável');
+  });
+
   it('testKey de GUI_JID valida formato @s.whatsapp.net', async () => {
     process.env.GUI_JID = '551199999999@s.whatsapp.net';
     const { testKey } = await import('../src/keys-manager.mjs');

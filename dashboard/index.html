@@ -1401,13 +1401,18 @@
     <div id="tab-keys" class="tab-content hidden space-y-6">
       <div class="border-2 border-stark-blue/50 bg-stark-blue/5 rounded-lg p-4">
         <h2 class="text-lg font-orbitron text-stark-blue mb-1">CHAVES & CONFIGURAÇÕES</h2>
-        <p class="text-xs text-stark-dim">Gerencie API keys (Anthropic, OpenAI, ElevenLabs, Asana, Meta) e configs sensíveis sem mexer em arquivos no servidor.</p>
-        <p class="text-xs text-stark-dim mt-2">
-          <span class="text-stark-green">●</span> <strong>env</strong> = vem do arquivo <code class="bg-stark-bg px-1 rounded">.env</code> ·
-          <span class="text-stark-blue">●</span> <strong>database</strong> = substituída via dashboard (sobrescreve o .env) ·
-          <span class="text-stark-red">●</span> <strong>none</strong> = não configurada
+        <p class="text-xs text-stark-dim">Gerencie API keys, IDs e configs sem mexer em arquivos no servidor. Categorias:</p>
+        <ul class="text-xs text-stark-dim mt-2 space-y-0.5 ml-3">
+          <li>🔑 <strong class="text-stark-blue">API Keys</strong> — segredos (Anthropic, OpenAI, Asana PAT, Meta token, etc)</li>
+          <li>🤖 <strong class="text-stark-blue">Modelos Claude</strong> — strings que dizem qual modelo usar (ex: <code>claude-sonnet-4-6</code>)</li>
+          <li>⚙️ <strong class="text-stark-blue">IDs e Configurações</strong> — IDs públicos (Page ID, Workspace, JIDs, hosts IMAP, etc)</li>
+        </ul>
+        <p class="text-xs text-stark-dim mt-3">
+          <span class="text-stark-green">●</span> <strong>ENV</strong> = vem do arquivo <code class="bg-stark-bg px-1 rounded">.env</code> ·
+          <span class="text-stark-blue">●</span> <strong>DB</strong> = substituída via dashboard (sobrescreve o .env) ·
+          <span class="text-stark-red">●</span> <strong>VAZIA</strong> = não configurada
         </p>
-        <p class="text-xs text-stark-dim mt-2 italic">⚠️ Após salvar, alguns SDKs (Anthropic, OpenAI) precisam de restart pra recarregar. Use o botão "Reiniciar Jarvis" abaixo quando necessário.</p>
+        <p class="text-xs text-stark-dim mt-2 italic">⚠️ Após salvar, alguns SDKs (Anthropic, OpenAI) precisam de restart pra recarregar. Use "Reiniciar Jarvis" quando necessário.</p>
       </div>
 
       <div class="flex gap-2 mb-2 flex-wrap">
