@@ -941,4 +941,72 @@ describe('Keys Manager (Sprint 10)', () => {
       'Deve rejeitar valor vazio'
     );
   });
+
+  it('exporta testKey + TESTABLE_KEYS', async () => {
+    const mod = await import('../src/keys-manager.mjs');
+    assert.strictEqual(typeof mod.testKey, 'function');
+    assert.ok(Array.isArray(mod.TESTABLE_KEYS));
+    assert.ok(mod.TESTABLE_KEYS.includes('ANTHROPIC_API_KEY'));
+    assert.ok(mod.TESTABLE_KEYS.includes('OPENAI_API_KEY'));
+    assert.ok(mod.TESTABLE_KEYS.includes('ASANA_PAT'));
+    assert.ok(mod.TESTABLE_KEYS.includes('META_ACCESS_TOKEN'));
+  });
+
+  it('testKey rejeita chave fora da whitelist', async () => {
+    const { testKey } = await import('../src/keys-manager.mjs');
+    await assert.rejects(
+      () => testKey('FAKE_DANGEROUS_KEY'),
+      /whitelist/i,
+      'Deve rejeitar chave fora da whitelist'
+    );
+  });
+
+  it('testKey retorna untestable pra chave sem tester', async () => {
+    const { testKey, KEY_NAMES, TESTABLE_KEYS } = await import('../src/keys-manager.mjs');
+    // Pega uma chave whitelisted que NÃO tem tester
+    const semTester = KEY_NAMES.find(k => !TESTABLE_KEYS.includes(k));
+    if (semTester) {
+      const result = await testKey(semTester);
+      assert.strictEqual(result.untestable, true);
+      assert.strictEqual(result.ok, null);
+    }
+  });
+
+  it('testKey de chave vazia retorna ok:false com mensagem clara', async () => {
+    const oldKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    const { testKey } = await import('../src/keys-manager.mjs');
+    const result = await testKey('ANTHROPIC_API_KEY');
+    assert.strictEqual(result.ok, false);
+    assert.match(result.message, /vazia/i);
+    assert.ok(typeof result.latency_ms === 'number');
+    if (oldKey) process.env.ANTHROPIC_API_KEY = oldKey;
+  });
+
+  it('testKey de GROUP_TAREFAS valida formato JID', async () => {
+    process.env.GROUP_TAREFAS = '123456@g.us';
+    const { testKey } = await import('../src/keys-manager.mjs');
+    const result = await testKey('GROUP_TAREFAS');
+    assert.strictEqual(result.ok, true);
+
+    process.env.GROUP_TAREFAS = '123456';
+    const result2 = await testKey('GROUP_TAREFAS');
+    assert.strictEqual(result2.ok, false);
+    assert.match(result2.message, /formato inv/i);
+
+    delete process.env.GROUP_TAREFAS;
+  });
+
+  it('testKey de GUI_JID valida formato @s.whatsapp.net', async () => {
+    process.env.GUI_JID = '551199999999@s.whatsapp.net';
+    const { testKey } = await import('../src/keys-manager.mjs');
+    const result = await testKey('GUI_JID');
+    assert.strictEqual(result.ok, true);
+
+    process.env.GUI_JID = '551199999999@g.us';  // grupo, não DM
+    const result2 = await testKey('GUI_JID');
+    assert.strictEqual(result2.ok, false);
+
+    delete process.env.GUI_JID;
+  });
 });

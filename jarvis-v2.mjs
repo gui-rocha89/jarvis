@@ -1842,6 +1842,24 @@ app.delete('/dashboard/keys/:key', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Testa conectividade real da chave (chama a API correspondente)
+app.post('/dashboard/keys/:key/test', auth, async (req, res) => {
+  try {
+    const { testKey } = await import('./src/keys-manager.mjs');
+    const result = await testKey(req.params.key);
+    res.json({ key: req.params.key, ...result });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Testa TODAS as chaves em paralelo
+app.post('/dashboard/keys/test-all', auth, async (req, res) => {
+  try {
+    const { TESTABLE_KEYS, testKey } = await import('./src/keys-manager.mjs');
+    const results = await Promise.all(TESTABLE_KEYS.map(async k => ({ key: k, ...(await testKey(k)) })));
+    res.json({ tested_at: new Date().toISOString(), results });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // Restart do processo (PM2 reinicia automaticamente)
 app.post('/dashboard/restart', auth, (req, res) => {
   console.log(`[RESTART] Reinício solicitado via dashboard por ${req.user?.email || 'desconhecido'}`);
