@@ -1656,6 +1656,65 @@ app.get('/dashboard/health', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ============================================
+// v6.0 — KNOWLEDGE GRAPH (CRUD via dashboard)
+// ============================================
+app.get('/dashboard/knowledge', auth, async (req, res) => {
+  try {
+    const { searchEntities, getEntityStats } = await import('./src/database.mjs');
+    const { q = '', tipo = null, limit = 50 } = req.query;
+    const entidades = await searchEntities(q, { tipo: tipo || null, limit: parseInt(limit) });
+    const stats = await getEntityStats();
+    res.json({ total_por_tipo: stats, total_resultados: entidades.length, entidades });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/dashboard/knowledge/:id', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM knowledge_entities WHERE id = $1', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Entidade não encontrada' });
+    // Pega últimas menções
+    const { rows: mentions } = await pool.query(
+      `SELECT contexto, created_at FROM entity_mentions WHERE entity_id = $1 ORDER BY created_at DESC LIMIT 10`,
+      [req.params.id]
+    );
+    res.json({ ...rows[0], mentions });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/dashboard/knowledge', auth, async (req, res) => {
+  try {
+    const { upsertEntity } = await import('./src/database.mjs');
+    const { nome, tipo, descricao, aliases, status, metadata } = req.body;
+    if (!nome || !tipo) return res.status(400).json({ error: 'nome e tipo são obrigatórios' });
+    const entity = await upsertEntity({
+      nome, tipo, descricao,
+      aliases: Array.isArray(aliases) ? aliases : [],
+      status: status || 'ativo',
+      metadata: metadata || {},
+      source: 'dashboard',
+    });
+    res.json({ sucesso: true, entity });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/dashboard/knowledge/:id', auth, async (req, res) => {
+  try {
+    const { deprecateEntity } = await import('./src/database.mjs');
+    const ok = await deprecateEntity(req.params.id, req.body?.motivo || 'Deletado via dashboard');
+    res.json({ sucesso: ok });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Re-roda seed (manual via dashboard)
+app.post('/dashboard/knowledge/seed', auth, async (req, res) => {
+  try {
+    const { seedKnowledgeGraph } = await import('./src/knowledge-graph.mjs');
+    const result = await seedKnowledgeGraph();
+    res.json({ sucesso: true, ...result });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // --- Controle ON/OFF ---
 app.post('/dashboard/power', auth, (req, res) => {
   const { action } = req.body;
@@ -3516,5 +3575,16 @@ initDB().then(async () => {
   setupCronJobs();
   startEmailMonitor();
   startChannelEmailMonitor();
+
+  // v6.0 — Seed do Knowledge Graph (idempotente, custo zero)
+  setTimeout(async () => {
+    try {
+      const { seedKnowledgeGraph } = await import('./src/knowledge-graph.mjs');
+      await seedKnowledgeGraph();
+    } catch (err) {
+      console.error('[JARVIS] Erro ao popular Knowledge Graph:', err.message);
+    }
+  }, 10000); // 10s depois do boot pra dar tempo dos managedClients carregarem
+
   console.log('[JARVIS] Todos os sistemas 5.0 inicializados.');
 });

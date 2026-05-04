@@ -330,6 +330,33 @@ function resolveCustomFields({ cliente, urgencia, tier, tipo_demanda }) {
 // ============================================
 export const JARVIS_TOOLS = [
   {
+    name: 'consultar_conhecimento',
+    description: 'CONSULTAR a base de conhecimento estruturada (Knowledge Graph) sobre uma entidade — cliente, sub-marca, projeto, ferramenta, evento, campanha, processo ou pessoa. USE SEMPRE ANTES de afirmar que não conhece algo. Retorna nome oficial, tipo, descrição, aliases e metadata.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        termo: { type: 'string', description: 'Nome ou referência da entidade buscada (ex: "Stream Health", "Medical Planner", "Bruna")' },
+        tipo: { type: 'string', enum: ['cliente', 'sub_marca', 'projeto', 'ferramenta_interna', 'evento', 'campanha', 'processo', 'decisao', 'pessoa_externa', 'pessoa_equipe'], description: 'Filtrar por tipo (opcional). Se omitido, busca em todos.' },
+      },
+      required: ['termo'],
+    },
+  },
+  {
+    name: 'registrar_conhecimento',
+    description: 'REGISTRAR algo novo no Knowledge Graph quando alguém TE EXPLICAR o que é uma entidade. Use quando o usuário disser frases como "X é nosso projeto Y", "X é sub-marca", "X foi descontinuado", etc. Cria ou atualiza a entity. Idempotente: se já existe, mescla aliases e atualiza descrição.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        nome: { type: 'string', description: 'Nome oficial da entidade' },
+        tipo: { type: 'string', enum: ['cliente', 'sub_marca', 'projeto', 'ferramenta_interna', 'evento', 'campanha', 'processo', 'decisao', 'pessoa_externa', 'pessoa_equipe'], description: 'Tipo da entidade' },
+        descricao: { type: 'string', description: 'O que é, contexto, status, relevância (1-3 frases)' },
+        aliases: { type: 'array', items: { type: 'string' }, description: 'Outros nomes/sinônimos pelos quais a entidade pode ser chamada' },
+        status: { type: 'string', enum: ['ativo', 'deprecated'], description: 'Status atual. Default: ativo' },
+      },
+      required: ['nome', 'tipo'],
+    },
+  },
+  {
     name: 'agendar_captacao',
     description: 'Agendar uma captacao no Calendario de Captacao do Asana e Google Calendar.',
     input_schema: {
@@ -910,6 +937,64 @@ function fuzzyMatch(a, b) {
 
 export async function executeJarvisTool(toolName, input, context = {}) {
   console.log(`[TOOL] Executando: ${toolName}`, JSON.stringify(input));
+
+  // === KNOWLEDGE GRAPH (v6.0) ===
+  if (toolName === 'consultar_conhecimento') {
+    if (!input.termo) return { error: 'termo é obrigatório' };
+    try {
+      const { findEntity, searchEntities } = await import('../database.mjs');
+      const exact = await findEntity(input.termo, { tipo: input.tipo });
+      if (exact) {
+        return {
+          encontrado: true,
+          entidade: {
+            nome: exact.nome,
+            tipo: exact.tipo,
+            descricao: exact.descricao || '(sem descrição)',
+            aliases: exact.aliases || [],
+            status: exact.status,
+            metadata: exact.metadata || {},
+          },
+        };
+      }
+      // Não achou exato — busca similares
+      const similar = await searchEntities(input.termo, { tipo: input.tipo, limit: 5 });
+      return {
+        encontrado: false,
+        termo_buscado: input.termo,
+        similares: similar.map(s => ({ nome: s.nome, tipo: s.tipo, descricao: (s.descricao || '').substring(0, 100) })),
+        sugestao: similar.length === 0
+          ? 'Nada encontrado. Se o usuário explicar o que é, use registrar_conhecimento pra salvar.'
+          : 'Achei coisas parecidas. Pergunte ao usuário se é alguma dessas, ou use registrar_conhecimento pra criar nova.',
+      };
+    } catch (err) {
+      return { error: `Erro ao consultar: ${err.message}` };
+    }
+  }
+
+  if (toolName === 'registrar_conhecimento') {
+    if (!input.nome || !input.tipo) return { error: 'nome e tipo são obrigatórios' };
+    try {
+      const { upsertEntity } = await import('../database.mjs');
+      const entity = await upsertEntity({
+        nome: input.nome,
+        tipo: input.tipo,
+        descricao: input.descricao || null,
+        aliases: input.aliases || [],
+        status: input.status || 'ativo',
+        source: 'tool_registrar_conhecimento',
+      });
+      return {
+        sucesso: true,
+        id: entity.id,
+        nome: entity.nome,
+        tipo: entity.tipo,
+        mensagem: `Entidade "${entity.nome}" (${entity.tipo}) registrada/atualizada no Knowledge Graph.`,
+      };
+    } catch (err) {
+      return { error: `Erro ao registrar: ${err.message}` };
+    }
+  }
 
   if (toolName === 'agendar_captacao') {
     const taskData = { name: input.nome, projects: [ASANA_PROJECTS.CAPTACAO], due_on: input.data };

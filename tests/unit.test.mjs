@@ -687,3 +687,51 @@ describe('Autonomia Nível 2 (Sprint 2.2)', () => {
     assert.equal(r2.safe, true, 'atribuir_task deveria ser permitida');
   });
 });
+
+// ============================================
+// v6.0 — Knowledge Graph (Sprint 2)
+// ============================================
+describe('Knowledge Graph (v6.0)', () => {
+  it('JARVIS_TOOLS inclui consultar_conhecimento', async () => {
+    const { JARVIS_TOOLS } = await import('../src/skills/loader.mjs');
+    const tool = JARVIS_TOOLS.find(t => t.name === 'consultar_conhecimento');
+    assert.ok(tool, 'Tool consultar_conhecimento não encontrada');
+    assert.ok(tool.input_schema.properties.termo, 'termo ausente');
+    assert.deepEqual(tool.input_schema.required, ['termo']);
+  });
+
+  it('JARVIS_TOOLS inclui registrar_conhecimento', async () => {
+    const { JARVIS_TOOLS } = await import('../src/skills/loader.mjs');
+    const tool = JARVIS_TOOLS.find(t => t.name === 'registrar_conhecimento');
+    assert.ok(tool, 'Tool registrar_conhecimento não encontrada');
+    assert.ok(tool.input_schema.properties.nome, 'nome ausente');
+    assert.ok(tool.input_schema.properties.tipo, 'tipo ausente');
+    assert.deepEqual(tool.input_schema.required, ['nome', 'tipo']);
+  });
+
+  it('antiHallucinationCheck permite consultar_conhecimento e registrar_conhecimento', async () => {
+    const { antiHallucinationCheck } = await import('../src/brain.mjs');
+    const r1 = antiHallucinationCheck('Encontrei a entidade Stream Health no nosso conhecimento.', new Set(['consultar_conhecimento']));
+    assert.equal(r1.safe, true);
+    const r2 = antiHallucinationCheck('Registrei Stream Health como sub-marca da Stream Lab.', new Set(['registrar_conhecimento']));
+    assert.equal(r2.safe, true);
+  });
+
+  it('database.mjs exporta funções do Knowledge Graph', async () => {
+    const db = await import('../src/database.mjs');
+    assert.ok(typeof db.upsertEntity === 'function', 'upsertEntity ausente');
+    assert.ok(typeof db.findEntity === 'function', 'findEntity ausente');
+    assert.ok(typeof db.searchEntities === 'function', 'searchEntities ausente');
+    assert.ok(typeof db.detectEntitiesInText === 'function', 'detectEntitiesInText ausente');
+    assert.ok(typeof db.deprecateEntity === 'function', 'deprecateEntity ausente');
+    assert.ok(typeof db.getEntityStats === 'function', 'getEntityStats ausente');
+    assert.ok(Array.isArray(db.KG_VALID_TYPES), 'KG_VALID_TYPES não é array');
+    assert.ok(db.KG_VALID_TYPES.includes('cliente'), 'tipo "cliente" ausente');
+    assert.ok(db.KG_VALID_TYPES.includes('sub_marca'), 'tipo "sub_marca" ausente');
+  });
+
+  it('knowledge-graph.mjs exporta seedKnowledgeGraph', async () => {
+    const kg = await import('../src/knowledge-graph.mjs');
+    assert.ok(typeof kg.seedKnowledgeGraph === 'function', 'seedKnowledgeGraph ausente');
+  });
+});

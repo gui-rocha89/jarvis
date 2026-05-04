@@ -417,6 +417,31 @@ export async function getMemoryContext(senderJid, chatId, text) {
     const contexts = [];
 
     // ============================================
+    // CAMADA 0 (v6.0): KNOWLEDGE GRAPH — entidades estruturadas mencionadas no texto
+    // Resolve: Jarvis tem 362k memórias mas não sabia O QUE é cada coisa
+    // Detecta entities (cliente, sub-marca, projeto, etc) e injeta contexto OFICIAL
+    // ============================================
+    if (text && text.length >= 3) {
+      try {
+        const { detectEntitiesInText } = await import('./database.mjs');
+        const entities = await detectEntitiesInText(text);
+        if (entities.length > 0) {
+          let kgCtx = '\n\n=== CONHECIMENTO OFICIAL DAS ENTIDADES MENCIONADAS ===\n';
+          kgCtx += 'IMPORTANTE: Use estes dados como FONTE DA VERDADE. Não invente.\n\n';
+          for (const e of entities.slice(0, 8)) {
+            kgCtx += `▸ **${e.nome}** [${e.tipo}]\n`;
+            if (e.descricao) kgCtx += `  ${e.descricao}\n`;
+            if (e.aliases?.length) kgCtx += `  Aliases: ${e.aliases.slice(0, 5).join(', ')}\n`;
+            kgCtx += '\n';
+          }
+          contexts.push(kgCtx);
+        }
+      } catch (kgErr) {
+        // KG é opcional — não bloqueia o resto do contexto
+      }
+    }
+
+    // ============================================
     // CAMADA 1: Memórias de ALTA IMPORTÂNCIA — SEMPRE presentes
     // Independente da pergunta, o Jarvis SEMPRE tem acesso ao conhecimento mais valioso
     // ============================================
