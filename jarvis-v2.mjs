@@ -1740,6 +1740,35 @@ app.post('/dashboard/knowledge/seed', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ============================================
+// v6.0 Sprint 4 — Cross-Channel Identity (CRUD via dashboard)
+// ============================================
+app.get('/dashboard/contacts/stats', auth, async (req, res) => {
+  try {
+    const { getContactStats } = await import('./src/contacts.mjs');
+    const stats = await getContactStats();
+    res.json(stats);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/dashboard/contacts/:canonicalId', auth, async (req, res) => {
+  try {
+    const { getAliasesForCanonical } = await import('./src/contacts.mjs');
+    const aliases = await getAliasesForCanonical(req.params.canonicalId);
+    res.json({ canonical_id: req.params.canonicalId, aliases });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/dashboard/contacts/merge', auth, async (req, res) => {
+  try {
+    const { mergeCanonicals } = await import('./src/contacts.mjs');
+    const { keep_id, merge_from_id } = req.body;
+    if (!keep_id || !merge_from_id) return res.status(400).json({ error: 'keep_id e merge_from_id são obrigatórios' });
+    const ok = await mergeCanonicals(keep_id, merge_from_id);
+    res.json({ sucesso: ok });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // --- Controle ON/OFF ---
 app.post('/dashboard/power', auth, (req, res) => {
   const { action } = req.body;
@@ -3666,6 +3695,16 @@ initDB().then(async () => {
       console.log(`[STARTUP] ${Object.keys(toggles).length} toggle(s) de grupo restaurados do banco`);
     }
   } catch {}
+
+  // v6.0 Sprint 4 — Cross-Channel Identity
+  try {
+    const { initContactAliases } = await import('./src/contacts.mjs');
+    await initContactAliases();
+    console.log('[BOOT] Cross-channel identity inicializado');
+  } catch (err) {
+    console.error('[BOOT] Erro init contact_aliases:', err.message);
+  }
+
   startWhatsApp();
   setupCronJobs();
   startEmailMonitor();

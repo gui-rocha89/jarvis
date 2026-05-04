@@ -735,3 +735,51 @@ describe('Knowledge Graph (v6.0)', () => {
     assert.ok(typeof kg.seedKnowledgeGraph === 'function', 'seedKnowledgeGraph ausente');
   });
 });
+
+// ============================================
+// v6.0 Sprint 4 — Cross-Channel Identity
+// ============================================
+describe('Cross-Channel Identity (Sprint 4)', () => {
+  it('exporta resolveCanonicalId, getContactStats, mergeCanonicals', async () => {
+    const m = await import('../src/contacts.mjs');
+    assert.ok(typeof m.resolveCanonicalId === 'function', 'resolveCanonicalId ausente');
+    assert.ok(typeof m.getContactStats === 'function', 'getContactStats ausente');
+    assert.ok(typeof m.mergeCanonicals === 'function', 'mergeCanonicals ausente');
+    assert.ok(typeof m.getAliasesForCanonical === 'function', 'getAliasesForCanonical ausente');
+    assert.ok(typeof m.initContactAliases === 'function', 'initContactAliases ausente');
+  });
+
+  it('levenshtein calcula distância correta', async () => {
+    const { _internal } = await import('../src/contacts.mjs');
+    assert.equal(_internal.levenshtein('rigon', 'rigon'), 0);
+    assert.equal(_internal.levenshtein('rigon', 'rigons'), 1);
+    assert.equal(_internal.levenshtein('bruna', 'brusna'), 1);
+    assert.ok(_internal.levenshtein('completamente', 'diferente') > 5);
+  });
+
+  it('detecta canal pelo formato do alias', async () => {
+    const { _internal } = await import('../src/contacts.mjs');
+    assert.equal(_internal._detectChannel('5511999@s.whatsapp.net'), 'whatsapp');
+    assert.equal(_internal._detectChannel('grupo@g.us'), 'whatsapp');
+    assert.equal(_internal._detectChannel('123@lid'), 'whatsapp');
+    assert.equal(_internal._detectChannel('instagram_abc123'), 'instagram');
+    assert.equal(_internal._detectChannel('email_user@test.com'), 'email');
+    assert.equal(_internal._detectChannel(''), 'unknown');
+  });
+
+  it('detecta nome genérico (evita falso positivo cross-channel)', async () => {
+    const { _internal } = await import('../src/contacts.mjs');
+    assert.equal(_internal._isGenericName('João'), true);
+    assert.equal(_internal._isGenericName('Maria'), true);
+    assert.equal(_internal._isGenericName(''), true);
+    assert.equal(_internal._isGenericName('ab'), true);
+    assert.equal(_internal._isGenericName('Kayque Torrubia'), false);
+    assert.equal(_internal._isGenericName('Rigon'), false);
+  });
+
+  it('normalização remove acentos e lowercase', async () => {
+    const { _internal } = await import('../src/contacts.mjs');
+    assert.equal(_internal._normalizeName('João Silva'), 'joao silva');
+    assert.equal(_internal._normalizeName('NÍCOLAS'), 'nicolas');
+  });
+});
