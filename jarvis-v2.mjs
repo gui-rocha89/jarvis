@@ -2099,13 +2099,22 @@ app.get('/dashboard/memory', auth, async (req, res) => {
   try {
     const stats = await getMemoryStats();
     // Mapear byScope para campos diretos que o frontend espera
+    // Inclui count (total de fatos) E unique_entities (entidades únicas)
     const scopeMap = {};
-    for (const row of (stats.byScope || [])) scopeMap[row.scope] = parseInt(row.count);
+    const uniqueMap = {};
+    for (const row of (stats.byScope || [])) {
+      scopeMap[row.scope] = parseInt(row.count);
+      uniqueMap[row.scope] = parseInt(row.unique_entities) || 0;
+    }
     res.json({
       total: stats.total || 0,
       user: scopeMap['user'] || 0,
       chat: scopeMap['chat'] || 0,
       agent: scopeMap['agent'] || 0,
+      // Novo: contagem de entidades únicas por scope
+      user_unique: uniqueMap['user'] || 0,
+      chat_unique: uniqueMap['chat'] || 0,
+      agent_unique: uniqueMap['agent'] || 0,
       byCategory: stats.byCategory || [],
       topMemories: stats.topMemories || [],
     });

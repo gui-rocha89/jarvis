@@ -621,7 +621,17 @@ export async function processMemory(text, senderName, senderJid, chatId, isGroup
 export async function getMemoryStats() {
   try {
     const total = await pool.query('SELECT COUNT(*) as count FROM jarvis_memories');
-    const byScope = await pool.query('SELECT scope, COUNT(*) as count FROM jarvis_memories GROUP BY scope ORDER BY count DESC');
+    // byScope agora retorna também count_unique_entities pra UI honesta:
+    // 173k "fatos de pessoas" pode significar ~50 pessoas únicas com muitos fatos cada
+    const byScope = await pool.query(`
+      SELECT
+        scope,
+        COUNT(*) as count,
+        COUNT(DISTINCT entity_id) as unique_entities
+      FROM jarvis_memories
+      GROUP BY scope
+      ORDER BY count DESC
+    `);
     const byCategory = await pool.query('SELECT category, COUNT(*) as count FROM jarvis_memories GROUP BY category ORDER BY count DESC');
     const topMemories = await pool.query('SELECT content, importance, access_count, scope FROM jarvis_memories ORDER BY importance DESC, access_count DESC LIMIT 10');
     const withEmbedding = await pool.query('SELECT COUNT(*) as count FROM jarvis_memories WHERE embedding IS NOT NULL').catch(() => ({ rows: [{ count: 0 }] }));
@@ -629,7 +639,11 @@ export async function getMemoryStats() {
       total: parseInt(total.rows[0].count),
       withEmbedding: parseInt(withEmbedding.rows[0].count),
       pgvectorEnabled,
-      byScope: byScope.rows,
+      byScope: byScope.rows.map(r => ({
+        scope: r.scope,
+        count: parseInt(r.count),
+        unique_entities: parseInt(r.unique_entities),
+      })),
       byCategory: byCategory.rows,
       topMemories: topMemories.rows,
     };
