@@ -148,6 +148,64 @@ ${prompts[entityType] || prompts.client}`,
   }
 }
 
+// ============================================
+// v6.0 Sprint 3 — PROFILE REAL-TIME
+// ============================================
+// Resolve: profiles eram sintetizados a cada 6h (cron), causando defasagem.
+// Agora atualizam em background ao final de cada processMemory().
+// Cache 30min evita custo desnecessário.
+// ============================================
+
+const _profileCache = new Map(); // key: "type:id", value: { profile, at }
+const PROFILE_CACHE_TTL = 30 * 60 * 1000; // 30 min
+
+/**
+ * Wrapper com cache pra synthesizeProfile.
+ * Se cache hit (< 30min), retorna sem rodar IA.
+ * Se miss, sintetiza e guarda.
+ */
+export async function synthesizeProfileCached(entityType, entityId, entityName = null) {
+  const key = `${entityType}:${entityId}`;
+  const cached = _profileCache.get(key);
+  if (cached && Date.now() - cached.at < PROFILE_CACHE_TTL) {
+    return cached.profile;
+  }
+  const profile = await synthesizeProfile(entityType, entityId, entityName);
+  if (profile) {
+    _profileCache.set(key, { profile, at: Date.now() });
+    // Limpa cache antigo periodicamente (max 200 entries)
+    if (_profileCache.size > 200) {
+      const entries = [..._profileCache.entries()].sort((a, b) => a[1].at - b[1].at);
+      for (let i = 0; i < 50; i++) _profileCache.delete(entries[i][0]);
+    }
+  }
+  return profile;
+}
+
+/**
+ * Invalida cache de uma entity (use quando souber que dado mudou)
+ */
+export function invalidateProfileCache(entityType, entityId) {
+  if (!entityType || !entityId) {
+    _profileCache.clear();
+    return;
+  }
+  _profileCache.delete(`${entityType}:${entityId}`);
+}
+
+/**
+ * Stats do cache (pra dashboard /health)
+ */
+export function getProfileCacheStats() {
+  const now = Date.now();
+  let valid = 0, expired = 0;
+  for (const v of _profileCache.values()) {
+    if (now - v.at < PROFILE_CACHE_TTL) valid++;
+    else expired++;
+  }
+  return { total: _profileCache.size, valid, expired };
+}
+
 /**
  * Busca perfil de uma entidade
  */

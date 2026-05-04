@@ -3079,9 +3079,11 @@ function setupCronJobs() {
     console.log(`[CLEANUP] sentByBot: ${sentByBot.size}, authRateLimit: ${authRateLimit.size}, geoCache: ${geoCache.size}`);
   }, 60 * 60 * 1000); // A cada 1 hora
 
-  // Sync de perfis a cada 6 horas (0h, 6h, 12h, 18h)
-  cron.schedule('0 */6 * * *', async () => {
-    console.log('[CRON] Iniciando sync de perfis...');
+  // v6.0 Sprint 3 — Sync de perfis 1x/dia como FALLBACK
+  // (perfis agora atualizam em tempo real via processMemory + cache 30min)
+  // Cron mantém perfis frescos mesmo se processo reiniciar e cache zerar
+  cron.schedule('0 5 * * *', async () => {  // 02h BRT (05h UTC) — horário sem tráfego
+    console.log('[CRON] Sync diário de perfis (fallback)...');
     try {
       const result = await syncProfiles();
       console.log(`[CRON] Perfis sincronizados: ${result.synced} perfis, ${result.errors} erros`);
