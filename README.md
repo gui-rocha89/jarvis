@@ -1,8 +1,10 @@
-# Jarvis 5.0
+# Jarvis 6.0
 
 **Agente de IA multi-canal autônomo** para a [Stream Lab](https://streamlab.com.br) — laboratório criativo de marketing.
 
 Personalidade inspirada no J.A.R.V.I.S. do Tony Stark: elegante, eficiente, com humor inteligente.
+
+> **v6.0 — "Da Memória ao Conhecimento"** · Foco em **CONFIABILIDADE + INTELIGÊNCIA REAL**: Knowledge Graph, Profile Real-Time, Cross-Channel Identity, Anti-Leak v4, Task Copilot, Cost Tracking + Health Monitoring.
 
 ![Node.js](https://img.shields.io/badge/Node.js-20+-339933?logo=node.js&logoColor=white)
 ![Claude](https://img.shields.io/badge/Claude_API-Anthropic-6B4FBB?logo=anthropic&logoColor=white)
@@ -19,25 +21,37 @@ Personalidade inspirada no J.A.R.V.I.S. do Tony Stark: elegante, eficiente, com 
 
 Jarvis funciona como um **gerente de projetos virtual 24/7** — recebe mensagens em múltiplos canais (WhatsApp, Instagram, Email), entende contexto, responde com inteligência e executa ações em ferramentas externas (Asana, Google Calendar, Meta Ads).
 
-### Destaques v5.0
+### 🆕 Destaques v6.0
+
+- **Knowledge Graph** — Conhecimento estruturado por tipo (cliente, sub-marca, projeto, ferramenta, evento, campanha, processo, decisão, pessoa). Migração custo-zero a partir de dados existentes
+- **Anti-Leak v4** — Filtro inteligente: match exato com nome do sender + consulta KG. Lead com mesmo nome de membro da equipe não bloqueia mais
+- **Profile Real-Time** — Profile atualizado em background ao final de cada mensagem. Sem mais defasagem de 6h
+- **Cross-Channel Identity** — Mesma pessoa em WhatsApp + Instagram + Email = mesma identidade canônica (`contact_aliases`)
+- **Task Copilot** — Co-piloto, não cobrador. Daily 08:50 motivacional, cobrança leve 3/6/9d, ofertas de ajuda contextuais
+- **Robustez Operacional** — Boot validation de modelos (alerta deprecado), health check 5min com alerta WhatsApp, retry com fallback
+- **Cost Tracking End-to-End** — Tabela `api_costs`, endpoint `/dashboard/costs`, estimativa USD por modelo/dia/cliente
+- **Histórico de Chat Persistente** — `dashboard_chat_history` no PostgreSQL, sobrevive a restart
+- **Dashboard UI Expandido** — 3 abas novas: Conhecimento, Custos, Saúde
+
+### Destaques v5.0 (mantidos)
 
 - **Multi-canal** — WhatsApp (interno + público), Instagram DM, Email (IMAP/SMTP), Dashboard Web, Voz (WebSocket)
 - **6 Agentes Especializados** — Master, Creative, Manager, Researcher, Traffic e Social — roteamento automático por intenção
 - **Memória Semântica (pgvector)** — Busca híbrida (vetorial + texto) com embeddings OpenAI, backfill automático
-- **Atendimento Público** — Leads no WhatsApp DM com limite de 10 mensagens e horário comercial
+- **Atendimento Público + Showcase Mode** — Leads no WhatsApp DM com limite de 20 mensagens, horário comercial. "Quero conhecer o Jarvis" ativa modo apresentação com Opus
+- **Handoff Equipe** — Equipe silencia Jarvis por lead ("eu assumo") e reativa ("Jarvis volta")
 - **Autonomia Nível 2** — Move tasks entre seções e atribui responsáveis no Asana, com escalação em 3 níveis
 - **Webhooks Asana** — Eventos em tempo real: tasks concluídas, criadas, sem responsável
 - **WebSocket Voice** — Streaming de voz bidirecional com interrupção, latência < 2s
 - **MCP Server** — 6 tools via Model Context Protocol para integração com Claude Code, Cursor, etc.
 - **Dashboard v2** — Next.js 16 + TypeScript + Tailwind com 9 páginas
-- **Anti-vazamento v3** — Filtro expandido com silêncio normalizado, memórias escopadas, proteção cross-client
-- **Meta Ads Multi-cliente** — Gerencia campanhas de tráfego pago via Graph API v25.0 para 15+ clientes
+- **Meta Ads Multi-cliente** — Gerencia campanhas via Graph API v25.0 para 15+ clientes, descoberta automática de páginas
 - **Menções Inteligentes** — Sistema de @menções com resolução fuzzy (Levenshtein), mapeamento massivo
 - **Agent Loop Real** — Executa tools em loop até completar a tarefa (máx 10 iterações)
 - **Extended Thinking** — Raciocina profundamente antes de responder (4K-8K tokens de thinking)
 - **Prompt Caching** — System prompts estáticos são cacheados para economia e velocidade
 - **Model Routing** — Seleciona automaticamente Opus (complexo) ou Sonnet (simples) por query
-- **15 Tools** — Asana, Google Calendar, Meta Ads, WhatsApp (envio com menções), memórias, autonomia
+- **21+ Tools** — Asana, Google Calendar, Meta Ads, WhatsApp, memórias, autonomia, Knowledge Graph, geração de imagens/stickers
 
 ---
 

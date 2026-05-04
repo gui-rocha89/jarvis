@@ -1,7 +1,7 @@
-# Jarvis 5.0 — Technical Reference
+# Jarvis 6.0 — Technical Reference
 
-> **Projeto:** Jarvis · **Organização:** Stream Lab · **Versão:** 5.0.0
-> **Última atualização:** 2026-03-25 · **Autores:** Equipe Stream Lab + Claude Code
+> **Projeto:** Jarvis · **Organização:** Stream Lab · **Versão:** 6.0.0
+> **Última atualização:** 2026-04-22 · **Autores:** Equipe Stream Lab + Claude Code
 
 ---
 
@@ -113,7 +113,9 @@ O Gui é direto e reclama quando algo não funciona. Padrões comuns:
 
 ## 1. Visão Geral da Arquitetura
 
-Jarvis 5.0 é um **sistema de IA multi-agente autônomo e multi-canal** que opera como gestor de projetos virtual 24/7 para a Stream Lab (laboratório criativo de marketing). A arquitetura é inspirada na [Claude Code](https://claude.com/claude-code), com Agent Loop real, Extended Thinking, Prompt Caching e Model Routing dinâmico.
+Jarvis 6.0 é um **sistema de IA multi-agente autônomo e multi-canal** que opera como gestor de projetos virtual 24/7 para a Stream Lab (laboratório criativo de marketing). A arquitetura é inspirada na [Claude Code](https://claude.com/claude-code), com Agent Loop real, Extended Thinking, Prompt Caching e Model Routing dinâmico.
+
+A v6.0 foi focada em **CONFIABILIDADE + INTELIGÊNCIA REAL**, não em features novas. Resolveu 3 bugs críticos da v5 (Jarvis "esquecia" o que disse, vazava dados cross-cliente, modelo deprecado falhando em silêncio) e adicionou camada de **conhecimento institucional estruturado** (Knowledge Graph) que vai além das memórias soltas.
 
 ### 1.1 Capacidades Principais
 
@@ -135,6 +137,13 @@ Jarvis 5.0 é um **sistema de IA multi-agente autônomo e multi-canal** que oper
 | **Dashboard v2** | Next.js 16 + TypeScript + Tailwind com 9 páginas (clientes, segurança, configurações...) |
 | **MCP Server** | 6 tools expostas via Model Context Protocol para integração com Claude Code, Cursor, etc. |
 | **WebSocket Voice** | Streaming de voz bidirecional com interrupção, latência < 2s |
+| **🆕 Knowledge Graph (v6.0)** | Conhecimento estruturado por tipo (cliente, sub-marca, projeto, ferramenta, evento, campanha, processo, decisão, pessoa). Migração custo-zero a partir de dados existentes. |
+| **🆕 Anti-Leak v4 (v6.0)** | Filtro inteligente — match exato com nome do sender + consulta KG pra liberar entities legítimas. Caso "lead chamado Rigon" não bloqueia mais. |
+| **🆕 Profile Real-Time (v6.0)** | Profile da pessoa atualizado em background ao final de cada `processMemory`. Cache 30min. Não há mais defasagem de 6h. |
+| **🆕 Cross-Channel Identity (v6.0)** | Mesma pessoa em WhatsApp + Instagram + Email = mesma identidade canônica. Tabela `contact_aliases` com Levenshtein + proteção contra nomes genéricos. |
+| **🆕 Task Copilot (v6.0)** | Co-piloto, não cobrador. Daily 08:50, cobrança leve 3/6/9d, ofertas de ajuda contextuais, comenta direto na task. |
+| **🆕 Robustez Operacional (v6.0)** | Boot validation de modelos (alerta se 404), health check 5min com alerta WhatsApp, cost tracking end-to-end, incident log. |
+| **🆕 Dashboard UI (v6.0)** | 3 abas novas no dashboard v1: Conhecimento (CRUD do KG), Custos (tokens + USD), Saúde (incidentes). |
 
 ### 1.2 Stack Tecnológico
 
@@ -169,16 +178,20 @@ Infra:        Ubuntu 24.04 LTS (Azure VPS)
 jarvis-v2.mjs                     # Entry point — WhatsApp + Express + Cron + WebSocket Voice
 src/
 ├── config.mjs                    # Configurações centrais (100% via process.env)
-├── database.mjs                  # PostgreSQL — pool, initDB, CRUD mensagens/contatos/grupos/leads/cobranças
-├── memory.mjs                    # Memória semântica (Mem0 + pgvector, embeddings, backfill)
-├── brain.mjs                     # Cérebro IA — Agent Loop, proativo, público, anti-leak v3, escalação
+├── database.mjs                  # PostgreSQL — pool, initDB, CRUD msgs/contatos/grupos/leads/cobranças/KG/custos/incidentes/chat-history
+├── memory.mjs                    # Memória semântica (Mem0 + pgvector, embeddings, backfill, profile real-time trigger)
+├── brain.mjs                     # Cérebro IA — Agent Loop, proativo, público, anti-leak v4 (smart com KG), escalação
 ├── brain-document.mjs            # Geração de documento de contexto do cérebro
 ├── audio.mjs                     # TTS (ElevenLabs/OpenAI) + STT (Whisper)
-├── profiles.mjs                  # Síntese de perfis (clientes, equipe, processos)
+├── profiles.mjs                  # Síntese de perfis + cache 30min (Sprint 3 v6.0)
 ├── batch-asana.mjs               # Estudo exaustivo do Asana (3 fases, resumível)
 ├── asana-email-monitor.mjs       # Monitor de @menções do Asana via IMAP
 ├── helpers.mjs                   # Utilitários (getMediaType, extractSender)
 ├── mcp-server.mjs                # MCP Server — 6 tools via stdio (entry point separado)
+├── 🆕 health.mjs                 # v6.0 Sprint 1 — boot validation modelos, health check, cost tracking, incident log
+├── 🆕 knowledge-graph.mjs        # v6.0 Sprint 2 — seedKnowledgeGraph (migração custo-zero a partir de dados existentes)
+├── 🆕 contacts.mjs               # v6.0 Sprint 4 — Cross-channel identity (resolveCanonicalId + Levenshtein)
+├── 🆕 task-copilot.mjs           # v6.0 Sprint 6 — Co-piloto de tasks (analyze, helpOffers, daily 08:50, follow-up leve 3/6/9)
 ├── agents/
 │   └── master.mjs                # Prompts: JARVIS_IDENTITY, CHANNEL_CONTEXT (7 canais), AGENT_EXPERTISE, classificador
 ├── channels/
@@ -187,8 +200,8 @@ src/
 ├── webhooks/
 │   └── asana-webhook.mjs         # Asana Webhooks (processamento de eventos em tempo real)
 └── skills/
-    ├── loader.mjs                # 17 tools do Claude (Asana + Calendar + Meta Ads + WhatsApp + Autonomia + Imagens)
-    └── meta-ads.mjs              # Meta Ads — Graph API wrapper multi-cliente
+    ├── loader.mjs                # 21+ tools (Asana + Calendar + Meta Ads + WhatsApp + Autonomia + Imagens + KG)
+    └── meta-ads.mjs              # Meta Ads — Graph API wrapper multi-cliente + descoberta automática de páginas
 dashboard/
 └── index.html                    # Dashboard v1 — SPA (Tailwind, Chart.js, auto-refresh)
 dashboard-v2/                     # Dashboard v2 — Next.js 16 + TypeScript + Tailwind
@@ -320,6 +333,12 @@ auth_session/                     # Sessão WhatsApp (NÃO VERSIONADO)
 | `dashboard_2fa_codes` | Códigos 2FA temporários | code, expires_at, used |
 | `public_conversations` | Conversas com leads/público | jid, name, status, messages_count, first_message_at, last_message_at |
 | `cobranca_log` | Log de cobranças com escalação | task_gid, cobranca_count, last_cobrada_at |
+| 🆕 `dashboard_chat_history` (v6.0) | Histórico **persistente** do chat do dashboard | session_id, role, content, tools_used, tokens_in/out, model |
+| 🆕 `api_costs` (v6.0) | Tracking de custos da API (tokens + USD) | provider, model, operation, tokens_in/out, cost_usd, cliente, canal |
+| 🆕 `health_incidents` (v6.0) | Log de incidentes operacionais | component, severity (info/warn/error/critical), message, details, notified, resolved_at |
+| 🆕 `knowledge_entities` (v6.0) | Knowledge Graph — entities estruturadas | nome, tipo (cliente/sub_marca/projeto/etc), descricao, aliases[], status, metadata |
+| 🆕 `entity_mentions` (v6.0) | Rastreamento de menções a entities | entity_id, memory_id, message_id, contexto |
+| 🆕 `contact_aliases` (v6.0) | Cross-channel identity | canonical_id, alias_id, channel (whatsapp/instagram/email), display_name, confidence |
 | `email_log` | Log de emails do canal genérico | from_address, subject, body_preview, classification, created_at |
 
 ### 4.4 `src/memory.mjs` — Sistema de Memória Semântica (Mem0 + pgvector)
@@ -436,7 +455,7 @@ Mensagem recebida
 
 **Exporta:** `asanaRequest`, `asanaWrite`, `asanaCreateTask`, `asanaAddToProject`, `asanaAddComment`, `asanaUploadAttachment`, `getOverdueTasks`, `getGCalClient`, `createGoogleCalendarEvent`, `JARVIS_TOOLS`, `executeJarvisTool`, `registerSendFunction`, `registerSendWithMentionsFunction`, `getSendFunction`
 
-**17 tools disponíveis:**
+**21+ tools disponíveis (v6.0):**
 
 | Tool | Agente | Descrição | Campos obrigatórios |
 |------|--------|-----------|-------------------|
@@ -458,6 +477,10 @@ Mensagem recebida
 | `atribuir_task` | Manager | **NOVO v5.0** — Altera o responsável de uma task no Asana | task_gid, responsavel |
 | `gerar_imagem` | Creative | **NOVO v5.0** — Gera imagem via DALL-E 3 (grupos internos apenas) | prompt |
 | `criar_sticker` | Creative | **NOVO v5.0** — Cria sticker WebP 512x512 (grupos internos apenas) | prompt |
+| 🆕 `consultar_conhecimento` | Todos | **NOVO v6.0** — Consulta Knowledge Graph antes de afirmar que não sabe algo | termo |
+| 🆕 `registrar_conhecimento` | Todos | **NOVO v6.0** — Registra entity quando user explica o que é | nome, tipo |
+| 🆕 `listar_paginas_ads` | Traffic | **NOVO v6.0** — Lista todas as páginas que o Jarvis tem acesso via Meta API | filtro (opcional) |
+| 🆕 `vincular_post_em_adset` | Traffic | **NOVO v6.0** — Cria creative + ad de publicação existente (mantém likes orgânicos) | adset_id, post_id, cliente |
 
 **Sistema de menções na tool `enviar_mensagem_grupo`:**
 ```
@@ -779,6 +802,20 @@ Mensagem recebida (WhatsApp via Baileys)
 | `POST` | `/dashboard/webhooks/register` | **NOVO v5.0** — Registra webhooks nos projetos do Asana |
 | `GET` | `/dashboard/email-channel` | **NOVO v5.0** — Status do monitor de email + logs recentes |
 | `WS` | `/ws/voice` | **NOVO v5.0** — WebSocket para voice mode (streaming bidirecional) |
+| 🆕 `GET` | `/dashboard/costs?days=N` | **v6.0** — Custos USD por modelo/dia |
+| 🆕 `GET` | `/dashboard/incidents?hours=N` | **v6.0** — Incidentes operacionais |
+| 🆕 `GET` | `/dashboard/knowledge?q=&tipo=` | **v6.0** — Lista entities do Knowledge Graph (filtros) |
+| 🆕 `GET` | `/dashboard/knowledge/:id` | **v6.0** — Detalhe de entity + menções recentes |
+| 🆕 `POST` | `/dashboard/knowledge` | **v6.0** — Criar/atualizar entity no Knowledge Graph |
+| 🆕 `DELETE` | `/dashboard/knowledge/:id` | **v6.0** — Deprecar entity |
+| 🆕 `POST` | `/dashboard/knowledge/seed` | **v6.0** — Re-popular Knowledge Graph com dados existentes |
+| 🆕 `GET` | `/dashboard/contacts/stats` | **v6.0** — Stats cross-channel (pessoas únicas, multi-canal) |
+| 🆕 `GET` | `/dashboard/contacts/:canonicalId` | **v6.0** — Aliases de uma identidade canônica |
+| 🆕 `POST` | `/dashboard/contacts/merge` | **v6.0** — Merge manual de canonicals |
+| 🆕 `GET` | `/dashboard/task-copilot/config` | **v6.0** — Config do task copilot (toggle on/off) |
+| 🆕 `POST` | `/dashboard/task-copilot/config` | **v6.0** — Salvar config |
+| 🆕 `POST` | `/dashboard/task-copilot/daily-now` | **v6.0** — Trigger manual (com `{preview:true}` retorna sem postar) |
+| 🆕 `POST` | `/dashboard/task-copilot/followup-now` | **v6.0** — Trigger manual de follow-up |
 
 ---
 
@@ -1019,6 +1056,82 @@ Consulte `.env.example` para a lista completa. Variáveis organizadas por domín
 
 ## 15. Changelog
 
+### v6.0.0 (2026-04-22) — "Da Memória ao Conhecimento"
+
+Versão focada em **CONFIABILIDADE + INTELIGÊNCIA REAL**, não features novas. Resolveu 3 bugs críticos da v5 e adicionou camada de conhecimento institucional estruturado.
+
+**Sprint 1 — Robustez + Visibilidade**
+- Histórico do dashboard chat **PERSISTENTE** (tabela `dashboard_chat_history`) — antes era array em memória, zerava em restart, compartilhado entre users. Agora carrega do banco no boot
+- `relatorio_ads` aceita parâmetro `cliente` obrigatório quando pergunta é específica — sem mais vazamento Stream Health no contexto Medical Planner
+- `src/health.mjs`: `validateModelsAtBoot()` testa cada modelo no startup e alerta se 404 (deprecado). Resolve caso real do Haiku 3 que falhava silenciosamente há meses
+- Health check ativo via cron 5min (DB + WhatsApp + RAM) com alerta WhatsApp em 3 fails consecutivos
+- Cost tracking end-to-end: tabela `api_costs`, `calculateCost()`, `logApiCost()`, endpoint `/dashboard/costs`
+- Incident log: tabela `health_incidents`, endpoint `/dashboard/incidents`, agregação anti-spam (1 alerta a cada 30min)
+
+**Sprint 2 — Knowledge Graph**
+- Tabela `knowledge_entities` com 10 tipos: cliente, sub_marca, projeto, ferramenta_interna, evento, campanha, processo, decisao, pessoa_externa, pessoa_equipe
+- Tabela `entity_mentions` pra rastreamento reverso
+- `src/knowledge-graph.mjs`: `seedKnowledgeGraph()` — migração CUSTO ZERO de IA (reusa `managedClients`, `ASANA_CLIENTE_MAP`, `META_PAGES_MAP`, `TEAM_ASANA`, `teamWhatsApp` + puxa campanhas via Meta API)
+- Pré-populado: Stream Lab, Stream Health (status DESCONHECIDO — confirmar com Gui), Streamlab Academy, Medical Planner
+- Tools `consultar_conhecimento` (busca antes de inventar) + `registrar_conhecimento` (Jarvis aprende quando user explica)
+- Camada 0 NOVA em `getMemoryContext`: detecta entities mencionadas no texto, injeta contexto OFICIAL antes de qualquer outra camada
+- CRUD via dashboard: GET/POST/DELETE em `/dashboard/knowledge`
+- Resultado: "Stream Health" no texto = Jarvis lê descrição estruturada antes de gerar resposta
+
+**Sprint 3 — Profile Real-Time**
+- `synthesizeProfileCached()` em `profiles.mjs` com cache 30min (evita custo desnecessário)
+- Trigger automático em `processMemory()` — atualiza profile do sender + grupo em background ao final de cada mensagem
+- Cron de fallback continua, reduzido de **6h → 24h** (2h BRT)
+- `invalidateProfileCache()` + `getProfileCacheStats()` exportados
+- Resultado: pessoa volta a falar = profile JÁ TEM contexto recente (não há mais defasagem de 6h)
+
+**Sprint 4 — Cross-Channel Identity**
+- Tabela `contact_aliases` (canonical_id, alias_id, channel, display_name, confidence)
+- `src/contacts.mjs`: `resolveCanonicalId(aliasId, displayName)` — match exato por alias OU por nome (Levenshtein ≤ 2) em canal diferente
+- Proteção contra falso positivo: nomes genéricos (João, Maria, etc) não causam match cross-channel
+- `mergeCanonicals()` pra correção manual via dashboard
+- Endpoints: GET `/dashboard/contacts/stats`, GET `/dashboard/contacts/:canonicalId`, POST `/dashboard/contacts/merge`
+
+**Sprint 5 — Anti-Leak v4 (caso Rigon)**
+- Match EXATO de palavra entre nome do match e nome do sender (antes era includes/substring → falso positivo)
+- `checkInternalLeakSmart()` ASYNC com Knowledge Graph: libera matches que estão registrados como entities legítimas (pessoa_externa, cliente, sub_marca)
+- `sanitizeClientResponse()` aceita senderName e preserva linhas com nome do próprio lead
+- Cache TTL 5min pra checagem do KG (performance)
+- Funções exportadas pra serem testáveis
+- Resolve caso real: lead chamado "Guilherme Rigon" não bloqueia mais respostas
+
+**Sprint 6 — Task Copilot (não cobrador, é co-piloto)**
+- `src/task-copilot.mjs` com 6 funções principais: `analyzeTask`, `identifyHelpOpportunities`, `generateFollowUpComment`, `pollTasksAssignedToJarvis`, `pollOverdueForFollowUp`, `generateDailyBriefing`
+- 3 crons: tasks atribuídas (30min), follow-up atrasadas (9h e 14h BRT), daily briefing (08:50 BRT seg-sex)
+- **Decisões do Gui:** cobrança LEVE (3/6/9 dias), daily 08:50 só com tasks da equipe (sem leads/campanhas), comentários direto na task (não no grupo), sempre PERGUNTA antes de fazer
+- Cobrança humana: gerada por Sonnet (não template), tom amigo, sempre oferece ajuda concreta
+- Daily motivacional: "Bom dia, equipe... @Bruna sua prioridade é X. Posso ajudar com Y."
+- 9+ dias = NÃO comenta na task, escala privadamente pro Gui
+- Endpoints config: GET/POST `/dashboard/task-copilot/config`, POST `/daily-now` (com `{preview:true}` retorna sem postar)
+
+**Sprint 7 — System User Token Meta** (manual)
+- Documentação completa em `docs/META_SYSTEM_USER_TOKEN.md`
+- Migração do token de usuário (60 dias expiração) pra System User Token (não expira)
+- Passo-a-passo no Meta Business Manager
+- Não pode ser automatizado via código
+
+**Sprint 8 — Dashboard UI**
+- 3 abas novas no `dashboard/index.html`:
+  - **CONHECIMENTO**: lista entities por tipo, filtros, editor modal, botão Sync
+  - **CUSTOS**: total USD por período, tabela detalhada por dia × modelo, estimativa mensal
+  - **SAÚDE**: histórico de incidentes por severidade (críticos/warns/info), estatísticas
+
+**Outras melhorias v6.0:**
+- Modelo Sonnet 4.5 como default em `MEMORY_MODEL` (era Haiku 3 deprecado)
+- Tool `vincular_post_em_adset` com `object_story_id` (mantém likes/comments orgânicos do reel)
+- `targeting_automation.advantage_audience` no `createAdSet` (Meta exige desde 2025)
+- Auto-correção de `optimization_goal` por `objective` da campanha (mapeamento OUTCOME_AWARENESS → REACH/IMPRESSIONS, etc)
+- `resolvePageId` async com cache dinâmico via API Meta (descobre páginas novas sem precisar mexer no .env)
+- `bid_strategy: LOWEST_COST_WITHOUT_CAP` default em `createCampaign`
+- `pacing_type: ['day_parting']` + `adset_schedule` pra campanhas com horário específico
+
+**Bumped:** package.json 5.0.0 → 6.0.0
+
 ### v5.0.0 (2026-03-25)
 - **pgvector** — Busca semântica de memórias via OpenAI embeddings (text-embedding-3-small, 1536 dims). Busca híbrida (vetor + texto) com peso configurável. Índice HNSW. Cache de embeddings em memória (TTL 1h). Endpoint `/dashboard/memory/backfill` para gerar embeddings em batch
 - **Showcase Mode** — Modo apresentação ativado por "Quero conhecer o Jarvis" no WhatsApp. Usa Opus para respostas impressionantes. Pergunta preferência de áudio. Timeout de 4 min de inatividade. Auto-venda inteligente (pergunta sobre o negócio e mostra como o Jarvis se encaixa). Anti-troll sofisticado. Blindagem contra alucinação (nunca inventa dados fictícios)
@@ -1102,9 +1215,18 @@ Consulte `.env.example` para a lista completa. Variáveis organizadas por domín
 - [x] ~~Geração de imagens/stickers~~ — DALL-E 3 + WebP 512x512 nos grupos internos
 - [x] ~~App Meta Ads publicado~~ — modo Live
 - [x] ~~Deploy pipeline robusto~~ — ssh-keyscan com fallback, PM2 path dinâmico
-- [ ] Cobranças e relatório diário — corrigir formato e reabilitar
+- [x] ~~Cobranças e relatório diário~~ — Sprint 6 v6.0 (Task Copilot com daily 08:50 + cobrança leve 3/6/9)
+- [x] ~~Histórico de chat persistente~~ — Sprint 1 v6.0
+- [x] ~~Knowledge Graph~~ — Sprint 2 v6.0
+- [x] ~~Profile Real-Time~~ — Sprint 3 v6.0
+- [x] ~~Cross-Channel Identity~~ — Sprint 4 v6.0
+- [x] ~~Anti-Leak v4 (caso Rigon)~~ — Sprint 5 v6.0
+- [x] ~~Boot validation modelos~~ — Sprint 1 v6.0
+- [x] ~~Cost tracking + Health monitoring~~ — Sprint 1 v6.0
+- [x] ~~Dashboard UI Knowledge/Custos/Saúde~~ — Sprint 8 v6.0
+- [ ] System User Token Meta — Sprint 7 v6.0 (manual: ver `docs/META_SYSTEM_USER_TOKEN.md`)
 - [ ] Ingestão de conteúdo do Google Drive (planners antigos)
-- [ ] System User Token Meta (token permanente, sem expiração de 60 dias)
 - [ ] RAG completo (chunks + retrieval) para documentos longos
 - [ ] Dashboard v2: deploy em produção (substituir v1)
 - [ ] Integração Slack/Discord como canais adicionais
+- [ ] Voice mode v2 com VAD (Voice Activity Detection) real-time
